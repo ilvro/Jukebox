@@ -293,7 +293,13 @@ export function ensureSongAudio(songId) {
     if (!state) return null;
 
     state.lastUsedAt = Date.now();
-    if (state.audio) return state.audio;
+    if (state.audio) {
+        if (!state.audio.error) return state.audio;
+        // Recover cleanly if a previous media load errored out, instead of
+        // keeping the song permanently stuck on a dead HTMLAudioElement.
+        state.status = 'stopped';
+        evictSongAudio(songId);
+    }
 
     let audioUrl = state.audioStaticUrl || null;
     if (!audioUrl) {
