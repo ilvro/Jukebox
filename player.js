@@ -2945,6 +2945,9 @@ function createTrackUI(songId, audio, playerContainer) {
     progressBar.addEventListener('mousedown', (event) => {
         if (event.button === 2) {
             event.preventDefault();
+            if (!hasValidDuration(audio.duration)) {
+                return;
+            }
             let selectedTime = getExactTime(event, waveformCanvas);
     
             if (isDragging) {
