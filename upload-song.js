@@ -2245,3 +2245,30 @@ uploadCancel.addEventListener('click', () => {
     dimmer.style.visibility = 'hidden'; 
     }, 10);
 });
+
+function closeVisiblePopups() {
+    const visiblePopups = [...document.querySelectorAll('.popup')].filter(
+        el => el.style.visibility === 'visible'
+    );
+    if (visiblePopups.length === 0 && dimmer.style.visibility !== 'visible') return;
+    visiblePopups.forEach(el => {
+        el.style.opacity = '0';
+    });
+    dimmer.style.opacity = '0';
+    setTimeout(() => {
+        visiblePopups.forEach(el => {
+            el.style.visibility = 'hidden';
+        });
+        dimmer.style.visibility = 'hidden';
+    }, 200);
+}
+
+if (dimmer) {
+    dimmer.addEventListener('click', closeVisiblePopups);
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && dimmer?.style.visibility === 'visible') {
+        closeVisiblePopups();
+    }
+});
