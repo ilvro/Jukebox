@@ -88,7 +88,12 @@ app.get('/test-ytdlp', async (req, res) => {
     try {
         const result = await ytdlp('https://www.youtube.com/watch?v=-xwZwEcO9R0', {
             dumpSingleJson: true,
-            printToStdout: false
+            noWarnings: true,
+            noCheckCertificates: true,
+            noCacheDir: true
+        }, {
+            youtubeDLPath: ytdlpPath,
+            cwd: audioEditDirectory
         });
         res.json({ 
             success: true, 
