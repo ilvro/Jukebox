@@ -2074,15 +2074,8 @@ function showEditGenresPopup(songItem) {
     popup.id = 'edit-genres-popup';
     popup.className = 'popup';
     
-    // ensure proper positioning and z-index
-    Object.assign(popup.style, {
-        position: 'fixed',
-        left: '50%',
-        top: '45%',
-        transform: 'translate(-50%, -50%)',
-        zIndex: '4',
-        pointerEvents: 'auto'
-    });
+    // Rely on .popup CSS for positioning and z-index (above #dimmer at 55).
+    popup.style.pointerEvents = 'auto';
 
     const header = document.createElement('header');
     header.className = 'popup-header';
