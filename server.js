@@ -8,7 +8,7 @@ const os = require('os');
 const { randomUUID } = require('crypto');
 const { pipeline } = require('stream/promises');
 const { promisify } = require('util');
-const { execSync, execFile } = require('child_process');
+const { execSync, execFile, spawn } = require('child_process');
 const app = express();
 const port = Number(process.env.JUKEBOX_PORT) || 3000;
 const ytdlpPath = execSync('which yt-dlp').toString().trim(); // force latest ytdlp version
@@ -115,6 +115,26 @@ app.post('/download/youtube/audio', async (req, res) => {
         return res.status(400).json({ success: false, message: 'Invalid URL' });
     }
 
+    const jobId = randomUUID();
+    const rawTemplate = path.join(audioEditDirectory, `yt-${jobId}.%(ext)s`);
+    const mp3Path = path.join(audioEditDirectory, `yt-${jobId}.mp3`);
+    let downloadedRawPath = null;
+
+    const cleanupJobFiles = async () => {
+        const filesToRemove = [mp3Path];
+        if (downloadedRawPath) {
+            filesToRemove.push(downloadedRawPath);
+        } else {
+            try {
+                const entries = await fs.promises.readdir(audioEditDirectory);
+                entries
+                    .filter(name => name.startsWith(`yt-${jobId}.`))
+                    .forEach(name => filesToRemove.push(path.join(audioEditDirectory, name)));
+            } catch {}
+        }
+        await removeTemporaryFiles(filesToRemove);
+    };
+
     try {
         const info = await ytdlp(url, {
             dumpSingleJson: true,
@@ -128,58 +148,64 @@ app.post('/download/youtube/audio', async (req, res) => {
 
         const videoTitle = sanitizeFilename(info.title || 'audio');
 
-        const encodedFilename = encodeURIComponent(videoTitle)
-            .replace(/['()]/g, escape)
-            .replace(/\*/g, '%2A');
-
-        res.header('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}.mp3`);
-        res.header('Content-Type', 'audio/mpeg');
-        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
-
-        const audioStream = ytdlp.exec(url, {
+        // Download to a seekable local temp file first so ffmpeg reads from exact
+        // sample 0 (00:00.000) without losing initial probe frames on a pipe, and
+        // writes a complete MP3 with valid Xing/LAME seek headers and Content-Length.
+        await ytdlp(url, {
             format: 'bestaudio[ext=m4a]/bestaudio/best',
-            output: '-',
-            quiet: true,
+            output: rawTemplate,
             noWarnings: true,
             noCheckCertificates: true,
             preferFreeFormats: true,
             noCacheDir: true,
+            noPart: true,
             extractorArgs: 'youtube:player_client=android,web' // bypasses 403
         }, {
             youtubeDLPath: ytdlpPath,
             cwd: audioEditDirectory
         });
 
-        audioStream.stdout.pipe(res);
+        const entries = await fs.promises.readdir(audioEditDirectory);
+        const rawMatch = entries.find(name => name.startsWith(`yt-${jobId}.`) && !name.endsWith('.mp3'));
+        if (!rawMatch) {
+            throw new Error('Downloaded audio file not found');
+        }
+        downloadedRawPath = path.join(audioEditDirectory, rawMatch);
 
-        audioStream.stderr.on('data', (data) => {
-            console.error('yt-dlp stderr:', data.toString());
-        });
+        await runFFmpeg([
+            '-i', downloadedRawPath,
+            '-vn',
+            '-c:a', 'libmp3lame',
+            '-b:a', '192k',
+            '-write_xing', '1',
+            mp3Path
+        ]);
 
-        audioStream.on('error', (error) => {
-            console.error('yt-dlp error:', error.message);
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    success: false, 
-                    message: 'Error on audio download' 
-                });
-            }
-        });
+        const stat = await fs.promises.stat(mp3Path);
+        const encodedFilename = encodeURIComponent(videoTitle)
+            .replace(/['()]/g, escape)
+            .replace(/\*/g, '%2A');
 
-        audioStream.on('close', (code) => {
-            if (code !== 0 && code !== null) {
-                console.error(`yt-dlp - code ${code}`);
-            }
-        });
+        res.header('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}.mp3`);
+        res.header('Content-Type', 'audio/mpeg');
+        res.header('Content-Length', String(stat.size));
+        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
 
+        await pipeline(fs.createReadStream(mp3Path), res);
     } catch (error) {
-        console.error('Error in /download/audio:', error.message);
+        if (error?.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            console.error('Error in /download/youtube/audio:', error.message);
+        }
         if (!res.headersSent) {
             res.status(500).json({ 
                 success: false, 
-                message: 'Error when searching for audio information' 
+                message: 'Error downloading YouTube audio' 
             });
+        } else if (!res.writableEnded) {
+            res.end();
         }
+    } finally {
+        await cleanupJobFiles();
     }
 });
 
