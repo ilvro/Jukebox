@@ -36,6 +36,18 @@ function ensureAudioContext() {
     return audioContext;
 }
 
+export async function decodeAudioDataSafe(arrayBuffer) {
+    // Prefer an OfflineAudioContext for waveform decoding so we never open a
+    // second live hardware output stream that competes with playback.
+    const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (OfflineCtx) {
+        const offline = new OfflineCtx(1, 1, 44100);
+        return offline.decodeAudioData(arrayBuffer);
+    }
+    const ctx = ensureAudioContext();
+    return ctx.decodeAudioData(arrayBuffer);
+}
+
 export async function resumeAudioContextIfSuspended() {
     if (!audioContext || audioContext.state !== 'suspended') return;
     try {

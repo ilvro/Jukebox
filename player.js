@@ -1,5 +1,15 @@
 import { setupAudioEffects } from './mixing/index.js';
-import { setMasterVolume, getMasterVolume, setTrackVolume, getTrackVolume, createRecordingTap, releaseAudioContext, getAudioContext, resumeAudioContextIfSuspended } from './mixing/audio-context.js';
+import {
+    setMasterVolume,
+    getMasterVolume,
+    setTrackVolume,
+    getTrackVolume,
+    decodeAudioDataSafe,
+    createRecordingTap,
+    releaseAudioContext,
+    getAudioContext,
+    resumeAudioContextIfSuspended
+} from './mixing/audio-context.js';
 import { clampSeekTime, computeProgressRatio, computeTimeFromRatio, formatTime as formatSafeTime, hasValidDuration } from './playback-guards.mjs';
 import { getFadeDuration } from './settings.js';
 import { setAccurateTimeout, setAccurateInterval, clearAccurateTimeout, clearAccurateInterval } from './background-timer.js';
@@ -1850,10 +1860,11 @@ function createTrackUI(songId, audio, playerContainer) {
         updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
     };
 
-    const setTimelineZoom = (newZoom, focusTime = audio.currentTime) => {
+    const setTimelineZoom = (newZoom, focusTime = audio.currentTime, anchorOffsetPx = null) => {
         timelineZoom = Math.min(32, Math.max(1, newZoom));
-        waveformCanvas.style.width = `calc(${timelineZoom * 100}% - 6px)`;
-        progressBar.style.width = `calc(${timelineZoom * 100}% + 6px)`;
+        const zoomedWidth = `calc(${timelineZoom * 100}% - 6px)`;
+        waveformCanvas.style.width = zoomedWidth;
+        progressBar.style.width = zoomedWidth;
 
         updateZoomIndicator();
 
@@ -1861,19 +1872,43 @@ function createTrackUI(songId, audio, playerContainer) {
             syncWaveformResolution();
             if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
             const focusRatio = Math.min(1, Math.max(0, focusTime / audio.duration));
-            const focusX = focusRatio * waveformCanvas.offsetWidth;
-            progressContainer.scrollLeft = Math.max(0, focusX - progressContainer.clientWidth / 2);
+            const canvasWidth = waveformCanvas.getBoundingClientRect().width || waveformCanvas.offsetWidth;
+            const focusX = focusRatio * canvasWidth;
+            const anchor = Number.isFinite(anchorOffsetPx)
+                ? anchorOffsetPx
+                : progressContainer.clientWidth / 2;
+            progressContainer.scrollLeft = Math.max(0, focusX - anchor);
             positionZoomIndicator();
         });
     };
 
     progressContainer.addEventListener('scroll', positionZoomIndicator, { passive: true });
 
-    progressContainer.addEventListener('wheel', event => {
-        if (!event.ctrlKey) return;
-        event.preventDefault();
-        const focusTime = getExactTime(event, waveformCanvas);
-        setTimelineZoom(event.deltaY < 0 ? timelineZoom * 1.5 : timelineZoom / 1.5, focusTime);
+    const handleTimelineWheel = event => {
+        if (event.ctrlKey || event.metaKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!event.deltaY) return;
+            const containerRect = progressContainer.getBoundingClientRect();
+            const anchorOffsetPx = Math.max(0, Math.min(containerRect.width, event.clientX - containerRect.left));
+            const focusTime = hasValidDuration(audio.duration)
+                ? getExactTime(event, waveformCanvas)
+                : audio.currentTime;
+            const zoomFactor = event.deltaY < 0 ? 1.5 : (1 / 1.5);
+            setTimelineZoom(timelineZoom * zoomFactor, focusTime, anchorOffsetPx);
+            return;
+        }
+        // When zoomed in, allow vertical mouse wheel over the timeline to pan horizontally.
+        if (timelineZoom > 1 && event.currentTarget === progressContainer && event.deltaY) {
+            event.preventDefault();
+            progressContainer.scrollLeft += event.deltaY;
+            positionZoomIndicator();
+        }
+    };
+    progressContainer.addEventListener('wheel', handleTimelineWheel, { passive: false });
+    trackDiv.addEventListener('wheel', event => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        handleTimelineWheel(event);
     }, { passive: false });
 
     // Older presets stored one { start, end } object. Initialization accepts
@@ -2039,14 +2074,46 @@ function createTrackUI(songId, audio, playerContainer) {
         }
     });
 
+    let isScrubbingTimeline = false;
+    const seekFromPointerEvent = (event) => {
+        if (!hasValidDuration(audio.duration)) return;
+        let clickTime = getExactTime(event, waveformCanvas);
+        if (!Number.isFinite(clickTime) || clickTime < 0 || clickTime > audio.duration) return;
+        clickTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
+        applyAudioSeek(audio, clickTime);
+        progressBar.value = clickTime;
+        hoveredTime = clickTime;
+        updateTimeDisplay();
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+        });
+    };
+
+    progressBar.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        // Bypass native <input type="range"> thumb-inset geometry so clicking
+        // or scrubbing always lands on the exact waveform pixel under the mouse.
+        event.preventDefault();
+        isScrubbingTimeline = true;
+        seekFromPointerEvent(event);
+
+        const onScrubMove = (moveEvent) => {
+            seekFromPointerEvent(moveEvent);
+        };
+        const onScrubUp = () => {
+            document.removeEventListener('mousemove', onScrubMove);
+            document.removeEventListener('mouseup', onScrubUp);
+            window.removeEventListener('blur', onScrubUp);
+            setTimeout(() => { isScrubbingTimeline = false; }, 0);
+        };
+        document.addEventListener('mousemove', onScrubMove);
+        document.addEventListener('mouseup', onScrubUp);
+        window.addEventListener('blur', onScrubUp);
+    });
+
     progressContainer.addEventListener('click', (event) => {
-        let clickTime = hoveredTime;
-        if (hasValidDuration(audio.duration) && Number.isFinite(clickTime) && clickTime >= 0 && clickTime <= audio.duration) {
-            clickTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
-            applyAudioSeek(audio, clickTime);
-            progressBar.value = clickTime;
-            updateTimeDisplay();
-        }
+        if (isScrubbingTimeline) return;
+        seekFromPointerEvent(event);
     });
 
     progressContainer.addEventListener('mousedown', (event) => {
@@ -2286,10 +2353,18 @@ function createTrackUI(songId, audio, playerContainer) {
         scanMarkerEvents();
         scheduleNextMarkerEvent();
         requestAnimationFrame(() => {
-            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+        });
+    };
+    const handleSeeked = () => {
+        progressBar.value = audio.currentTime;
+        updateTimeDisplay();
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
         });
     };
     audio.addEventListener('seeking', handleMarkerSeeking);
+    audio.addEventListener('seeked', handleSeeked);
     audio.addEventListener('play', handleMarkerPlaybackStart);
     audio.addEventListener('pause', clearMarkerEventTimer);
     audio.addEventListener('ratechange', scheduleNextMarkerEvent);
@@ -2834,6 +2909,14 @@ function createTrackUI(songId, audio, playerContainer) {
         audioEffects.setEffectSettings(settings);
         audioEffects.setActiveEffectKeys(keys);
         if (efeitosMudaram) mixMudou('efeitos', songId);
+        if (force && !audio.paused) {
+            const hasRegionEffects = getSelectedRegions(progressBar).some(region => region.effects.length > 0);
+            if (hasRegionEffects && regionEffectTimerId === null) {
+                regionEffectTimerId = setAccurateInterval(monitorRegionEffects, 25);
+            } else if (!hasRegionEffects) {
+                stopRegionEffectMonitor();
+            }
+        }
     };
 
     const monitorRegionEffects = () => {
@@ -2845,8 +2928,11 @@ function createTrackUI(songId, audio, playerContainer) {
     };
     const startRegionEffectMonitor = () => {
         syncRegionAudioEffects(true);
-        if (!audio.paused && regionEffectTimerId === null) {
+        const hasRegionEffects = getSelectedRegions(progressBar).some(region => region.effects.length > 0);
+        if (hasRegionEffects && !audio.paused && regionEffectTimerId === null) {
             regionEffectTimerId = setAccurateInterval(monitorRegionEffects, 25);
+        } else if (!hasRegionEffects) {
+            stopRegionEffectMonitor();
         }
     };
     const stopRegionEffectMonitor = () => {
@@ -3289,6 +3375,7 @@ function createTrackUI(songId, audio, playerContainer) {
 
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.removeEventListener('seeking', handleMarkerSeeking);
+            audio.removeEventListener('seeked', handleSeeked);
             audio.removeEventListener('play', handleMarkerPlaybackStart);
             audio.removeEventListener('pause', clearMarkerEventTimer);
             audio.removeEventListener('ratechange', scheduleNextMarkerEvent);
@@ -3353,13 +3440,9 @@ async function generateWaveformDirect(audio, canvas, songId) {
     }
     
     try {
-        if (!sharedAudioContext) {
-            sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        
         const response = await fetch(audio.src);
         const arrayBuffer = await response.arrayBuffer();
-        const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+        const audioBuffer = await decodeAudioDataSafe(arrayBuffer);
         
         canvas.width = MAX_WAVEFORM_WIDTH;
         
@@ -3518,10 +3601,6 @@ async function generateWaveformActual(audio, canvas, songId, signal, onWaveformC
             return;
         }
 
-        if (!sharedAudioContext) {
-            sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        
         const response = await fetch(audio.src, { signal });
         const contentLength = Number(response.headers?.get?.('content-length'));
         if (shouldSkipWaveformDecode({ byteSize: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null })) {
@@ -3544,7 +3623,7 @@ async function generateWaveformActual(audio, canvas, songId, signal, onWaveformC
             onWaveformChange?.();
             return;
         }
-        const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+        const audioBuffer = await decodeAudioDataSafe(arrayBuffer);
         arrayBuffer = null;
         if (signal.aborted) return;
         
