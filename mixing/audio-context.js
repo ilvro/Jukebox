@@ -6,6 +6,11 @@ let audioContext = null;
 let mainGainNode = null;
 let masterVolume = 1;
 const audioNodes = new Map(); // audio element -> { sourceNode, dryGainNode, wetGainNode, isInitialized }
+// Tracks logical volume (0..1) for <audio> elements playing natively without a
+// MediaElementAudioSourceNode attached yet. Deferring Web Audio attachment until
+// an effect or recording tap is needed avoids WebKitGTK/GStreamer's ~1s WebAudio
+// buffering tail, start-of-track drop, and underruns during normal playback.
+const directTrackVolumes = new Map();
 
 // lets a host page (such as the online table shell) hand over its own
 // AudioContext before any song is initialized. The Jukebox page never calls it.
@@ -60,10 +65,14 @@ export async function resumeAudioContextIfSuspended() {
 // master volume affects every song at once, applied after each song's own
 // dry/wet mix, right before the final output
 export function setMasterVolume(value) {
-    masterVolume = value;
+    const safeMaster = Math.max(0, Math.min(1, Number.isFinite(Number(value)) ? Number(value) : 1));
+    masterVolume = safeMaster;
     if (mainGainNode) {
-        mainGainNode.gain.value = value;
+        mainGainNode.gain.value = safeMaster;
     }
+    directTrackVolumes.forEach((trackVol, audio) => {
+        audio.volume = trackVol * safeMaster;
+    });
 }
 
 export function getMasterVolume() {
@@ -76,8 +85,11 @@ export function setTrackVolume(audio, volume) {
     const entry = audioNodes.get(audio);
     if (entry?.sourceGainNode) {
         entry.sourceGainNode.gain.value = safeVolume;
+        audio.volume = safeVolume;
+    } else {
+        directTrackVolumes.set(audio, safeVolume);
+        audio.volume = safeVolume * masterVolume;
     }
-    audio.volume = safeVolume;
 }
 
 export function getTrackVolume(audio) {
@@ -85,6 +97,9 @@ export function getTrackVolume(audio) {
     const entry = audioNodes.get(audio);
     if (entry?.sourceGainNode && Number.isFinite(entry.sourceGainNode.gain.value)) {
         return entry.sourceGainNode.gain.value;
+    }
+    if (directTrackVolumes.has(audio)) {
+        return directTrackVolumes.get(audio);
     }
     return Number.isFinite(audio.volume) ? audio.volume : 1;
 }
@@ -94,6 +109,9 @@ export function getTrackVolume(audio) {
 // call release() once done to disconnect the tap.
 export function createRecordingTap() {
     ensureAudioContext();
+    [...directTrackVolumes.keys()].forEach(audio => {
+        initializeAudioContext(audio);
+    });
     const destination = audioContext.createMediaStreamDestination();
     mainGainNode.connect(destination);
     return {
@@ -130,7 +148,11 @@ export function initializeAudioContext(audio, initialVolume = undefined, options
             const dryGainNode = audioContext.createGain();
             const wetGainNode = audioContext.createGain();
 
-            const safeVolume = Math.max(0, Math.min(1, Number.isFinite(Number(initialVolume)) ? Number(initialVolume) : (Number.isFinite(audio.volume) ? audio.volume : 1)));
+            const fallbackVolume = directTrackVolumes.has(audio)
+                ? directTrackVolumes.get(audio)
+                : (Number.isFinite(audio.volume) ? audio.volume : 1);
+            const safeVolume = Math.max(0, Math.min(1, Number.isFinite(Number(initialVolume)) ? Number(initialVolume) : fallbackVolume));
+            directTrackVolumes.delete(audio);
             sourceGainNode.gain.value = safeVolume;
             audio.volume = safeVolume;
 
@@ -183,6 +205,7 @@ export function disconnectAudioContext(audio) {
 // reused; deletion uses this so the internal map cannot retain abandoned
 // audio elements after a new preset is loaded.
 export function releaseAudioContext(audio) {
+    directTrackVolumes.delete(audio);
     const entry = audioNodes.get(audio);
     if (!entry) return;
 

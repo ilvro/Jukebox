@@ -3,9 +3,10 @@ import { EffectsRegistry } from './effects-registry.js';
 import { createContextMenu } from './context-menu.js';
 
 export function setupAudioEffects(audio, progressBar, actions = {}) {
-    // initialize audio context and create effects registry
-    initializeAudioContext(audio, actions?.initialVolume ?? audio?.volume);
-    const effectsRegistry = new EffectsRegistry(audio, progressBar);
+    // Defer Web Audio MediaElementSource creation until an effect or recording
+    // is actually activated so plain playback uses the native low-latency path.
+    setTrackVolume(audio, actions?.initialVolume ?? getTrackVolume(audio));
+    const effectsRegistry = new EffectsRegistry(audio, progressBar, { lazyAudioContext: true });
     
     function handleContextMenu(x, y, updateProgressBarGradient, updateWaveformProgress) {
         return createContextMenu(

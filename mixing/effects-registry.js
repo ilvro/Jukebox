@@ -34,7 +34,9 @@ export class EffectsRegistry {
         this.removalDuration = options.removalDuration;
         this.effects = this.initializeEffects();
         
-        initializeAudioContext(this.audio, undefined, { destino: options.destino });
+        if (!options.lazyAudioContext) {
+            initializeAudioContext(this.audio, undefined, { destino: options.destino });
+        }
     }
 
     initializeEffects() {

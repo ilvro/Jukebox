@@ -6,6 +6,7 @@ import {
     getTrackVolume,
     decodeAudioDataSafe,
     createRecordingTap,
+    initializeAudioContext,
     releaseAudioContext,
     getAudioContext,
     resumeAudioContextIfSuspended
@@ -154,8 +155,11 @@ function applyAudioSeek(audio, targetTime) {
     audio.currentTime = safeTarget;
 }
 
-async function playAudioSafely(audio) {
-    await resumeAudioContextIfSuspended();
+function playAudioSafely(audio) {
+    // Resume AudioContext without awaiting so audio.play() stays synchronous
+    // inside the user gesture and never stalls in WebKitGTK.
+    void resumeAudioContextIfSuspended();
+    audio.muted = false;
     return audio.play();
 }
 
@@ -166,9 +170,11 @@ function createAudioElement(audioUrl, songId, songItem) {
     audio.preload = 'metadata';
     audio.volume = 1;
 
-    audio.addEventListener('loadedmetadata', () => {
+    const notifyTrackMetadata = () => {
         renderedTracks.get(songId)?.refresh();
-    });
+    };
+    audio.addEventListener('loadedmetadata', notifyTrackMetadata);
+    audio.addEventListener('durationchange', notifyTrackMetadata);
 
     audio.addEventListener('error', () => {
         const mediaError = audio.error;
@@ -991,6 +997,8 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, 
             destinationState.keys.filter(key => tempEffects.hasEffect(key))
         );
 
+        initializeAudioContext(audio);
+        initializeAudioContext(crossfadeAudio);
         const mainContext = getAudioContext(audio);
         const secondaryContext = getAudioContext(crossfadeAudio);
         audioContext = mainContext.audioContext;
@@ -2165,6 +2173,9 @@ function createTrackUI(songId, audio, playerContainer) {
     const setupTrackWaveform = () => {
         if (waveformSetupStarted || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
         waveformSetupStarted = true;
+        audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
+        audio.removeEventListener('durationchange', handleWaveformMetadata);
+        audio.removeEventListener('canplay', handleWaveformMetadata);
         progressBar.max = audio.duration;
         updateTimeDisplay();
 
@@ -2186,7 +2197,12 @@ function createTrackUI(songId, audio, playerContainer) {
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
         setupTrackWaveform();
     } else {
-        audio.addEventListener('loadedmetadata', handleWaveformMetadata, { once: true });
+        // Draw an immediate placeholder bar so the timeline is always visible
+        // while WebKitGTK/GStreamer resolves duration (often on durationchange).
+        createLightweightWaveform(waveformCanvas);
+        audio.addEventListener('loadedmetadata', handleWaveformMetadata);
+        audio.addEventListener('durationchange', handleWaveformMetadata);
+        audio.addEventListener('canplay', handleWaveformMetadata);
     }
     
     // Marker events are detected by crossing a marker during normal playback.
@@ -2348,6 +2364,9 @@ function createTrackUI(songId, audio, playerContainer) {
 
     // stored so we can remove it in cleanup() instead of stacking a new one every render
     const handleTimeUpdate = () => {
+        if (!waveformSetupStarted && hasValidDuration(audio.duration)) {
+            setupTrackWaveform();
+        }
         progressBar.value = audio.currentTime;
         updateTimeDisplay();
         scanMarkerEvents();
@@ -3388,6 +3407,8 @@ function createTrackUI(songId, audio, playerContainer) {
             audio.removeEventListener('play', handleSelectionFadePlay);
             audio.removeEventListener('pause', stopSelectionFadeMonitor);
             audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
+            audio.removeEventListener('durationchange', handleWaveformMetadata);
+            audio.removeEventListener('canplay', handleWaveformMetadata);
             audio.removeEventListener('loadedmetadata', handleHotkeyEffectsMetadata);
             cancelWaveformGeneration(songId, waveformCanvas);
             stopSelectionFadeMonitor();
