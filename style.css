@@ -11,15 +11,31 @@ body {
     min-height: 100vh;
 }
 
-body::before {
+body::before { /* darkens the background */
     content: "";
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.5);  /* Black overlay with 50% opacity */
-    z-index: -1;  /* Place it behind the content */
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: -1; 
+}
+
+body::after { /* small vignette effect on the background */
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(
+        circle,
+        transparent 20%,
+        rgba(0, 0, 0, 0.8) 150%
+    );
+    pointer-events: none;
+    z-index: -1;
 }
 
 h1 {
@@ -49,5 +65,6 @@ a {
     position: absolute;
     right: 40px
 }
+
 
 
