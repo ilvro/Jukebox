@@ -7,7 +7,7 @@ body {
     background-position: center;
     background-repeat: no-repeat;
     background-attachment: fixed;
-    position: relative; /* this is used to position the object that makes the background darker */
+    position: relative;
     min-height: 100vh;
 }
 
@@ -24,7 +24,7 @@ body::before { /* darkens the background */
 
 body::after { /* small vignette effect on the background */
     content: "";
-    position: fixed;
+    position: absolute;
     top: 0;
     left: 0;
     width: 100%;
@@ -40,16 +40,32 @@ body::after { /* small vignette effect on the background */
 
 h1 {
     color: white;
+    font-family: 'Times New Roman', Times, serif;
     font-weight: 100;
-    font-size: 25px;
+    font-size: 30px;
+}
+
+h1::first-letter {
+    font-size:40px;
 }
 
 a {
     color: white;
+    font-family:'Times New Roman', Times, serif
+}
+
+p {
+    color: white;
+    font-family:'Times New Roman', Times, serif
 }
 
 #top-header {
-    background-color: rgba(0, 0, 0, 0.5);
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.6) 20%,
+        rgba(0, 0, 0, 0.6) 15%,
+        rgba(0, 0, 0, 0) 100%
+    );
     display: flex;
     align-items: center;
     justify-content: center;
