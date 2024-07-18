@@ -50,6 +50,12 @@ h1::first-letter {
     font-size:40px;
 }
 
+h3 {
+    font-family:'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
+    font-size: 22px;
+    font-weight:10;
+}
+
 a {
     color: white;
     font-family:'Times New Roman', Times, serif;
@@ -58,17 +64,30 @@ a {
 p {
     color: white;
     font-family:'Times New Roman', Times, serif;
+    font-size: 16px;
 }
 
 input {
     color: white;
-    font-family:'Times New Roman', Times, serif;
-    font-size: 16px;
+    font: 16px 'Times New Roman';
+    padding: 3px 3px 3px 3px;
+    border: 0px;
+    background-color: rgba(0, 0, 0, 0.2);
+    position: relative;
+    margin-right: 340px;
+    align-self: center;
+    outline: 0;
 }
 
 div {
     color: white;
     font-family:'Times New Roman', Times, serif;
+}
+
+button {
+    color: white;
+    background-color: transparent;
+    font: 16px'Times New Roman', Times, serif
 }
 /* */
 
@@ -98,32 +117,67 @@ div {
 .genre_filters {
     display: flex;
     justify-content: center;
-    margin-top: 40px;
+    margin-top: 60px;
 }
+
 .genre_filters a {
-    text-decoration: none;
+    text-decoration: none;  
     margin: 10px;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.3s ease;
+}
+
+.genre_filters a.selected {
+    border-bottom: 1px solid rgb(43, 219, 160);
 }
 
 .genre_filters input {
-    font: 16px 'Times New Roman';
-    padding: 3px 3px 3px 3px;
-    border: 1px;
-    background-color: rgba(0, 0, 0, 0.2);
     position: relative;
-    align-self: center;
     margin-right: 340px;
+    outline: 0;
 }
 
-.song_container {
-    background-color: black;
-    display: flex;
-    opacity: 0.5;
+/* ---------------- grid --------------- */
+
+.song_grid {
+    position: relative;  
+    display: grid;
     height: 100vh;
     width: 50%;
     margin-inline: auto;
-    margin-top: 0px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 20px;
 }
 
+.song_grid::before { /* shadow background */    
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: black;
+    border-radius: 15px;
+    opacity: 0.1;
+}
 
+.song_item {
+    margin-left: 10px;
+    transition: transform 0.3s ease;
+    z-index: 0;
+}
 
+.song_item:hover {
+    transform: scale(1.004);
+}
+
+.song_item p {
+    position: absolute;
+    margin-top: -16px;
+}
+
+.song_item img {
+    margin-top: 4px;
+    border-radius: 4px;
+}
