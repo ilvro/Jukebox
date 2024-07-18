@@ -4,13 +4,13 @@
         <title>Jukebox</title>  
         <link rel="stylesheet" href="style.css">
         <link rel="icon" type="image/x-icon" href="images/page_icon.jpg">
+        <script src="filters.js"></script>
     </head>
 
     <body>
         <header id="top-header">
             <h1 id="main-title">JUKEBOX</h1>
             <nav id="navbar-home-playlists">
-                <a href="#">Upload Song</a>
                 <a href="#">Home</a>
                 <a href="#">Playlists</a>
                 <a href="#">Soundpad</a>
@@ -19,16 +19,21 @@
 
         <div class="genre_filters">
             <input placeholder=" Search for...">
-            <a href="#">Show All</a>
-            <a href="#">modern</a>
-            <a href="#">fantasy</a>
-            <a href="#">sci-fi</a>
-            <a href="#">horror</a>
-            <a href="#">battle</a>
-        </div>
+                <a href="#" class="filter-link selected" data-filter="all">Show All</a>
+                <a href="#" class="filter-link" data-filter="modern">modern</a>
+                <a href="#" class="filter-link" data-filter="fantasy">fantasy</a>
+                <a href="#" class="filter-link" data-filter="sci-fi">sci-fi</a>
+                <a href="#" class="filter-link" data-filter="horror">horror</a>
+                <a href="#" class="filter-link" data-filter="battle">battle</a>
+            </div>
 
-        <div class="song_container">
-                
-        </div>
+            <div class="song_grid">
+                <div class="song_item">
+                    <h3>Antiquarian Study</h3>
+                    <p>ambience + music</p>
+                    <img src="tracks/Antiquarian Study.jpg" alt="Antiquarian Study">
+                </div>
+            </div>
+        </section>
     </body>
 </html>
