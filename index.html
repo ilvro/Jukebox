@@ -5,12 +5,30 @@
         <link rel="stylesheet" href="style.css">
         <link rel="icon" type="image/x-icon" href="images/page_icon.jpg">
         <script src="filters.js"></script>
+        <script src="player.js"></script>
+        <script src="song-loading.js"></script>
     </head>
 
     <body>
         <header id="top-header">
             <h1 id="main-title">JUKEBOX</h1>
+
             <nav id="navbar-home-playlists">
+                <div class="upload-container">
+                    <label>Save Preset</label>
+                    <input type="file" class="file-input">
+                </div>
+
+                <div class="upload-container">
+                    <label>Load Preset</label>
+                    <input type="file" class="file-input">
+                </div>
+
+                <div class="upload-container">
+                    <label>Upload Song</label>
+                    <input type="file" class="file-input">
+                </div>
+                <label> | </label>
                 <a href="#">Home</a>
                 <a href="#">Playlists</a>
                 <a href="#">Soundpad</a>
@@ -28,11 +46,13 @@
             </div>
 
             <div class="song_grid">
+                <!-- song item model
                 <div class="song_item">
                     <h3>Antiquarian Study</h3>
                     <p>ambience + music</p>
                     <img src="tracks/Antiquarian Study.jpg" alt="Antiquarian Study">
                 </div>
+            -->
             </div>
         </section>
     </body>
