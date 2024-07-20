@@ -11,7 +11,7 @@ body {
     min-height: 100vh;
 }
 
-body::before { /* darkens the background */
+body::before { /* darken the background */
     content: "";
     position: absolute;
     top: 0;
@@ -67,6 +67,11 @@ p {
     font-size: 16px;
 }
 
+label {
+    color: white;
+    font-family:'Times New Roman', Times, serif;
+}
+
 input {
     color: white;
     font: 16px 'Times New Roman';
@@ -91,6 +96,7 @@ button {
 }
 /* */
 
+/* ------------ header ------------*/
 #top-header {
     background: linear-gradient(
         to bottom,
@@ -104,15 +110,38 @@ button {
     padding: 0px;
 }
 
+.upload-container {
+    margin: 10px;
+    position: relative;
+    display: inline-block;
+}
+    
+.file-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor:grab;
+    overflow: hidden;
+}
+
 #navbar-home-playlists a {
     text-decoration: none;
-    margin: 15px
+    margin: 15px;
 }
 
 #navbar-home-playlists {
     position: absolute;
-    right: 40px
+    right: 40px;
+    display: flex;
+    align-items: center;
 }
+
+/*
+
+/* ------------ genre ----------- */
 
 .genre_filters {
     display: flex;
