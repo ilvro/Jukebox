@@ -14,20 +14,27 @@
             <h1 id="main-title">JUKEBOX</h1>
 
             <nav id="navbar-home-playlists">
-                <div class="upload-container">
-                    <label>Save Preset</label>
-                    <input type="file" class="file-input">
+
+                <div class="header-dropdown">
+                    <button class="button" id="manage-songs-btn">Manage Songs</button>
+                    <div class="dropdown-content">
+                        <div class="upload-container" id="upload-song">
+                            <label>Upload Song</label>
+                            <input type="file" class="file-input">
+                        </div>  
+
+                        <div class="upload-container" id="save-preset">
+                            <label>Save Preset</label>
+                            <input type="file" class="file-input">
+                        </div>
+        
+                        <div class="upload-container" id="load-preset">
+                            <label>Load Preset</label>
+                            <input type="file" class="file-input">
+                        </div>
+                    </div>
                 </div>
 
-                <div class="upload-container">
-                    <label>Load Preset</label>
-                    <input type="file" class="file-input">
-                </div>
-
-                <div class="upload-container">
-                    <label>Upload Song</label>
-                    <input type="file" class="file-input">
-                </div>
                 <label> | </label>
                 <a href="#">Home</a>
                 <a href="#">Playlists</a>
