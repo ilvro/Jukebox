@@ -92,7 +92,9 @@ div {
 button {
     color: white;
     background-color: transparent;
-    font: 16px'Times New Roman', Times, serif
+    font: 16px'Times New Roman', Times, serif;
+    cursor: pointer;
+    border: none;
 }
 /* */
 
@@ -109,6 +111,24 @@ button {
     justify-content: center;
     padding: 0px;
 }
+
+.header-dropdown {
+    margin: 20px;
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-content {
+    min-width: 127px;
+    display: none;
+    position: absolute;
+}
+
+.dropdown-content div {
+    padding: 10px 5px;
+}
+
+.header-dropdown:hover .dropdown-content {display: block};
 
 .upload-container {
     margin: 10px;
