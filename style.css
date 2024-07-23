@@ -50,6 +50,13 @@ h1::first-letter {
     font-size:40px;
 }
 
+h2 {
+    color: white;
+    font-family: 'Times New Roman', Times, serif;
+    font-weight: 100;
+    font-size: 30px;
+}
+
 h3 {
     font-family:'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
     font-size: 22px;
@@ -99,7 +106,7 @@ button {
 /* */
 
 /* ------------ header ------------*/
-#top-header {
+.top-header {
     background: linear-gradient(
         to bottom,
         rgba(0, 0, 0, 0.6) 20%,
@@ -109,8 +116,8 @@ button {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0px;
 }
+
 
 .header-dropdown {
     margin: 20px;
@@ -157,16 +164,80 @@ button {
     opacity: 0;
 }
 
-#navbar-home-playlists a {
+.navbar-home-playlists a {
     text-decoration: none;
     margin: 15px;
 }
 
-#navbar-home-playlists {
+.navbar-home-playlists {
     position: absolute;
     right: 40px;
     display: flex;
     align-items: center;
+}
+/*
+
+/* ---------- upload popup from the dropdown menu ---------- */
+#upload-popup {
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, 0.3);
+    left: 50%;
+    top: 45%;
+    width: 35%;
+    height: 45%;
+    transform: translate(-50%, -50%);
+    padding: 10px;
+    position: fixed;
+    z-index: 3;
+    display: none;
+}
+
+.popup label {
+    font-size: 28px;
+}
+
+.genre-checkboxes label {
+    font-size: 16px;
+}
+  
+.upload-step label {
+    display: block;
+    margin-bottom: 5px;
+}
+  
+.upload-step input[type="file"] {
+    width: 100%;
+    padding: 5px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: white;
+}
+
+.genre-checkboxes {
+    display: flex;
+    gap: 10px;
+}
+  
+.genre-checkboxes input[type="checkbox"] {
+    display: none;
+}
+  
+.genre-btn {
+    display: inline-block;
+    background-color: rgba(12, 7, 7, 0.2);
+    color: white;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background-color 0.3s, transform 0.1s;
+}
+  
+.genre-checkboxes input[type="checkbox"]:checked + .genre-btn {
+    background-color: rgba(43, 219, 160, 0.5);
+    transform: scale(1.05);
+}
+  
+.genre-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
 }
 /*
 
