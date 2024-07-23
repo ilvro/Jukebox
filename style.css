@@ -1,3 +1,14 @@
+#dimmer {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    background-color: black;
+    opacity: 0;
+    z-index: 1;
+    visibility: hidden;
+    transition: visibility 0.3s ease, opacity 0.3s ease;
+}
+
 body {
     font-family: Arial, sans-serif;
     margin: 0;
@@ -101,7 +112,16 @@ button {
     background-color: transparent;
     font: 16px'Times New Roman', Times, serif;
     cursor: pointer;
-    border: none;
+    border: 1px solid transparent;
+    transition: border-bottom 0.3s ease;
+}
+
+.button:hover { /* i know this looks weird because theres a button element but this is better */
+    border-bottom: 1px solid rgb(43, 219, 160);
+}
+
+.red_button:hover {
+    border-bottom: 1px solid rgb(238, 66, 14);
 }
 /* */
 
@@ -148,7 +168,6 @@ button {
 
 .upload-container {
     position: relative;
-    width: 100%;
 }
 
 .upload-container:hover {
@@ -186,31 +205,44 @@ button {
     width: 35%;
     height: 45%;
     transform: translate(-50%, -50%);
-    padding: 10px;
     position: fixed;
-    z-index: 3;
-    display: none;
+    z-index: 2;
+    opacity: 0;
+    transition: visibility 0.3s ease, opacity 0.3s ease;
+}
+
+.popup-header {
+    background-color: rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: right;
 }
 
 .popup label {
-    font-size: 28px;
+    font-size: 24px;
 }
 
 .genre-checkboxes label {
     font-size: 16px;
+    min-width: 52px;
 }
-  
 .upload-step label {
     display: block;
     margin-bottom: 5px;
+    margin-left: 10px;
 }
   
 .upload-step input[type="file"] {
-    width: 100%;
+    width: 25%;
     padding: 5px;
     background-color: rgba(255, 255, 255, 0.1);
-    border: none;
-    color: white;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 5px;
+}
+
+.upload-step input[type="file"]::file-selector-button {
+    display: none;
 }
 
 .genre-checkboxes {
@@ -223,7 +255,6 @@ button {
 }
   
 .genre-btn {
-    display: inline-block;
     background-color: rgba(12, 7, 7, 0.2);
     color: white;
     padding: 5px 10px;
@@ -232,12 +263,23 @@ button {
 }
   
 .genre-checkboxes input[type="checkbox"]:checked + .genre-btn {
-    background-color: rgba(43, 219, 160, 0.5);
+    background-color: rgba(43, 219, 160, 0.5); /* wanted to make this border-bottom but it doesn't look as good */
     transform: scale(1.05);
 }
   
 .genre-btn:hover {
     background-color: rgba(255, 255, 255, 0.1);
+}
+
+.upload-end-btns {
+    display: flex;
+    justify-content: right;
+    margin-top: 8px;
+    margin-bottom: 2px;
+}
+
+.upload-end-btns button {
+    font-size: 18px;
 }
 /*
 

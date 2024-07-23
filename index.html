@@ -7,11 +7,12 @@
     </head>
 
     <body>
+        <div id="dimmer"></div>
         <header class="top-header">
             <h1 class="main-title">JUKEBOX</h1>
             <nav class="navbar-home-playlists">
                 <div class="header-dropdown">
-                    <button class="button" id="manage-songs-btn">Manage Songs</button>
+                    <button id="manage-songs-btn">Manage Songs</button>
                     <div class="dropdown-content">
                         <div class="upload-container" id="upload-song-btn">
                             <button>Upload Song</button>
@@ -56,44 +57,58 @@
             </div>
 
             <div id="upload-popup" class="popup">
+                <header class="popup-header">
+                    <div class="upload-end-btns">
+                        <button id="upload-submit" class="button">Upload</button>
+                        <button id="upload-cancel" class="red_button">X</button>
+                    </div>
+                </header>
                 <div class="popup-content">
-                    <h2>Upload Song</h2>
+                    <br><br>
                     <div class="upload-step">
                         <label>1. Select a .mp3 or .mp4 file:</label>
-                        <input type="file" id="song-file" accept=".mp3,.mp4">
-                    </div>
-                    <div class="upload-step">
-                        <label>2. Select an image to use as thumbnail:</label>
-                        <input type="file" id="thumbnail-file" accept="image/*">
+                        <div class="input-box">
+                            <input type="file" id="song-file" accept=".mp3,.mp4">
+                        </div>
                     </div>
 
+                    <br>
+                    <div class="upload-step">
+                        <label>2. Select an image to use as thumbnail:</label>
+                        <div class="input-box">
+                            <input type="file" id="thumbnail-file" accept="image/*">
+                        </div>
+                    </div>
+
+                    <br>
                     <div class="upload-step">
                         <label>3. Select the song's genres:</label>
                         <div class="genre-checkboxes">
                             <input type="checkbox" id="tag-ambient" name="tag" value="ambient">
                             <label for="tag-ambient" class="genre-btn">ambient</label>
-
+    
                             <input type="checkbox" id="tag-music" name="tag" value="music">
                             <label for="tag-music" class="genre-btn">music</label>
-
+                        </div>
+                            
+                        <div class="genre-checkboxes">
                             <input type="checkbox" id="genre-modern" name="genre" value="modern">
                             <label for="genre-modern" class="genre-btn">modern</label>
-
+    
                             <input type="checkbox" id="genre-fantasy" name="genre" value="fantasy">
                             <label for="genre-fantasy" class="genre-btn">fantasy</label>
-
+    
                             <input type="checkbox" id="genre-sci-fi" name="genre" value="sci-fi">
                             <label for="genre-sci-fi" class="genre-btn">sci-fi</label>
-
+    
                             <input type="checkbox" id="genre-horror" name="genre" value="horror">
                             <label for="genre-horror" class="genre-btn">horror</label>
-
+    
                             <input type="checkbox" id="genre-battle" name="genre" value="battle">
                             <label for="genre-battle" class="genre-btn">battle</label>
+
                         </div>
                     </div>
-                    <button id="upload-submit">Upload</button>
-                    <button id="upload-cancel">Cancel</button>
                 </div>
             </div>
         </section>
