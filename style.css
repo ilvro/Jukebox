@@ -97,7 +97,6 @@ input {
     border: 0px;
     background-color: rgba(0, 0, 0, 0.2);
     position: relative;
-    margin-right: 340px;
     align-self: center;
     outline: 0;
 }
@@ -199,7 +198,7 @@ button {
 /* ---------- upload popup from the dropdown menu ---------- */
 #upload-popup {
     border-radius: 4px;
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: rgba(36, 34, 34, 0.281);
     left: 50%;
     top: 45%;
     width: 35%;
@@ -222,10 +221,20 @@ button {
     font-size: 24px;
 }
 
+#or {
+    font-size: 16px;
+    margin-top: 5px;
+    /*
+    margin-right: 12px;
+    margin-left: 12px;*/
+    margin-left: 95px;
+}
+
 .genre-checkboxes label {
     font-size: 16px;
     min-width: 52px;
 }
+
 .upload-step label {
     display: block;
     margin-bottom: 5px;
@@ -233,21 +242,24 @@ button {
 }
   
 .upload-step input[type="file"] {
-    width: 25%;
+    width: 30%;
     padding: 5px;
     background-color: rgba(255, 255, 255, 0.1);
     cursor: pointer;
     border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 5px;
 }
 
 .upload-step input[type="file"]::file-selector-button {
     display: none;
 }
 
+.upload-step input {
+    margin-left: 10px;
+    border-radius: 5px;
+}
+
 .genre-checkboxes {
     display: flex;
-    gap: 10px;
 }
   
 .genre-checkboxes input[type="checkbox"] {
@@ -260,6 +272,7 @@ button {
     padding: 5px 10px;
     cursor: pointer;
     transition: background-color 0.3s, transform 0.1s;
+    border-radius: 4px;
 }
   
 .genre-checkboxes input[type="checkbox"]:checked + .genre-btn {
