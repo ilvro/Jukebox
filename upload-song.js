@@ -17,7 +17,7 @@ youtubeLinkInput.addEventListener('paste', (event) => {
 });
 
 function downloadVideo(youtubeLink) {
-    fetch('http://localhost:3000/echo', { // will change this url later when the server is deployed
+    fetch('http://localhost:3000/download', { // will change this url later when the server is deployed. currently doesn't work on github pages
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
