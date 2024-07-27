@@ -6,6 +6,7 @@ const youtubeLinkInput = document.getElementById('youtube-link');
 const songFileInput = document.getElementById('song-file');
 const thumbnailFileInput = document.getElementById('thumbnail-file');
 const dimmer = document.getElementById('dimmer');
+const songGrid = document.getElementById('song_grid');
 
 youtubeLinkInput.addEventListener('paste', async (event) => {
     let youtubeLink = event.clipboardData.getData("text");
@@ -66,7 +67,22 @@ async function downloadVideo(youtubeLink) {
 
 
 uploadSubmit.addEventListener('click', () => {
+    // remember to loop through added genres later
+    const thumbnail = thumbnailFileInput.files[0];
+    const audio = songFileInput.files[0];
+    const title = thumbnail.name.toString().slice(0, -4);
 
+    console.log(thumbnail);
+    console.log(audio);
+
+    const songElement = document.createElement('div');
+    songElement.classList.add('song_item');
+    songElement.innerHTML = `
+        <h3>${title}</h3>
+        <p>ambient + music</p>
+        <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
+    `;
+    songGrid.appendChild(songElement);
 });
 
 // ------------------- styling ------------------------------
