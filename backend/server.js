@@ -20,7 +20,7 @@ app.post('/download/audio', async (req, res) => {
       res.header('Content-Type', 'audio/mpeg');
       res.set('Access-Control-Expose-Headers', 'Content-Disposition');
 
-      ytdl(url, {format: 'mp3'}).pipe(res);
+      ytdl(url, {filter: 'audioonly'}).pipe(res);
     } 
     catch (error) {
       console.error(error);
