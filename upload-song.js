@@ -3,29 +3,65 @@ const uploadPopup = document.getElementById('upload-popup');
 const uploadSubmit = document.getElementById('upload-submit');
 const uploadCancel = document.getElementById('upload-cancel');
 const youtubeLinkInput = document.getElementById('youtube-link');
+const songFileInput = document.getElementById('song-file');
+const thumbnailFileInput = document.getElementById('thumbnail-file');
 const dimmer = document.getElementById('dimmer');
 
-youtubeLinkInput.addEventListener('paste', (event) => {
+youtubeLinkInput.addEventListener('paste', async (event) => {
     let youtubeLink = event.clipboardData.getData("text");
-    if (youtubeLink.includes("youtube.com/watch?v=")) {
-        // server should handle this
-        downloadVideo(youtubeLink);
-    }
-    else {
-        console.log("invalid url")
+    if (youtubeLink.includes('youtube.com/watch?v=')) {
+        await downloadVideo(youtubeLink);
+    } else {
+        console.log('invalid url');
     }
 });
 
-function downloadVideo(youtubeLink) {
-    fetch('http://localhost:3000/download', { // will change this url later when the server is deployed. currently doesn't work on github pages
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({message: youtubeLink})
-      })
-        .then(response => response.text())
-        .then(data => console.log(data));      
+async function downloadVideo(youtubeLink) {
+    try {
+        // download audio
+        const audioResponse = await fetch('http://localhost:3000/download/audio', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({message: youtubeLink})
+        });
+
+        if (!audioResponse.ok) {
+            throw new Error(`error: ${audioResponse.status}`);
+        }
+        const videoTitle = audioResponse.headers.get('Content-Disposition').split('"')[1].toString().slice(0, -4);
+        const audioBlob = await audioResponse.blob();
+        const audioFile = new File([audioBlob], videoTitle + '.mp3', { type: "audio/mpeg" });
+
+        // download thumbnail
+        const thumbnailResponse = await fetch('http://localhost:3000/download/thumbnail', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({message: youtubeLink})
+        });
+
+        if (!thumbnailResponse.ok) {
+            throw new Error(thumbnailResponse.status);
+        }
+
+        const thumbnailBlob = await thumbnailResponse.blob();
+        const thumbnailFile = new File([thumbnailBlob], videoTitle + '.jpg', { type: thumbnailResponse.headers.get('Content-Type') });
+
+        // add files to inputs
+        const audioDataTransfer = new DataTransfer();
+        audioDataTransfer.items.add(audioFile);
+        songFileInput.files = audioDataTransfer.files;
+
+        const thumbnailDataTransfer = new DataTransfer();
+        thumbnailDataTransfer.items.add(thumbnailFile);
+        thumbnailFileInput.files = thumbnailDataTransfer.files;
+
+    } catch (error) {
+        console.error(error);
+    }
 }
 
 
