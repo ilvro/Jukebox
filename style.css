@@ -20,6 +20,8 @@ body {
     background-attachment: fixed;
     position: relative;
     min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 body::before { /* darken the background */
@@ -69,7 +71,7 @@ h2 {
 }
 
 h3 {
-    font-family:'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif;
+    font-family:'Times New Roman', Times, serif;
     font-size: 22px;
     font-weight:10;
 }
@@ -208,6 +210,7 @@ button {
     z-index: 2;
     opacity: 0;
     transition: visibility 0.3s ease, opacity 0.3s ease;
+    visibility: hidden;
 }
 
 .popup-header {
@@ -324,44 +327,46 @@ button {
 /* ---------------- grid --------------- */
 
 .song_grid {
-    position: relative;  
+    flex-grow: 1;
     display: grid;
-    height: 100vh;
-    width: 50%;
-    margin-inline: auto;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 20px;
-    padding: 20px;
-}
-
-.song_grid::before { /* shadow background */    
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: black;
+    gap:70px;
+    max-width: 1200px;
+    margin: 20px auto;
+    background-color: rgba(0, 0, 0, 0.1);
     border-radius: 15px;
-    opacity: 0.1;
+    
 }
 
 .song_item {
-    margin-left: 10px;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    border-radius: 8px;
     transition: transform 0.3s ease;
-    z-index: 0;
+    width: 100%;
 }
 
 .song_item:hover {
-    transform: scale(1.004);
+    transform: scale(1.005);
+}
+
+.song_item h3 {
+    font-size: 20px;
+    margin: 10px 0 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .song_item p {
-    position: absolute;
-    margin-top: -16px;
+    font-size: 14px;
+    margin: 2px;
 }
 
 .song_item img {
-    margin-top: 4px;
+    width: 100%;
+    height: 160px;
+    object-fit: cover;
     border-radius: 4px;
 }
