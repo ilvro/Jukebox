@@ -72,9 +72,6 @@ uploadSubmit.addEventListener('click', () => {
     const audio = songFileInput.files[0];
     const title = thumbnail.name.toString().slice(0, -4);
 
-    console.log(thumbnail);
-    console.log(audio);
-
     const songElement = document.createElement('div');
     songElement.classList.add('song_item');
     songElement.innerHTML = `
@@ -83,6 +80,14 @@ uploadSubmit.addEventListener('click', () => {
         <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
     `;
     songGrid.appendChild(songElement);
+
+    // audio play test
+    const audioUrl = URL.createObjectURL(audio);
+    console.log('Audio URL:', audioUrl);
+    
+    const audioTest = new Audio(audioUrl);
+    audioTest.play().then(console.log('audio play started'));
+
 });
 
 // ------------------- styling ------------------------------
