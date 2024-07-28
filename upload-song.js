@@ -1,3 +1,5 @@
+import { addSongToPlayer } from "./player.js";
+
 const uploadSongBtn = document.getElementById('upload-song-btn');
 const uploadPopup = document.getElementById('upload-popup');
 const uploadSubmit = document.getElementById('upload-submit');
@@ -84,6 +86,9 @@ uploadSubmit.addEventListener('click', () => {
         <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
     `;
     songGrid.appendChild(songElement);
+    addSongToPlayer(songElement, audio);
+
+    // fade out the ui
 
     thumbnailFileInput.value = null;
     songFileInput.value = null;
@@ -95,16 +100,6 @@ uploadSubmit.addEventListener('click', () => {
        uploadPopup.style.visibility = 'hidden';
        dimmer.style.visibility = 'hidden'; 
     }, 10);
-
-    // audio play test
-    /*
-    const audioUrl = URL.createObjectURL(audio);
-    console.log('Audio URL:', audioUrl);
-    
-    const audioTest = new Audio(audioUrl);
-    audioTest.play().then(console.log('audio play started'));
-    */
-
 });
 
 // ------------------- styling ------------------------------
