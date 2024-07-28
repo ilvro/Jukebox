@@ -5,6 +5,10 @@ const uploadCancel = document.getElementById('upload-cancel');
 const youtubeLinkInput = document.getElementById('youtube-link');
 const songFileInput = document.getElementById('song-file');
 const thumbnailFileInput = document.getElementById('thumbnail-file');
+
+const savePresetBtn = document.getElementById('save-preset');
+const loadPresetBtn = document.getElementById('load-preset');
+
 const dimmer = document.getElementById('dimmer');
 const songGrid = document.getElementById('song_grid');
 
@@ -81,12 +85,25 @@ uploadSubmit.addEventListener('click', () => {
     `;
     songGrid.appendChild(songElement);
 
+    thumbnailFileInput.value = null;
+    songFileInput.value = null;
+    youtubeLinkInput.value = null;
+    
+    uploadPopup.style.opacity = '0';
+    dimmer.style.opacity = '0';
+    setTimeout(() => {
+       uploadPopup.style.visibility = 'hidden';
+       dimmer.style.visibility = 'hidden'; 
+    }, 10);
+
     // audio play test
+    /*
     const audioUrl = URL.createObjectURL(audio);
     console.log('Audio URL:', audioUrl);
     
     const audioTest = new Audio(audioUrl);
     audioTest.play().then(console.log('audio play started'));
+    */
 
 });
 
