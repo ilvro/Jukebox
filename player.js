@@ -1,4 +1,4 @@
-let currentAudio = null;
+let activeAudios = {};
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
@@ -6,44 +6,49 @@ function createAudioElement(audioUrl) {
     return audio;
 }
 
-function playAudio(audioElement, songItem) {
-    if (currentAudio && currentAudio !== audioElement) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-        document.querySelector('.song_item.playing').classList.remove('playing');
-    }
+function toggleAudio(audioElement, songItem) {
+    const songId = songItem.dataset.songId;
 
     if (audioElement.paused) {
         audioElement.play();
         songItem.classList.add('playing');
+        activeAudios[songId] = audioElement;
     } else {
         audioElement.pause();
+        //audioElement.currentTime = 0;
         songItem.classList.remove('playing');
+        delete activeAudios[songId];
     }
-
-    currentAudio = audioElement;
 }
 
 function addClickListenerToSongItem(songItem, audio) {
     songItem.addEventListener('click', () => {
-        playAudio(audio, songItem);
+        toggleAudio(audio, songItem);
     });
 }
 
-function initializeExistingSongs() { // should be used when 'load preset' is done
+/*
+should be used when 'load preset' is done
+
+function initializeExistingSongs() {
     const songItems = document.querySelectorAll('.song_item');
-    songItems.forEach((songItem) => {
+    songItems.forEach((songItem, index) => {
         const audioUrl = songItem.dataset.audioUrl;
         if (audioUrl) {
             const audio = createAudioElement(audioUrl);
+            songItem.dataset.songId = `song-${index}`;
             addClickListenerToSongItem(songItem, audio);
         }
     });
 }
+*/
 
 function addSongToPlayer(songElement, audioFile) {
     const audioUrl = URL.createObjectURL(audioFile);
     songElement.dataset.audioUrl = audioUrl;
+    
+    const songId = `song-${Date.now()}`;
+    songElement.dataset.songId = songId;
     
     const audio = createAudioElement(audioUrl);
     addClickListenerToSongItem(songElement, audio);
