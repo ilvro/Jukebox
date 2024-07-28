@@ -89,7 +89,6 @@ uploadSubmit.addEventListener('click', () => {
     addSongToPlayer(songElement, audio);
 
     // fade out the ui
-
     thumbnailFileInput.value = null;
     songFileInput.value = null;
     youtubeLinkInput.value = null;
