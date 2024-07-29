@@ -8,8 +8,9 @@ const youtubeLinkInput = document.getElementById('youtube-link');
 const songFileInput = document.getElementById('song-file');
 const thumbnailFileInput = document.getElementById('thumbnail-file');
 
-const savePresetBtn = document.getElementById('save-preset');
-const loadPresetBtn = document.getElementById('load-preset');
+const savePresetBtn = document.getElementById('save-preset-btn');
+const loadPresetBtn = document.getElementById('load-preset-btn');
+const supportsFileSystemAccess = 'showDirectoryPicker' in window;
 
 const dimmer = document.getElementById('dimmer');
 const songGrid = document.getElementById('song_grid');
@@ -71,6 +72,83 @@ async function downloadVideo(youtubeLink) {
     }
 }
 
+async function savePreset() {
+    if (!supportsFileSystemAccess) {
+        alert("your browser doesn't support the file system access api. switch to a modern browser");
+        return;
+    }
+
+    try {
+        const directoryHandle = await window.showDirectoryPicker();
+        const songItems = document.querySelectorAll('.song_item');
+
+        for (const songItem of songItems) {
+            const title = songItem.querySelector('h3').textContent;
+            const audioUrl = songItem.CDATA_SECTION_NODE.audioUrl;
+            const imageUrl = songItem.querySelector('img').src;
+
+            // urls are temporary, so we have to work backwards and get the file itself
+            const audioResponse = await fetch(audioUrl);
+            const audioBlob = await audioResponse.blob();
+
+            const imageResponse = await fetch(imageUrl);
+            const imageBlob = await imageResponse.blob();
+
+            // save
+            const audioFileHandle = await directoryHandle.getFileHandle(`${title}.mp3`, { create: true });
+            const audioWritable = await audioFileHandle.createWritable();
+            await audioWritable.write(audioBlob);
+            await audioWritable.close();
+
+            const imageFileHandle = await directoryHandle.getFileHandle(`${title}.jpg`, { create: true });
+            const imageWritable = await imageFileHandle.createWritable();
+            await imageWritable.write(imageBlob);
+            await imageWritable.close();
+        }
+        console.log('preset saved');
+    }
+    catch {
+        console.error('error saving preset: ', error)
+    }
+}
+
+async function loadPreset() {
+    if (!supportsFileSystemAccess) {
+        alert("your browser doesn't support the file system access api. switch to a modern browser");
+        return;
+    }
+    try {
+        const directoryHandle = await window.showDirectoryPicker();
+        songGrid.innerHTML = '';
+
+        for await (const entry of directoryHandle.values()) {
+            if (entry.kind === 'file' && entry.name.endsWith('.mp3')) {
+                const title = entry.name.slice(0, -4); // remove .mp3 from the name
+                const audio = await entry.getFile();
+                const imageEntry = await directoryHandle.getFileHandle(`${title}.jpg`);
+                const thumbnail = await imageEntry.getFile();
+
+                const songElement = document.createElement('div');
+                songElement.classList.add('song_item');
+                songElement.innerHTML = `
+                    <h3>${title}</h3>
+                    <p>ambient + music</p>
+                    <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
+                `
+                songGrid.appendChild(songElement);
+
+                addSongToPlayer(songElement, audio);
+            }
+        }
+        console.log('loaded preset');
+    }
+    catch {
+        console.error('error loading preset: ', error);
+    }
+}
+
+savePresetBtn.addEventListener('click', savePreset);
+loadPresetBtn.addEventListener('click', loadPreset);
 
 uploadSubmit.addEventListener('click', () => {
     // remember to loop through added genres later
