@@ -36,7 +36,7 @@
             </nav>
         </header>
 
-        <div class="genre_filters">
+        <div class="genre-filters">
             <input placeholder=" Search for...">
                 <a href="#" class="filter-link selected" data-filter="all">Show All</a>
                 <a href="#" class="filter-link" data-filter="modern">modern</a>
@@ -46,8 +46,8 @@
                 <a href="#" class="filter-link" data-filter="battle">battle</a>
             </div>
 
-            <div class="song_grid_container">
-                <div class="song_grid" id="song_grid">
+            <div class="song-grid-container">
+                <div class="song-grid" id="song-grid">
                 </div>           
             </div>
 
@@ -55,7 +55,7 @@
                 <header class="popup-header">
                     <div class="upload-end-btns">
                         <button id="upload-submit" class="button">Upload</button>
-                        <button id="upload-cancel" class="red_button">X</button>
+                        <button id="upload-cancel" class="red-button">X</button>
                     </div>
                 </header>
                 <div class="popup-content">
@@ -80,7 +80,7 @@
                     <br>
                     <div class="upload-step">
                         <label>3. Select the song's genres:</label>
-                        <div class="genre-checkboxes">
+                        <div class="genre-checkboxes" id="tag-checkboxes">
                             <input type="checkbox" id="tag-ambient" name="tag" value="ambient">
                             <label for="tag-ambient" class="genre-btn">ambient</label>
     
@@ -88,7 +88,7 @@
                             <label for="tag-music" class="genre-btn">music</label>
                         </div>
                             
-                        <div class="genre-checkboxes">
+                        <div class="genre-checkboxes" id="genre-checkboxes">
                             <input type="checkbox" id="genre-modern" name="genre" value="modern">
                             <label for="genre-modern" class="genre-btn">modern</label>
     
