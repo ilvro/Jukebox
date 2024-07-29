@@ -13,16 +13,7 @@ const loadPresetBtn = document.getElementById('load-preset-btn');
 const supportsFileSystemAccess = 'showDirectoryPicker' in window;
 
 const dimmer = document.getElementById('dimmer');
-const songGrid = document.getElementById('song_grid');
-
-youtubeLinkInput.addEventListener('paste', async (event) => {
-    let youtubeLink = event.clipboardData.getData("text");
-    if (youtubeLink.includes('youtube.com/watch?v=')) {
-        await downloadVideo(youtubeLink);
-    } else {
-        console.log('invalid url');
-    }
-});
+const songGrid = document.getElementById('song-grid');
 
 async function downloadVideo(youtubeLink) {
     try {
@@ -80,7 +71,7 @@ async function savePreset() {
 
     try {
         const directoryHandle = await window.showDirectoryPicker();
-        const songItems = document.querySelectorAll('.song_item');
+        const songItems = document.querySelectorAll('.song-item');
 
         for (const songItem of songItems) {
             const title = songItem.querySelector('h3').textContent;
@@ -129,7 +120,7 @@ async function loadPreset() {
                 const thumbnail = await imageEntry.getFile();
 
                 const songElement = document.createElement('div');
-                songElement.classList.add('song_item');
+                songElement.classList.add('song-item');
                 songElement.innerHTML = `
                     <h3>${title}</h3>
                     <p>ambient + music</p>
@@ -147,20 +138,56 @@ async function loadPreset() {
     }
 }
 
+function getSelectedTags() {
+    const tags = document.querySelectorAll('input[name="tag"]');
+    const selectedTags = [];
+    
+    tags.forEach(tag => {
+        if (tag.checked) {
+            selectedTags.push(tag.value);
+        }
+    })
+    return selectedTags;
+}
+
+function getSelectedGenres() {
+    const genres = document.querySelectorAll('input[name="genre"]');
+    const selectedGenres = [];
+    
+    genres.forEach(genre => {
+        if (genre.checked) {
+            selectedGenres.push(genre.value);
+        }
+    })
+    return selectedGenres;
+}
+
 savePresetBtn.addEventListener('click', savePreset);
 loadPresetBtn.addEventListener('click', loadPreset);
+
+youtubeLinkInput.addEventListener('paste', async (event) => {
+    let youtubeLink = event.clipboardData.getData("text");
+    if (youtubeLink.includes('youtube.com/watch?v=')) {
+        await downloadVideo(youtubeLink);
+    } else {
+        console.log('invalid url');
+    }
+});
 
 uploadSubmit.addEventListener('click', () => {
     // remember to loop through added genres later
     const thumbnail = thumbnailFileInput.files[0];
     const audio = songFileInput.files[0];
     const title = thumbnail.name.toString().slice(0, -4);
+    const genres = getSelectedGenres();
+    const tags = getSelectedTags();
 
     const songElement = document.createElement('div');
-    songElement.classList.add('song_item');
+    songElement.classList.add('song-item');
+    songElement.setAttribute('data-genres', genres.join(','));
     songElement.innerHTML = `
         <h3>${title}</h3>
-        <p>ambient + music</p>
+        <p>${tags.join(' + ')}</p>
         <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
     `;
     songGrid.appendChild(songElement);
