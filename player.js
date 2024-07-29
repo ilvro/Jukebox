@@ -27,22 +27,6 @@ function addClickListenerToSongItem(songItem, audio) {
     });
 }
 
-/*
-should be used when 'load preset' is done
-
-function initializeExistingSongs() {
-    const songItems = document.querySelectorAll('.song_item');
-    songItems.forEach((songItem, index) => {
-        const audioUrl = songItem.dataset.audioUrl;
-        if (audioUrl) {
-            const audio = createAudioElement(audioUrl);
-            songItem.dataset.songId = `song-${index}`;
-            addClickListenerToSongItem(songItem, audio);
-        }
-    });
-}
-*/
-
 function addSongToPlayer(songElement, audioFile) {
     const audioUrl = URL.createObjectURL(audioFile);
     songElement.dataset.audioUrl = audioUrl;
