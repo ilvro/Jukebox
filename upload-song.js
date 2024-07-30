@@ -75,7 +75,7 @@ async function savePreset() {
 
         for (const songItem of songItems) {
             const title = songItem.querySelector('h3').textContent;
-            const audioUrl = songItem.CDATA_SECTION_NODE.audioUrl;
+            const audioUrl = songItem.dataset.audioUrl;
             const imageUrl = songItem.querySelector('img').src;
 
             // urls are temporary, so we have to work backwards and get the file itself
