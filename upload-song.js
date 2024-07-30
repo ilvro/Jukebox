@@ -72,11 +72,15 @@ async function savePreset() {
     try {
         const directoryHandle = await window.showDirectoryPicker();
         const songItems = document.querySelectorAll('.song-item');
+        const presetData = [];
 
         for (const songItem of songItems) {
             const title = songItem.querySelector('h3').textContent;
             const audioUrl = songItem.dataset.audioUrl;
             const imageUrl = songItem.querySelector('img').src;
+
+            const genres = songItem.getAttribute('data-genres').split(',');
+            const tags = songItem.querySelector('p').textContent.split(' + ')
 
             // urls are temporary, so we have to work backwards and get the file itself
             const audioResponse = await fetch(audioUrl);
@@ -95,6 +99,12 @@ async function savePreset() {
             const imageWritable = await imageFileHandle.createWritable();
             await imageWritable.write(imageBlob);
             await imageWritable.close();
+
+            presetData.push({title, genres, tags});
+            const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
+            const presetMetadataWritable = await presetMetadataHandle.createWritable();
+            await presetMetadataWritable.write(JSON.stringify(presetData));
+            await presetMetadataWritable.close();
         }
         console.log('preset saved');
     }
@@ -112,24 +122,29 @@ async function loadPreset() {
         const directoryHandle = await window.showDirectoryPicker();
         songGrid.innerHTML = '';
 
-        for await (const entry of directoryHandle.values()) {
-            if (entry.kind === 'file' && entry.name.endsWith('.mp3')) {
-                const title = entry.name.slice(0, -4); // remove .mp3 from the name
-                const audio = await entry.getFile();
-                const imageEntry = await directoryHandle.getFileHandle(`${title}.jpg`);
-                const thumbnail = await imageEntry.getFile();
+        const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
+        const presetMetadataFile = await presetMetadataHandle.getFile();
+        const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-                const songElement = document.createElement('div');
-                songElement.classList.add('song-item');
-                songElement.innerHTML = `
-                    <h3>${title}</h3>
-                    <p>ambient + music</p>
-                    <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
-                `
-                songGrid.appendChild(songElement);
+        for (const songMetadata of presetMetadata) {
+            const {title, genres, tags} = songMetadata;
+    
+            const audioEntry = await directoryHandle.getFileHandle(`${title}.mp3`);
+            const audio = await audioEntry.getFile();
+            const thumbnailEntry = await directoryHandle.getFileHandle(`${title}.jpg`);
+            const thumbnail = await thumbnailEntry.getFile();
 
-                addSongToPlayer(songElement, audio);
-            }
+            const songElement = document.createElement('div');
+            songElement.classList.add('song-item');
+            songElement.setAttribute('data-genres', genres.join(','));
+            songElement.innerHTML = `
+                <h3>${title}</h3>
+                <p>${tags.join(' + ')}</p>
+                <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
+               `
+            songGrid.appendChild(songElement);
+
+            addSongToPlayer(songElement, audio);
         }
         console.log('loaded preset');
     }
