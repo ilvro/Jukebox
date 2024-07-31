@@ -75,7 +75,7 @@ async function savePreset() {
         const presetData = [];
 
         for (const songItem of songItems) {
-            const title = songItem.querySelector('h3').textContent;
+            const title = encodeURIComponent(songItem.querySelector('h3').textContent); // encoding prevents errors by removing special characters
             const audioUrl = songItem.dataset.audioUrl;
             const imageUrl = songItem.querySelector('img').src;
 
@@ -108,7 +108,7 @@ async function savePreset() {
         }
         console.log('preset saved');
     }
-    catch {
+    catch (error) {
         console.error('error saving preset: ', error)
     }
 }
@@ -138,9 +138,9 @@ async function loadPreset() {
             songElement.classList.add('song-item');
             songElement.setAttribute('data-genres', genres.join(','));
             songElement.innerHTML = `
-                <h3>${title}</h3>
+                <h3>${decodeURIComponent(title)}</h3>
                 <p>${tags.join(' + ')}</p>
-                <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
+                <img src="${URL.createObjectURL(thumbnail)}" alt="${decodeURIComponent(title)}">
                `
             songGrid.appendChild(songElement);
 
@@ -148,7 +148,7 @@ async function loadPreset() {
         }
         console.log('loaded preset');
     }
-    catch {
+    catch (error) {
         console.error('error loading preset: ', error);
     }
 }
