@@ -72,10 +72,32 @@ async function savePreset() {
     try {
         const directoryHandle = await window.showDirectoryPicker();
         const songItems = document.querySelectorAll('.song-item');
-        const presetData = [];
+        let presetData = [];
+        let i = 0;
+
+
+        const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
+        const metadataFile = await presetMetadataHandle.getFile();
+        presetData = JSON.parse(await metadataFile.text());
+
 
         for (const songItem of songItems) {
             const title = encodeURIComponent(songItem.querySelector('h3').textContent); // encoding prevents errors by removing special characters
+            try { // im not sure why there has to be a try catch block here but it errors when its removed
+                if (presetData[i].title) {
+                    console.log(`adding preset: - skipping ${decodeURIComponent(title)} (already in preset)`);
+                    i+=1;
+                    continue;
+                }
+                else {
+                    console.log(presetData.title);
+                }
+            }
+            catch (err) {
+                console.log(err);
+            }
+            
+
             const audioUrl = songItem.dataset.audioUrl;
             const imageUrl = songItem.querySelector('img').src;
 
@@ -105,6 +127,7 @@ async function savePreset() {
             const presetMetadataWritable = await presetMetadataHandle.createWritable();
             await presetMetadataWritable.write(JSON.stringify(presetData));
             await presetMetadataWritable.close();
+            i+=1;
         }
         console.log('preset saved');
     }
