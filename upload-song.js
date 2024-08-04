@@ -167,6 +167,7 @@ async function loadPreset() {
             addSongToPlayer(songElement, audio);
         }
         console.log('loaded preset');
+        document.dispatchEvent(new Event('songsUpdated'));
     }
     catch (error) {
         console.error('error loading preset: ', error);
@@ -227,6 +228,7 @@ uploadSubmit.addEventListener('click', () => {
     `;
     songGrid.appendChild(songElement);
     addSongToPlayer(songElement, audio);
+    document.dispatchEvent(new Event('songsUpdated'));
 
     // fade out the ui
     thumbnailFileInput.value = null;

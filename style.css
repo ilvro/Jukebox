@@ -345,11 +345,14 @@ button {
 }
 
 .song-item {
+    position: relative;
+    visibility: visible;
     display: flex;
     flex-direction: column;
     padding: 10px;
     border-radius: 8px;
-    transition: transform 0.3s ease;
+    opacity: 1;
+    transition: transform 0.3s ease, visibility 0.3s ease, opacity 0.3s ease, position 0.4s ease;
 }
 
 .song-item:hover {
