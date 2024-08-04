@@ -89,12 +89,9 @@ async function savePreset() {
                     i+=1;
                     continue;
                 }
-                else {
-                    console.log(presetData.title);
-                }
             }
             catch (err) {
-                console.log(err);
+                //
             }
             
 
