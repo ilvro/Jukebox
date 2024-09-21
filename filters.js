@@ -28,24 +28,6 @@ function filterSongs(genre) {
     })
 }
 
-/*
-function filterSongs(genre) {
-    const songs = document.querySelectorAll('.song-item');
-    songs.forEach(song => {
-        const songGenres = song.getAttribute('data-genres').split(',');
-        if (genre === 'all' || songGenres.includes(genre)) {
-            song.style.opacity = '1';
-            song.style.visibility = 'visible';
-            //song.style.position = 'relative';
-        }
-        else {
-            song.style.opacity = '0';
-            song.style.visibility = 'hidden';
-            //song.style.position = 'absolute';
-        }
-    })
-}*/
-
 document.addEventListener('songsUpdated', updateAllSongs);
 document.addEventListener('DOMContentLoaded', function() {
     const filterLinks = document.querySelectorAll('.genre-filters .filter-link');
