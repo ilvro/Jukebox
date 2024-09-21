@@ -18,13 +18,13 @@ const songGrid = document.getElementById('song-grid');
 async function downloadVideo(youtubeLink) {
     try {
         // download audio
-        const audioResponse = await fetch('http://localhost:3000/download/audio', {
+        const audioResponse = await fetch('https://jukebox-mu.vercel.app/api/download/audio', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+              'Content-Type': 'application/json'
             },
-            body: JSON.stringify({message: youtubeLink})
-        });
+            body: JSON.stringify({ message: youtubeLink })
+          });
 
         if (!audioResponse.ok) {
             throw new Error(`error: ${audioResponse.status}`);
@@ -34,13 +34,13 @@ async function downloadVideo(youtubeLink) {
         const audioFile = new File([audioBlob], videoTitle + '.mp3', { type: "audio/mpeg" });
 
         // download thumbnail
-        const thumbnailResponse = await fetch('http://localhost:3000/download/thumbnail', {
+        const thumbnailResponse = await fetch('https://jukebox-mu.vercel.app/api/download/thumbnail', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+              'Content-Type': 'application/json'
             },
-            body: JSON.stringify({message: youtubeLink})
-        });
+            body: JSON.stringify({ message: youtubeLink })
+          });
 
         if (!thumbnailResponse.ok) {
             throw new Error(thumbnailResponse.status);
