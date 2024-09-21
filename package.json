@@ -1,0 +1,27 @@
+{
+  "name": "jukebox",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilvro/Jukebox.git"
+  },
+  "keywords": [
+    "jukebox",
+    "audio-manager"
+  ],
+  "author": "ilvro",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ilvro/Jukebox/issues"
+  },
+  "dependencies": {
+    "@distube/ytdl-core": "^4.14.4",
+    "cors": "^2.8.5"
+  },
+  "homepage": "https://github.com/ilvro/Jukebox#readme"
+}
