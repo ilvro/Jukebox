@@ -14,8 +14,9 @@ app.post('/download/audio', async (req, res) => {
   if (ytdl.validateURL(url)) {
     try {
       const videoInfo = await ytdl.getInfo(url);
-      const videoTitle = videoInfo.videoDetails.title;
+      const videoTitle = videoInfo.videoDetails.title.replace('—', '-');
 
+      res.header('content-type', 'application/json')
       res.header('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
       res.header('Content-Type', 'audio/mpeg');
       res.set('Access-Control-Expose-Headers', 'Content-Disposition');
@@ -39,7 +40,7 @@ app.post('/download/thumbnail', async (req, res) => {
       const videoInfo = await ytdl.getInfo(url);
       const videoThumbnail = videoInfo.videoDetails.thumbnails.slice(-1)[0].url;
 
-      // Pipe the thumbnail directly to the response
+      // pipe the thumbnail to the response
       https.get(videoThumbnail, (response) => {
         res.header('Content-Type', response.headers['content-type']);
         response.pipe(res);
