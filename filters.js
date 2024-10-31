@@ -23,7 +23,12 @@ function filterSongs(genre) {
             songGrid.appendChild(song);
         }
         else {
-            songGrid.removeChild(song);
+            try {
+                songGrid.removeChild(song);
+            }
+            catch {
+                // changing from genre1 to genre2 (fantasy to modern for example) will error because it will loop through every single song, including the ones from other genres that aren't displayed and aren't children of the grid
+            }
         }
     })
 }
