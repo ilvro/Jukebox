@@ -96,7 +96,6 @@
                     //
                 }
                 
-
                 const audioUrl = songItem.dataset.audioUrl;
                 const imageUrl = songItem.querySelector('img').src;
 
@@ -156,17 +155,19 @@
                 const thumbnailEntry = await directoryHandle.getFileHandle(`${title}.jpg`);
                 const thumbnail = await thumbnailEntry.getFile();
 
-                const songElement = document.createElement('div');
-                songElement.classList.add('song-item');
-                songElement.setAttribute('data-genres', genres.join(','));
-                songElement.innerHTML = `
+                // create song item
+                const songItem = document.createElement('div');
+                songItem.classList.add('song-item');
+                songItem.setAttribute('draggable', 'true');
+                songItem.setAttribute('data-genres', genres.join(','));
+                songItem.innerHTML = `
                     <h3>${decodeURIComponent(title)}</h3>
                     <p>${tags.join(' + ')}</p>
                     <img src="${URL.createObjectURL(thumbnail)}" alt="${decodeURIComponent(title)}">
                 `
-                songGrid.appendChild(songElement);
+                songGrid.appendChild(songItem);
 
-                addSongToPlayer(songElement, audio);
+                addSongToPlayer(songItem, audio);
             }
             console.log('loaded preset');
             document.dispatchEvent(new Event('songsUpdated'));
@@ -220,16 +221,17 @@
         const genres = getSelectedGenres();
         const tags = getSelectedTags();
 
-        const songElement = document.createElement('div');
-        songElement.classList.add('song-item');
-        songElement.setAttribute('data-genres', genres.join(','));
-        songElement.innerHTML = `
+        const songItem = document.createElement('div');
+        songItem.classList.add('song-item');
+        songItem.setAttribute('draggable', 'true');
+        songItem.setAttribute('data-genres', genres.join(','));
+        songItem.innerHTML = `
             <h3>${title}</h3>
             <p>${tags.join(' + ')}</p>
             <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
         `;
-        songGrid.appendChild(songElement);
-        addSongToPlayer(songElement, audio);
+        songGrid.appendChild(songItem);
+        addSongToPlayer(songItem, audio);
         document.dispatchEvent(new Event('songsUpdated'));
 
         // fade out the ui
