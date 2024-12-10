@@ -77,10 +77,29 @@
             let presetData = [];
             let i = 0;
 
+            // properly load preset_metadata.json file
+            try {
+                const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
+                const metadataFile = await presetMetadataHandle.getFile();
+                const metadataText = await metadataFile.text();
 
-            const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
-            const metadataFile = await presetMetadataHandle.getFile();
-            presetData = JSON.parse(await metadataFile.text());
+                if (metadataText.trim() === "") {
+                    console.log('preset_metadata.json is empty. using an empty array')
+                    presetData = [];
+                }
+                else {
+                    presetData = JSON.parse(await metadataFile.text());
+                }
+            }
+            catch (err) {
+                if (err.name === 'NotFoundError') { // empty folder, create new file
+                    const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', {create: true});
+                    presetData = [];
+                }
+                else {
+                    throw err;
+                }
+            }
 
 
             for (const songItem of songItems) {
