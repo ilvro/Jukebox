@@ -22,7 +22,10 @@ function toggleAudio(audioElement, songItem) {
 }
 
 function addClickListenerToSongItem(songItem, audio) {
-    songItem.addEventListener('click', () => {
+    songItem.addEventListener('click', (event) => {
+        if (event.target.classList.contains('title-input')) {
+            return;
+        }
         toggleAudio(audio, songItem);
     });
 }

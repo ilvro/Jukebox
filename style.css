@@ -93,7 +93,7 @@ label {
 }
 
 input {
-    color: white;
+    color: rgb(255, 255, 255);
     font: 16px 'Times New Roman';
     padding: 3px 3px 3px 3px;
     border: 0px;
@@ -359,7 +359,7 @@ button {
     transform: scale(1.01);
 }
 
-.song-item.playing h3 {
+.song-item.playing input {
     color: rgb(43, 219, 160);
     transition: color 0.3s ease;
 }
@@ -375,14 +375,17 @@ button {
     border-radius: 4px;
 }
 
-.song-item h3 {
+.song-item input {
     font-size: 18px;
     margin: 10px 0 0px;
+    padding: 0px 0px 0px 0px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: white;
     transition: color 0.3s ease;
+    background-color: transparent;
+    border: 0px;
+    align-self: auto;
 }
 
 .song-item p {

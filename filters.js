@@ -10,7 +10,7 @@ function searchInput() {
     songGrid.innerHTML = '';
 
     allSongs.forEach(song => {
-        if (song.querySelector('h3').textContent.toLowerCase().includes(searchQuery)) {
+        if (song.querySelector('input').textContent.toLowerCase().includes(searchQuery)) {
             songGrid.appendChild(song);
         }
     });
@@ -58,6 +58,10 @@ function enableDragAndDrop() {
   
     songGrid.addEventListener('dragstart', (event) => {
       if (event.target.getAttribute('data-song-id') != null) {
+        const focusedInput = event.target.querySelector('.title-input:focus');
+        if (focusedInput) {
+            focusedInput.blur(); 
+        }
         event.dataTransfer.setData('text/plain', event.target.dataset.songId);
         event.target.classList.add('dragging');
       }
@@ -65,6 +69,10 @@ function enableDragAndDrop() {
   
     songGrid.addEventListener('dragover', (event) => {
       if (event.target.getAttribute('data-song-id') != null) {
+        const focusedInput = event.target.querySelector('.title-input:focus');
+        if (focusedInput) {
+            focusedInput.blur();
+        }
         event.preventDefault();
         const x = event.clientX;
         const y = event.clientY;
@@ -82,6 +90,10 @@ function enableDragAndDrop() {
   
     songGrid.addEventListener('drop', (event) => {
       if (event.target.getAttribute('data-song-id') != null) {
+        const focusedInput = event.target.querySelector('.title-input:focus');
+        if (focusedInput) {
+            focusedInput.blur();
+        }
         event.preventDefault();
         const draggingItem = document.querySelector('.dragging');
         draggingItem.classList.remove('dragging');
@@ -119,4 +131,3 @@ function enableDragAndDrop() {
   document.addEventListener('DOMContentLoaded', () => {
     enableDragAndDrop();
   });
-  
