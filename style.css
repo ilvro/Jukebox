@@ -117,7 +117,7 @@ button {
     transition: border-bottom 0.3s ease;
 }
 
-.button:hover { /* i know this looks weird because theres a button element but this is better */
+.button:hover { /* this looks weird because theres a button element but this is better */
     border-bottom: 1px solid rgb(43, 219, 160);
 }
 
@@ -227,9 +227,6 @@ button {
 #or {
     font-size: 16px;
     margin-top: 5px;
-    /*
-    margin-right: 12px;
-    margin-left: 12px;*/
     margin-left: 95px;
 }
 

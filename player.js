@@ -15,7 +15,6 @@ function toggleAudio(audioElement, songItem) {
         activeAudios[songId] = audioElement;
     } else {
         audioElement.pause();
-        //audioElement.currentTime = 0;
         songItem.classList.remove('playing');
         delete activeAudios[songId];
     }
