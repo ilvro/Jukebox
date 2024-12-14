@@ -192,7 +192,6 @@ async function loadPreset() {
 
         for (const songMetadata of presetMetadata) {
             const {currentTitle, genres, tags} = songMetadata;
-    
             const audioEntry = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
             const audio = await audioEntry.getFile();
             const thumbnailEntry = await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
@@ -270,7 +269,8 @@ uploadSubmit.addEventListener('click', () => {
     // remember to loop through added genres later
     const thumbnail = thumbnailFileInput.files[0];
     const audio = songFileInput.files[0];
-    const title = thumbnail.name.toString().slice(0, -4);
+    const title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
+    
     const genres = getSelectedGenres();
     const tags = getSelectedTags();
 
