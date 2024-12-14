@@ -10,7 +10,7 @@ function searchInput() {
     songGrid.innerHTML = '';
 
     allSongs.forEach(song => {
-        if (song.querySelector('input').textContent.toLowerCase().includes(searchQuery)) {
+        if (song.querySelector('input').value.toString().toLowerCase().includes(searchQuery)) {
             songGrid.appendChild(song);
         }
     });
