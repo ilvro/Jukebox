@@ -28,18 +28,21 @@
                     </div>
                 </div>
                 <label> | </label>
-                <a href="#">Home</a>
-                <a href="#">Playlists</a>
-                <a href="#">Soundpad</a>
+                <button class="show-player-button" onclick="togglePlayer()">Show Player</button>>
             </nav>
         </header>
+
+        <div class="player-container" id="player-container" style="display: none">
+            <h2>NOW PLAYING</h2>
+            <div id="track-list"></div>
+        </div>
 
         <div class="genre-filters">
             <input placeholder=" Search for..." oninput="searchInput()" id="searchBar">
                 <a href="#" class="filter-link selected" data-filter="all">Show All</a>
                 <a href="#" class="filter-link" data-filter="modern">modern</a>
                 <a href="#" class="filter-link" data-filter="fantasy">fantasy</a>
-                <a href="#" class="filter-link" data-filter="sci-fi">sci-fi</a>
+                <a href="#" class="filter-link" data-filter="sci-fi"
                 <a href="#" class="filter-link" data-filter="horror">horror</a>
                 <a href="#" class="filter-link" data-filter="battle">battle</a>
             </div>
@@ -85,7 +88,7 @@
                             <input type="checkbox" id="tag-music" name="tag" value="music">
                             <label for="tag-music" class="genre-btn">music</label>
                         </div>
-                            
+                          >sci-fi</a>  
                         <div class="genre-checkboxes" id="genre-checkboxes">
                             <input type="checkbox" id="genre-modern" name="genre" value="modern">
                             <label for="genre-modern" class="genre-btn">modern</label>
