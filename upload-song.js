@@ -190,12 +190,70 @@ async function loadPreset() {
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
+        const encodingMap = {
+            '%20': '_20', // space
+            '%21': '_21', // !
+            '%22': '_22', // "
+            '%23': '_23', // #
+            '%24': '_24', // $
+            '%25': '_25', // %
+            '%26': '_26', // &
+            '%27': '_27', // '
+            '%28': '_28', // (
+            '%29': '_29', // )
+            '%2A': '_2A', // *
+            '%2B': '_2B', // +
+            '%2C': '_2C', // ,
+            '%2D': '_2D', // -
+            '%2E': '_2E', // .
+            '%2F': '_2F', // /
+            '%3A': '_3A', // :
+            '%3B': '_3B', // ;
+            '%3C': '_3C', // <
+            '%3D': '_3D', // =
+            '%3E': '_3E', // >
+            '%3F': '_3F', // ?
+            '%40': '_40', // @
+            '%5B': '_5B', // [
+            '%5C': '_5C', // \
+            '%5D': '_5D', // ]
+            '%5E': '_5E', // ^
+            '%5F': '_5F', // _
+            '%60': '_60', // `
+            '%7B': '_7B', // {
+            '%7C': '_7C', // |
+            '%7D': '_7D', // }
+            '%7E': '_7E'  // ~
+        };
+
         for (const songMetadata of presetMetadata) {
             const {currentTitle, genres, tags} = songMetadata;
-            const audioEntry = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
-            const audio = await audioEntry.getFile();
-            const thumbnailEntry = await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
-            const thumbnail = await thumbnailEntry.getFile();
+            
+            // Try both encodings
+            let audioFile, thumbnailFile;
+            try {
+                // first try with the original % encoding
+                const audioEntry = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
+                const thumbnailEntry = await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
+                audioFile = await audioEntry.getFile();
+                thumbnailFile = await thumbnailEntry.getFile();
+            } catch (error) {
+                // try with _ encoding (google drive error)
+                try {
+                    let underscoreTitle = currentTitle;
+                    for (const [encoded, underscore] of Object.entries(encodingMap)) {
+                        underscoreTitle = underscoreTitle.split(encoded).join(underscore);
+                    }
+                    
+                    const audioEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.mp3`);
+                    const thumbnailEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.jpg`);
+                    audioFile = await audioEntry.getFile();
+                    thumbnailFile = await thumbnailEntry.getFile();
+                } catch (secondError) {
+                    console.error(`could not load files for ${decodeURIComponent(currentTitle)}`);
+                    continue;
+                }
+            }
 
             // create song item
             const songItem = document.createElement('div');
@@ -203,10 +261,10 @@ async function loadPreset() {
             songItem.setAttribute('draggable', 'true');
             songItem.setAttribute('data-genres', genres.join(','));
             songItem.innerHTML = `
-                <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"</input>
+                <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
                 <p>${tags.join(' + ')}</p>
-                <img src="${URL.createObjectURL(thumbnail)}" alt="${decodeURIComponent(currentTitle)}">
-            `
+                <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
+            `;
 
             // disables images and audio blob links from being dragged to the title input
             const titleInput = songItem.querySelector('.title-input');
@@ -218,8 +276,7 @@ async function loadPreset() {
                 event.stopPropagation();
             });
             songGrid.appendChild(songItem);
-            addSongToPlayer(songItem, audio);
-
+            addSongToPlayer(songItem, audioFile);
         }
         console.log('loaded preset');
         document.dispatchEvent(new Event('songsUpdated'));
