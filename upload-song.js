@@ -227,9 +227,10 @@ async function loadPreset() {
         };
 
         for (const songMetadata of presetMetadata) {
-            const {currentTitle, genres, tags} = songMetadata;
+            let {currentTitle, genres, tags} = songMetadata;
             
-            // Try both encodings
+            genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+            songMetadata.genres = genres;
             let audioFile, thumbnailFile;
             try {
                 // first try with the original % encoding
