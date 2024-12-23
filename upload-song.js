@@ -179,8 +179,7 @@ async function savePreset() {
 
 async function loadPreset() {
     if (!window.showDirectoryPicker) {
-        alert("Your browser doesn't support the File System Access API. Please select a zip file instead.");
-        
+        // android user, use alternate fallback function
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
         fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
@@ -297,6 +296,58 @@ async function loadPreset() {
     } catch (error) {
         console.error('error loading preset: ', error);
     }
+}
+
+async function handleFilesFallback(files) {
+    const fileMap = {};
+    for (const file of files) {
+        fileMap[file.name] = file;
+    }
+
+    if (!fileMap['preset_metadata.json']) {
+        alert('preset_metadata.json is missing');
+        return;
+    }
+
+    const presetMetadataFile = fileMap['preset_metadata.json'];
+    const presetMetadata = JSON.parse(await presetMetadataFile.text());
+
+    for (const songMetadata of presetMetadata) {
+        let { currentTitle, genres, tags } = songMetadata;
+        genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+
+        const audioFile = fileMap[`${currentTitle}.mp3`];
+        const thumbnailFile = fileMap[`${currentTitle}.jpg`];
+
+        if (!audioFile || !thumbnailFile) {
+            console.error(`missing files for ${currentTitle}`);
+            continue;
+        }
+
+        const songItem = document.createElement('div');
+        songItem.classList.add('song-item');
+        songItem.setAttribute('draggable', 'true');
+        songItem.setAttribute('data-genres', genres.join(','));
+        songItem.innerHTML = `
+            <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
+            <p>${tags.join(' + ')}</p>
+            <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
+        `;
+
+        const titleInput = songItem.querySelector('.title-input');
+        titleInput.addEventListener('dragover', (event) => {
+            event.preventDefault();
+        });
+        titleInput.addEventListener('drop', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+
+        songGrid.appendChild(songItem);
+        addSongToPlayer(songItem, audioFile);
+    }
+    console.log('loaded files via fallback');
+    document.dispatchEvent(new Event('songsUpdated'));
 }
 
 function getSelectedTags() {
