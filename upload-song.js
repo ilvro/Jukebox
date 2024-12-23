@@ -178,10 +178,21 @@ async function savePreset() {
 
 
 async function loadPreset() {
-    if (!supportsFileSystemAccess) {
-        alert("your browser doesn't support the file system access api. switch to a modern browser");
+    if (!window.showDirectoryPicker) {
+        alert("Your browser doesn't support the File System Access API. Please select a zip file instead.");
+        
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
+        fileInput.multiple = true;
+        fileInput.addEventListener('change', async (event) => {
+            const files = event.target.files;
+            await handleFilesFallback(files);
+        });
+        fileInput.click();
         return;
     }
+
     try {
         const directoryHandle = await window.showDirectoryPicker();
         songGrid.innerHTML = '';
@@ -227,10 +238,11 @@ async function loadPreset() {
         };
 
         for (const songMetadata of presetMetadata) {
-            let {currentTitle, genres, tags} = songMetadata;
-            
+            let { currentTitle, genres, tags } = songMetadata;
+
             genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
             songMetadata.genres = genres;
+
             let audioFile, thumbnailFile;
             try {
                 // first try with the original % encoding
@@ -239,13 +251,13 @@ async function loadPreset() {
                 audioFile = await audioEntry.getFile();
                 thumbnailFile = await thumbnailEntry.getFile();
             } catch (error) {
-                // try with _ encoding (google drive error)
+                // try with _ encoding
                 try {
                     let underscoreTitle = currentTitle;
                     for (const [encoded, underscore] of Object.entries(encodingMap)) {
                         underscoreTitle = underscoreTitle.split(encoded).join(underscore);
                     }
-                    
+
                     const audioEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.mp3`);
                     const thumbnailEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.jpg`);
                     audioFile = await audioEntry.getFile();
@@ -267,7 +279,7 @@ async function loadPreset() {
                 <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
             `;
 
-            // disables images and audio blob links from being dragged to the title input
+            // disables input and audio blob links from being dragged to the title input
             const titleInput = songItem.querySelector('.title-input');
             titleInput.addEventListener('dragover', (event) => {
                 event.preventDefault();
@@ -276,13 +288,13 @@ async function loadPreset() {
                 event.preventDefault();
                 event.stopPropagation();
             });
+
             songGrid.appendChild(songItem);
             addSongToPlayer(songItem, audioFile);
         }
         console.log('loaded preset');
         document.dispatchEvent(new Event('songsUpdated'));
-    }
-    catch (error) {
+    } catch (error) {
         console.error('error loading preset: ', error);
     }
 }
