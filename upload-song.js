@@ -1,4 +1,5 @@
 import { addSongToPlayer } from "./player.js";
+const API_URL = process.env.API_URL || 'https://jukebox-backend-16sx.onrender.com'
 
 const uploadSongBtn = document.getElementById('upload-song-btn');
 const uploadPopup = document.getElementById('upload-popup');
@@ -17,13 +18,13 @@ const songGrid = document.getElementById('song-grid');
 
 async function downloadVideo(youtubeLink) {
     try {
-        const audioPromise = fetch('http://localhost:3000/download/audio', {
+        const audioPromise = fetch(`${API_URL}/download/audio`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: youtubeLink })
         });
 
-        const thumbnailPromise = fetch('http://localhost:3000/download/thumbnail', {
+        const thumbnailPromise = fetch(`${API_URL}/download/thumbnail`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: youtubeLink })
