@@ -17,41 +17,42 @@ const songGrid = document.getElementById('song-grid');
 
 async function downloadVideo(youtubeLink) {
     try {
-        // download audio
-        //const audioResponse = await fetch('https://jukebox-mu.vercel.app/api/download/audio', {
-        const audioResponse = await fetch('http://localhost:3000/download/audio', {
+        const audioPromise = fetch('http://localhost:3000/download/audio', {
             method: 'POST',
-            headers: {
-            'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({message: youtubeLink})
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: youtubeLink })
         });
 
+        const thumbnailPromise = fetch('http://localhost:3000/download/thumbnail', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: youtubeLink })
+        });
+
+        const [audioResponse, thumbnailResponse] = await Promise.all([audioPromise, thumbnailPromise]); // send requests in parallel for faster downloading
+
+        // handle audio response
         if (!audioResponse.ok) {
-            throw new Error(`error: ${audioResponse.status}`);
+            throw new Error(`audio download failed: ${audioResponse.statusText}`);
         }
-        const videoTitle = audioResponse.headers.get('Content-Disposition').split('"')[1].toString().slice(0, -4);
+        const contentDisposition = audioResponse.headers.get('Content-Disposition');
+        if (!contentDisposition) {
+            throw new Error('missing Content-Disposition header in audio response');
+        }
+        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4);
         const audioBlob = await audioResponse.blob();
-        const audioFile = new File([audioBlob], videoTitle + '.mp3', { type: "audio/mpeg" });
+        const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: "audio/mpeg" });
 
-        // download thumbnail
-        //const thumbnailResponse = await fetch('https://jukebox-mu.vercel.app/api/download/thumbnail', {
-        const thumbnailResponse = await fetch('http://localhost:3000/download/thumbnail', {
-            method: 'POST',
-            headers: {
-            'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({message: youtubeLink})
+        // handle thumbnail response
+        if (!thumbnailResponse.ok) {
+            throw new Error(`thumbnail download failed: ${thumbnailResponse.statusText}`);
+        }
+        const thumbnailBlob = await thumbnailResponse.blob();
+        const thumbnailFile = new File([thumbnailBlob], `${videoTitle}.jpg`, {
+            type: thumbnailResponse.headers.get('Content-Type')
         });
 
-        if (!thumbnailResponse.ok) {
-            throw new Error(thumbnailResponse.status);
-        }
-
-        const thumbnailBlob = await thumbnailResponse.blob();
-        const thumbnailFile = new File([thumbnailBlob], videoTitle + '.jpg', { type: thumbnailResponse.headers.get('Content-Type') });
-
-        // add files to inputs
+        // populate input forms
         const audioDataTransfer = new DataTransfer();
         audioDataTransfer.items.add(audioFile);
         songFileInput.files = audioDataTransfer.files;
@@ -61,13 +62,13 @@ async function downloadVideo(youtubeLink) {
         thumbnailFileInput.files = thumbnailDataTransfer.files;
 
     } catch (error) {
-        console.error(error);
+        console.error('download failed:', error);
     }
 }
 
 async function savePreset() {
     if (!supportsFileSystemAccess) {
-        alert("Your browser doesn't support the File System Access API. Switch to a modern browser.");
+        alert("Your browser doesn't support the File System Access API. Switch to a desktop environment.");
         return;
     }
 
