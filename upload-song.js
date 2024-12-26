@@ -1,5 +1,5 @@
 import { addSongToPlayer } from "./player.js";
-const API_URL = process.env.API_URL || 'https://jukebox-backend-16sx.onrender.com'
+const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 
 const uploadSongBtn = document.getElementById('upload-song-btn');
 const uploadPopup = document.getElementById('upload-popup');
