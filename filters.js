@@ -1,4 +1,4 @@
-// Filtering ===================================================================================================================
+// filtering ===================================================================================================================
 let allSongs = [];
 function updateAllSongs() {
     allSongs = Array.from(document.querySelectorAll('.song-item'));
@@ -28,7 +28,7 @@ function filterSongs(genre) {
                 songGrid.removeChild(song);
             }
             catch {
-                // changing from genre1 to genre2 (fantasy to modern for example) will error because it will loop through every single song, including the ones from other genres that aren't displayed and aren't children of the grid
+                // changing from genre1 to genre2 (fantasy to mystery for example) will error because it will loop through every single song, including the ones from other genres that aren't displayed and aren't children of the grid
             }
         }
     })
@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Rearranging =========================================================================================================================
+// rearranging =========================================================================================================================
 function enableDragAndDrop() {
     const songGrid = document.getElementById('song-grid');
   

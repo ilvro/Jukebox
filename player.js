@@ -41,3 +41,5 @@ function addSongToPlayer(songElement, audioFile) {
 }
 
 export { addSongToPlayer };
+
+// ---------------------------------------------
