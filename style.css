@@ -816,7 +816,22 @@ button {
     margin-top: 10px;
 }
 
+.track-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+}
 
+.track-item span {
+    margin-right: 10px;
+}
+
+.progress-bar,
+.volume-control {
+    margin-left: 10px;
+    margin-right: 10px;
+    flex-grow: 1;
+}
 
 /* ------------ genre ----------- */
 

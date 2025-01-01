@@ -26,6 +26,7 @@ function addClickListenerToSongItem(songItem, audio) {
             return;
         }
         toggleAudio(audio, songItem);
+        updatePlayerUI();
     });
 }
 
@@ -38,8 +39,64 @@ function addSongToPlayer(songElement, audioFile) {
     
     const audio = createAudioElement(audioUrl);
     addClickListenerToSongItem(songElement, audio);
+
+    updatePlayerUI();
 }
 
 export { addSongToPlayer };
 
 // ---------------------------------------------
+const playerContainer = document.getElementById('player-container');
+const togglePlayerBtn = document.getElementById('show-player-button');
+function togglePlayer() {
+    playerContainer.style.display = playerContainer.style.display === 'none' ? 'block' : 'none';
+    togglePlayerBtn.textContent = togglePlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
+}
+window.togglePlayer = togglePlayer;
+
+function updatePlayerUI() {
+    const playerContainer = document.getElementById('track-list');
+    playerContainer.innerHTML = '';
+
+    Object.entries(activeAudios).forEach(([songId, audio]) => {
+        const trackDiv = document.createElement('div');
+        trackDiv.className = 'track-item';
+        trackDiv.dataset.songId = songId;
+
+        const title = document.createElement('span');
+        title.textContent = `Track: ${songId}`;
+        trackDiv.appendChild(title);
+
+        const progressBar = document.createElement('input');
+        progressBar.type = 'range';
+        progressBar.min = 0;
+        progressBar.max = audio.duration || 100;
+        progressBar.value = audio.currentTime;
+        progressBar.className = 'progress-bar';
+
+        progressBar.addEventListener('input', () => {
+            audio.currentTime = progressBar.value;
+        });
+
+        audio.addEventListener('timeupdate', () => {
+            progressBar.value = audio.currentTime;
+        });
+
+        trackDiv.appendChild(progressBar);
+
+        const volumeControl = document.createElement('input');
+        volumeControl.type = 'range';
+        volumeControl.min = 0;
+        volumeControl.max = 1;
+        volumeControl.step = 0.01;
+        volumeControl.value = audio.volume;
+        volumeControl.className = 'volume-control';
+
+        volumeControl.addEventListener('input', () => {
+            audio.volume = volumeControl.value;
+        });
+
+        trackDiv.appendChild(volumeControl);
+        playerContainer.appendChild(trackDiv);
+    });
+}
