@@ -63,9 +63,11 @@ function updatePlayerUI() {
         trackDiv.className = 'track-item';
         trackDiv.dataset.songId = songId;
 
-        const title = document.createElement('span');
-        title.textContent = `Track: ${songId}`;
-        trackDiv.appendChild(title);
+        const songElement = document.querySelector(`[data-song-id="${songId}`);
+        const songTitle = songElement.querySelector('input').value;
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = songTitle;
+        trackDiv.appendChild(titleSpan);
 
         const progressBar = document.createElement('input');
         progressBar.type = 'range';
