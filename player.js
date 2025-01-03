@@ -45,7 +45,8 @@ function addSongToPlayer(songElement, audioFile) {
 
 export { addSongToPlayer };
 
-// ---------------------------------------------
+// --------------------------------------------- 
+// song player
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
 function showPlayer() {
@@ -73,7 +74,7 @@ function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
     playerContainer.innerHTML = '';
 
-    Object.entries(activeAudios).forEach(([songId, audio]) => {
+    Object.entries(activeAudios).forEach(([songId, audio]) => { // add songs that are being played to the player
         const trackDiv = document.createElement('div');
         trackDiv.className = 'track-item';
         trackDiv.dataset.songId = songId;
@@ -115,5 +116,50 @@ function updatePlayerUI() {
 
         trackDiv.appendChild(volumeControl);
         playerContainer.appendChild(trackDiv);
+
+        // -----------------------------------------------------------------------
+        // loop selection
+        progressBar.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            const rect = progressBar.getBoundingClientRect();
+            const clickPosition = (event.clientX - rect.left) / rect.width;
+            const selectedTime = clickPosition * audio.duration;
+        
+            if (!progressBar.startLoopTime) {
+                progressBar.startLoopTime = selectedTime; // set start point
+            } else {
+                // set the end point
+                progressBar.endLoopTime = selectedTime; // set end point
+        
+                // ensure start is before end
+                if (progressBar.startLoopTime > progressBar.endLoopTime) {
+                    [progressBar.startLoopTime, progressBar.endLoopTime] = [
+                        progressBar.endLoopTime,
+                        progressBar.startLoopTime,
+                    ];
+                }
+        
+                // highlight the selected range
+                progressBar.style.background = `linear-gradient(to right, 
+                    #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                    #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                    #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
+                    #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
+            }
+        });
+
+        audio.addEventListener('timeupdate', () => { // apply loop (different function to make it more organized)
+            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+                if (audio.currentTime >= progressBar.endLoopTime) {
+                    audio.currentTime = progressBar.startLoopTime;
+                }
+            }
+        });
+
+        progressBar.addEventListener('dblclick', () => { // reset loop times on double click
+            progressBar.startLoopTime = undefined;
+            progressBar.endLoopTime = undefined;
+            progressBar.style.background = '#333';
+        });
     });
 }
