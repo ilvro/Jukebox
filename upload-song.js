@@ -393,7 +393,12 @@ uploadSubmit.addEventListener('click', () => {
     // remember to loop through added genres later
     const thumbnail = thumbnailFileInput.files[0];
     const audio = songFileInput.files[0];
-    const title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
+    let title;
+    try {
+        title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
+    } catch {
+        title = thumbnail.name.toString().slice(0, -4); // use raw name as fallback
+    }
     
     const genres = getSelectedGenres();
     const tags = getSelectedTags();
