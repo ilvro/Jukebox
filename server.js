@@ -39,7 +39,7 @@ app.post('/download/audio', async (req, res) => {
   const url = req.body.message;
   if (ytdl.validateURL(url)) {
     try {
-      const videoInfo = await ytdl.getInfo(url, agent);
+      const videoInfo = await ytdl.getInfo(url);
       const videoTitle = videoInfo.videoDetails.title.replace('—', '-');
 
       res.header('content-type', 'application/json')
@@ -65,7 +65,7 @@ app.post('/download/thumbnail', async (req, res) => {
   const url = req.body.message;
   if (ytdl.validateURL(url)) {
     try {
-      const videoInfo = await ytdl.getInfo(url, agent);
+      const videoInfo = await ytdl.getInfo(url);
       const videoThumbnail = videoInfo.videoDetails.thumbnails.slice(-1)[0].url;
 
       // pipe the thumbnail to the response

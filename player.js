@@ -47,12 +47,27 @@ export { addSongToPlayer };
 
 // ---------------------------------------------
 const playerContainer = document.getElementById('player-container');
-const togglePlayerBtn = document.getElementById('show-player-button');
-function togglePlayer() {
-    playerContainer.style.display = playerContainer.style.display === 'none' ? 'block' : 'none';
-    togglePlayerBtn.textContent = togglePlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
+const showPlayerBtn = document.getElementById('show-player-button');
+function showPlayer() {
+    playerContainer.classList.toggle('active');
+    playerContainer.classList.toggle('showBtn')
+    showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
 }
-window.togglePlayer = togglePlayer;
+window.showPlayer = showPlayer;
+
+playerContainer.addEventListener('mouseover', () => {
+    if (!playerContainer.classList.contains('active')) {
+        playerContainer.classList.add('active');
+        showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
+    }
+});
+
+playerContainer.addEventListener('mouseout', () => {
+    if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn')) {
+        playerContainer.classList.remove('active');
+        showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
+    }
+});
 
 function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
