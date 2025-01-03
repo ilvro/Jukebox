@@ -59,14 +59,12 @@ window.showPlayer = showPlayer;
 playerContainer.addEventListener('mouseover', () => {
     if (!playerContainer.classList.contains('active')) {
         playerContainer.classList.add('active');
-        showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
     }
 });
 
 playerContainer.addEventListener('mouseout', () => {
     if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn')) {
         playerContainer.classList.remove('active');
-        showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
     }
 });
 
@@ -118,48 +116,87 @@ function updatePlayerUI() {
         playerContainer.appendChild(trackDiv);
 
         // -----------------------------------------------------------------------
-        // loop selection
-        progressBar.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-            const rect = progressBar.getBoundingClientRect();
-            const clickPosition = (event.clientX - rect.left) / rect.width;
-            const selectedTime = clickPosition * audio.duration;
-        
-            if (!progressBar.startLoopTime) {
-                progressBar.startLoopTime = selectedTime; // set start point
-            } else {
-                // set the end point
-                progressBar.endLoopTime = selectedTime; // set end point
-        
-                // ensure start is before end
-                if (progressBar.startLoopTime > progressBar.endLoopTime) {
-                    [progressBar.startLoopTime, progressBar.endLoopTime] = [
-                        progressBar.endLoopTime,
-                        progressBar.startLoopTime,
-                    ];
+        // audio loop selection
+        let rightClickTimer = null;
+        progressBar.addEventListener('mousedown', (event) => {
+            if (event.button === 2) {
+                event.preventDefault();
+                if (rightClickTimer) { // reset loop times on rmb double click
+                    progressBar.startLoopTime = undefined;
+                    progressBar.endLoopTime = undefined;
+                    progressBar.style.background = '#333';
+                    rightClickTimer = null;
+                } else {
+                    rightClickTimer = setTimeout(() => {
+                        rightClickTimer = null;
+                    }, 300);
                 }
         
-                // highlight the selected range
-                progressBar.style.background = `linear-gradient(to right, 
-                    #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                    #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                    #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
-                    #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
+                const rect = progressBar.getBoundingClientRect();
+                const clickPosition = (event.clientX - rect.left) / rect.width;
+                const selectedTime = clickPosition * audio.duration;
+        
+                if (!progressBar.startLoopTime) {
+                    progressBar.startLoopTime = selectedTime; // set loop start point
+                } 
+                else if (!progressBar.endLoopTime) {
+                    progressBar.endLoopTime = selectedTime; // set loop end point
+                    // ensure start is always before end
+                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
+                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
+                            progressBar.endLoopTime,
+                            progressBar.startLoopTime,
+                        ];
+                    }
+        
+                    // highlight the selected range
+                    progressBar.style.background = `linear-gradient(to right, 
+                        #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                        #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                        #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
+                        #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
+                    }
+        
+                    // dynamic dragging
+                    const onMouseMove = (moveEvent) => {
+                    const movePosition = (moveEvent.clientX - rect.left) / rect.width;
+                    progressBar.endLoopTime = movePosition * audio.duration;
+        
+                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
+                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
+                            progressBar.endLoopTime,
+                            progressBar.startLoopTime,
+                        ];
+                    }
+        
+                    // highlight the range
+                    progressBar.style.background = `linear-gradient(to right, 
+                        #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                        #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                        #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
+                        #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
+                };
+        
+                const onMouseUp = () => {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                };
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
             }
         });
 
-        audio.addEventListener('timeupdate', () => { // apply loop (different function to make it more organized)
+        audio.addEventListener('timeupdate', () => {
             if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-                if (audio.currentTime >= progressBar.endLoopTime) {
+                const precision = 0.1; // weird thing to make it a bit more precise, it doesnt loop at the exact end point due to how audio is processed in browsers
+                if (audio.currentTime >= progressBar.endLoopTime - precision) {
                     audio.currentTime = progressBar.startLoopTime;
                 }
             }
         });
 
-        progressBar.addEventListener('dblclick', () => { // reset loop times on double click
-            progressBar.startLoopTime = undefined;
-            progressBar.endLoopTime = undefined;
-            progressBar.style.background = '#333';
-        });
+        progressBar.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+        })
     });
 }
