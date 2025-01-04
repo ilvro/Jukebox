@@ -118,9 +118,41 @@ function updatePlayerUI() {
         // -----------------------------------------------------------------------
         // audio loop selection
         let rightClickTimer = null;
+        progressBar.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+        })
+        
         progressBar.addEventListener('mousedown', (event) => {
             if (event.button === 2) {
                 event.preventDefault();
+                const rect = progressBar.getBoundingClientRect();
+                const clickPosition = (event.clientX - rect.left) / rect.width;
+                const selectedTime = clickPosition * audio.duration;
+        
+                if (!progressBar.startLoopTime) { // set loop start point if there isnt one
+                    progressBar.startLoopTime = selectedTime;
+                } 
+                else if (!progressBar.endLoopTime) { // set loop end point if there isnt one
+                    progressBar.endLoopTime = selectedTime;
+        
+                    // ensure start is always before end
+                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
+                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
+                            progressBar.endLoopTime,
+                            progressBar.startLoopTime,
+                        ];
+                    }
+                } else { // handle special cases
+                    if (selectedTime < progressBar.startLoopTime) { // set new start loop time if clicked
+                        progressBar.startLoopTime = selectedTime;
+                    } else if (selectedTime > progressBar.endLoopTime) { // set new end loop time if clicked
+                        progressBar.endLoopTime = selectedTime;
+
+                    } else if (selectedTime < progressBar.endLoopTime && selectedTime > progressBar.startLoopTime) { // if selection is between the two points, make it the new start point
+                        progressBar.startLoopTime = selectedTime;
+                    }
+                }
+
                 if (rightClickTimer) { // reset loop times on rmb double click
                     progressBar.startLoopTime = undefined;
                     progressBar.endLoopTime = undefined;
@@ -132,15 +164,19 @@ function updatePlayerUI() {
                     }, 300);
                 }
         
-                const rect = progressBar.getBoundingClientRect();
-                const clickPosition = (event.clientX - rect.left) / rect.width;
-                const selectedTime = clickPosition * audio.duration;
+                // highlight the selected loop range
+                progressBar.style.background = `linear-gradient(to right, 
+                    #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                    #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
+                    #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
+                    #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
         
-                if (!progressBar.startLoopTime) {
-                    progressBar.startLoopTime = selectedTime; // set loop start point
-                } 
-                else if (!progressBar.endLoopTime) {
-                    progressBar.endLoopTime = selectedTime; // set loop end point
+                // dragging selection
+                const onMouseMove = (moveEvent) => {
+                    const movePosition = (moveEvent.clientX - rect.left) / rect.width;
+                    const movedTime = movePosition * audio.duration;
+                    progressBar.endLoopTime = movedTime;
+        
                     // ensure start is always before end
                     if (progressBar.startLoopTime > progressBar.endLoopTime) {
                         [progressBar.startLoopTime, progressBar.endLoopTime] = [
@@ -149,27 +185,7 @@ function updatePlayerUI() {
                         ];
                     }
         
-                    // highlight the selected range
-                    progressBar.style.background = `linear-gradient(to right, 
-                        #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                        #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                        #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
-                        #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
-                    }
-        
-                    // dynamic dragging
-                    const onMouseMove = (moveEvent) => {
-                    const movePosition = (moveEvent.clientX - rect.left) / rect.width;
-                    progressBar.endLoopTime = movePosition * audio.duration;
-        
-                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
-                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
-                            progressBar.endLoopTime,
-                            progressBar.startLoopTime,
-                        ];
-                    }
-        
-                    // highlight the range
+                    // highlight during drag
                     progressBar.style.background = `linear-gradient(to right, 
                         #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
                         #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
@@ -181,6 +197,7 @@ function updatePlayerUI() {
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
                 };
+        
                 document.addEventListener('mousemove', onMouseMove);
                 document.addEventListener('mouseup', onMouseUp);
             }
@@ -194,9 +211,5 @@ function updatePlayerUI() {
                 }
             }
         });
-
-        progressBar.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-        })
     });
 }
