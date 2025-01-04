@@ -41,7 +41,7 @@ async function downloadVideo(youtubeLink) {
         if (!contentDisposition) {
             throw new Error('missing Content-Disposition header in audio response');
         }
-        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4);
+        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4).replace("inquote", '’');
         const audioBlob = await audioResponse.blob();
         const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: "audio/mpeg" });
 

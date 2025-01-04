@@ -40,7 +40,7 @@ app.post('/download/audio', async (req, res) => {
   if (ytdl.validateURL(url)) {
     try {
       const videoInfo = await ytdl.getInfo(url);
-      const videoTitle = videoInfo.videoDetails.title.replace('—', '-');
+      const videoTitle = videoInfo.videoDetails.title.replace('—', '-').replace("’", 'inquote');
 
       res.header('content-type', 'application/json')
       res.header('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
