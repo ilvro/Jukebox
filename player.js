@@ -46,7 +46,7 @@ function addSongToPlayer(songElement, audioFile) {
 export { addSongToPlayer };
 
 // --------------------------------------------- 
-// song player
+// player container/controller
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
 function showPlayer() {
@@ -72,16 +72,23 @@ function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
     playerContainer.innerHTML = '';
 
-    Object.entries(activeAudios).forEach(([songId, audio]) => { // add songs that are being played to the player
+    Object.entries(activeAudios).forEach(([songId, audio]) => {
         const trackDiv = document.createElement('div');
         trackDiv.className = 'track-item';
         trackDiv.dataset.songId = songId;
 
-        const songElement = document.querySelector(`[data-song-id="${songId}`);
+        const songElement = document.querySelector(`[data-song-id="${songId}"]`);
         const songTitle = songElement.querySelector('input').value;
         const titleSpan = document.createElement('span');
         titleSpan.textContent = songTitle;
         trackDiv.appendChild(titleSpan);
+
+        const progressContainer = document.createElement('div');
+        progressContainer.className = 'progress-container';
+
+        const waveformCanvas = document.createElement('canvas');
+        waveformCanvas.className = 'waveform-canvas';
+        progressContainer.appendChild(waveformCanvas);
 
         const progressBar = document.createElement('input');
         progressBar.type = 'range';
@@ -89,16 +96,9 @@ function updatePlayerUI() {
         progressBar.max = audio.duration || 100;
         progressBar.value = audio.currentTime;
         progressBar.className = 'progress-bar';
+        progressContainer.appendChild(progressBar);
 
-        progressBar.addEventListener('input', () => {
-            audio.currentTime = progressBar.value;
-        });
-
-        audio.addEventListener('timeupdate', () => {
-            progressBar.value = audio.currentTime;
-        });
-
-        trackDiv.appendChild(progressBar);
+        trackDiv.appendChild(progressContainer);
 
         const volumeControl = document.createElement('input');
         volumeControl.type = 'range';
@@ -107,20 +107,36 @@ function updatePlayerUI() {
         volumeControl.step = 0.01;
         volumeControl.value = audio.volume;
         volumeControl.className = 'volume-control';
+        trackDiv.appendChild(volumeControl);
+
+        progressBar.addEventListener('input', () => {
+            audio.currentTime = progressBar.value;
+        });
 
         volumeControl.addEventListener('input', () => {
             audio.volume = volumeControl.value;
         });
 
-        trackDiv.appendChild(volumeControl);
-        playerContainer.appendChild(trackDiv);
+        generateWaveform(audio, waveformCanvas);
+        
+        audio.addEventListener('timeupdate', () => {
+            progressBar.value = audio.currentTime;
+            updateWaveformProgress(audio, waveformCanvas, progressBar);
 
-        // -----------------------------------------------------------------------
-        // audio loop selection
+            // check loop
+            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+                const precision = 0.1; // weird thing to make it a bit more precise, it doesnt loop at the exact end point due to how audio is processed in browsers
+                if (audio.currentTime >= progressBar.endLoopTime - precision) {
+                    audio.currentTime = progressBar.startLoopTime;
+                }
+            }
+        });
+
+        // loop selection
         let rightClickTimer = null;
         progressBar.addEventListener('contextmenu', (event) => {
             event.preventDefault();
-        })
+        });
         
         progressBar.addEventListener('mousedown', (event) => {
             if (event.button === 2) {
@@ -203,13 +219,114 @@ function updatePlayerUI() {
             }
         });
 
-        audio.addEventListener('timeupdate', () => {
-            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-                const precision = 0.1; // weird thing to make it a bit more precise, it doesnt loop at the exact end point due to how audio is processed in browsers
-                if (audio.currentTime >= progressBar.endLoopTime - precision) {
-                    audio.currentTime = progressBar.startLoopTime;
-                }
-            }
-        });
+        playerContainer.appendChild(trackDiv);
     });
+}
+
+function drawWaveform(canvas, waveformData) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    canvas.waveformData = waveformData;
+    ctx.clearRect(0, 0, width, height);
+    
+    // draw background waveform
+    const barWidth = 2;
+    const gap = 1;
+    
+    for (let i = 0; i < waveformData.length; i++) {
+        const x = i * (barWidth + gap);
+        const barHeight = Math.max(2, waveformData[i] * height * 0.8);
+        const y = (height - barHeight) / 2;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(x, y, barWidth, barHeight);
+    }
+}
+
+function updateWaveformProgress(audio, canvas, progressBar) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    ctx.clearRect(0, 0, width, height);
+    
+    // redraw waveform with colors for different sections
+    const barWidth = 2;
+    const gap = 1;
+    const waveformData = canvas.waveformData;
+    
+    if (!waveformData) return;
+    
+    const progress = audio.currentTime / audio.duration;
+    const progressPixel = Math.floor(width * progress);
+
+    // calculate loop positions in pixels
+    const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
+    const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
+    
+    // draw each bar with appropriate color
+    for (let i = 0; i < waveformData.length; i++) {
+        const x = i * (barWidth + gap);
+        const barHeight = Math.max(2, waveformData[i] * height * 0.8);
+        const y = (height - barHeight) / 2;
+        
+        // determine bar color based on position
+        if (x <= progressPixel) {
+            ctx.fillStyle = '#2bdbb0'; // green for played portion
+        } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
+                  x >= loopStartPixel && x <= loopEndPixel) {
+            //
+            ctx.fillStyle = '#4a9eff'; // blue for loop portion
+        } else {
+            ctx.fillStyle = '#333'; // gray for unplayed portion
+        }
+        
+        ctx.fillRect(x, y, barWidth, barHeight);
+    }
+
+    // draw loop points if they exist
+    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+        // start point
+        ctx.fillStyle = '#4a9eff';
+        const startX = (progressBar.startLoopTime / audio.duration) * width;
+        ctx.fillRect(startX - 1, 0, 2, height);
+        
+        // end point
+        const endX = (progressBar.endLoopTime / audio.duration) * width;
+        ctx.fillRect(endX - 1, 0, 2, height);
+    }
+}
+
+async function generateWaveform(audio, canvas) {
+    try {
+        canvas.width = 500;
+        canvas.height = 30;
+        
+        const response = await fetch(audio.src);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioContext = new AudioContext();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        const rawData = audioBuffer.getChannelData(0);
+        const samplesPerPixel = Math.floor(rawData.length / canvas.width);
+        const waveformData = new Float32Array(canvas.width);
+        
+        // process audio data more efficiently
+        for (let i = 0; i < canvas.width; i++) {
+            const start = i * samplesPerPixel;
+            const end = start + samplesPerPixel;
+            let max = 0;
+            
+            for (let j = start; j < end; j++) {
+                const amplitude = Math.abs(rawData[j]);
+                if (amplitude > max) max = amplitude;
+            }
+            
+            waveformData[i] = max;
+        }
+
+        drawWaveform(canvas, waveformData);
+
+    } catch (error) {
+        console.error("Error generating waveform:", error);
+    }
 }
