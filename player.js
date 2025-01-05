@@ -238,26 +238,6 @@ function updatePlayerUI() {
 }
 
 // this part might look weird, theres some optimization involved, waveforms are hard to work with
-function drawWaveform(canvas, waveformData) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const width = canvas.width;
-    const height = canvas.height;
-    canvas.waveformData = waveformData;
-    ctx.clearRect(0, 0, width, height);
-    
-    // draw background waveform
-    const barWidth = 2;
-    const gap = 1;
-    
-    for (let i = 0; i < waveformData.length; i++) {
-        const x = i * (barWidth + gap);
-        const barHeight = Math.max(2, waveformData[i] * height * 0.8);
-        const y = (height - barHeight) / 2;
-        ctx.fillStyle = '#333';
-        ctx.fillRect(x, y, barWidth, barHeight);
-    }
-}
-
 function updateProgressBarGradient(progressBar, audio) {
     if (progressBar.startLoopTime === undefined || progressBar.endLoopTime === undefined) {
         progressBar.style.background = '#333';
@@ -273,60 +253,6 @@ function updateProgressBarGradient(progressBar, audio) {
         #2bdbb0 ${endPercent}%, 
         #333 ${endPercent}%)`;
 }
-
-function updateWaveformProgress(audio, canvas, progressBar) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const width = canvas.width;
-    const height = canvas.height;
-    const waveformData = canvas.waveformData;
-    
-    if (!waveformData) return;
-
-    ctx.clearRect(0, 0, width, height);
-    
-    const barWidth = 2;
-    const gap = 1;
-    const progress = audio.currentTime / audio.duration;
-    const progressPixel = Math.floor(width * progress);
-    const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
-    const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
-
-    // draw in batches for better performance
-    const batchSize = 50;
-    for (let i = 0; i < waveformData.length; i += batchSize) {
-        const endIndex = Math.min(i + batchSize, waveformData.length);
-        
-        ctx.beginPath();
-        for (let j = i; j < endIndex; j++) {
-            const x = j * (barWidth + gap);
-            const barHeight = Math.max(2, waveformData[j] * height * 0.8);
-            const y = (height - barHeight) / 2;
-
-            if (x <= progressPixel) {
-                ctx.fillStyle = '#2bdbb0';
-            } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
-                      x >= loopStartPixel && x <= loopEndPixel) {
-                ctx.fillStyle = '#4a9eff';
-            } else {
-                ctx.fillStyle = '#333';
-            }
-            
-            ctx.fillRect(x, y, barWidth, barHeight);
-        }
-        ctx.fill();
-    }
-
-    // draw loop points if they exist
-    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-        ctx.fillStyle = '#4a9eff';
-        const startX = (progressBar.startLoopTime / audio.duration) * width;
-        const endX = (progressBar.endLoopTime / audio.duration) * width;
-        
-        ctx.fillRect(startX - 1, 0, 2, height);
-        ctx.fillRect(endX - 1, 0, 2, height);
-    }
-}
-
 async function generateWaveform(audio, canvas) {
     try {
         canvas.width = 500;
@@ -339,25 +265,155 @@ async function generateWaveform(audio, canvas) {
         
         const rawData = audioBuffer.getChannelData(0);
         const samplesPerPixel = Math.floor(rawData.length / canvas.width);
-        const waveformData = new Float32Array(canvas.width);
+        const waveformData = new Array(canvas.width);
         
-        // process audio data more efficiently
         for (let i = 0; i < canvas.width; i++) {
             const start = i * samplesPerPixel;
             const end = start + samplesPerPixel;
-            let max = 0;
+            let sum = 0;
+            let peakPositive = 0;
+            let peakNegative = 0;
             
             for (let j = start; j < end; j++) {
-                const amplitude = Math.abs(rawData[j]);
-                if (amplitude > max) max = amplitude;
+                const amplitude = rawData[j];
+                sum += Math.abs(amplitude);
+                if (amplitude > peakPositive) peakPositive = amplitude;
+                if (amplitude < peakNegative) peakNegative = amplitude;
             }
             
-            waveformData[i] = max;
+            waveformData[i] = {
+                average: sum / samplesPerPixel,
+                peak: Math.max(Math.abs(peakPositive), Math.abs(peakNegative))
+            };
         }
+
+        let maxPeak = 0;
+        let maxAverage = 0;
+        waveformData.forEach(point => {
+            maxPeak = Math.max(maxPeak, point.peak);
+            maxAverage = Math.max(maxAverage, point.average);
+        });
+
+        waveformData.forEach(point => {
+            point.peak /= maxPeak;
+            point.average /= maxAverage;
+        });
 
         drawWaveform(canvas, waveformData);
 
     } catch (error) {
         console.error("Error generating waveform:", error);
     }
+}
+
+function drawWaveform(canvas, waveformData) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    canvas.waveformData = waveformData;
+    ctx.clearRect(0, 0, width, height);
+    
+    const centerY = height / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+    
+    // draw the upper curve
+    for (let i = 0; i < waveformData.length; i++) {
+        const x = (i / waveformData.length) * width;
+        const y = centerY - (waveformData[i].peak * height / 2);
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    
+    // draw the lower curve
+    for (let i = waveformData.length - 1; i >= 0; i--) {
+        const x = (i / waveformData.length) * width;
+        const y = centerY + (waveformData[i].peak * height / 2);
+        ctx.lineTo(x, y);
+    }
+    
+    ctx.closePath();
+    ctx.fillStyle = '#333';
+    ctx.fill();
+}
+
+function updateWaveformProgress(audio, canvas, progressBar) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const width = canvas.width;
+    const height = canvas.height;
+    const waveformData = canvas.waveformData;
+    
+    if (!waveformData) return;
+
+    ctx.clearRect(0, 0, width, height);
+    const centerY = height / 2;
+    const progress = audio.currentTime / audio.duration;
+    const progressPixel = Math.floor(width * progress);
+    
+    // draw background waveform
+    ctx.beginPath();
+    drawWaveformPath(ctx, waveformData, width, height);
+    ctx.fillStyle = '#333';
+    ctx.fill();
+    
+    // draw progress
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, progressPixel, height);
+    ctx.clip();
+    drawWaveformPath(ctx, waveformData, width, height);
+    ctx.fillStyle = '#2bdbb0';
+    ctx.fill();
+    ctx.restore();
+    
+    // draw loop section if exists
+    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+        const startX = (progressBar.startLoopTime / audio.duration) * width;
+        const endX = (progressBar.endLoopTime / audio.duration) * width;
+        
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(startX, 0, endX - startX, height);
+        ctx.clip();
+        drawWaveformPath(ctx, waveformData, width, height);
+        ctx.fillStyle = '#4a9eff';
+        ctx.fill();
+        ctx.restore();
+        
+        // Draw loop markers
+        ctx.fillStyle = '#4a9eff';
+        ctx.fillRect(startX - 1, 0, 2, height);
+        ctx.fillRect(endX - 1, 0, 2, height);
+    }
+}
+
+function drawWaveformPath(ctx, waveformData, width, height) {
+    const centerY = height / 2;
+    
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+    
+    // draw upper curve
+    for (let i = 0; i < waveformData.length; i++) {
+        const x = (i / waveformData.length) * width;
+        const y = centerY - (waveformData[i].peak * height / 2);
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    
+    // draw lower curve
+    for (let i = waveformData.length - 1; i >= 0; i--) {
+        const x = (i / waveformData.length) * width;
+        const y = centerY + (waveformData[i].peak * height / 2);
+        ctx.lineTo(x, y);
+    }
+    
+    ctx.closePath();
 }
