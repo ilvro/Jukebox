@@ -375,12 +375,12 @@ button {
 .progress-bar::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    height: 12px;
-    width: 12px;
+    height: 6px;
+    width: 6px;
     background: rgb(43, 219, 176);
     border-radius: 50%;
     cursor: pointer;
-    margin-top: 9px; /* centers the thumb */
+    margin-top: 12px; /* centers the thumb */
     z-index: 3;
     box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
 }

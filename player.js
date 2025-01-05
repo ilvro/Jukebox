@@ -49,6 +49,8 @@ export { addSongToPlayer };
 // player container/controller
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
+let animationFrameId = null;
+let isDragging = false;
 function showPlayer() {
     playerContainer.classList.toggle('active');
     playerContainer.classList.toggle('showBtn')
@@ -138,8 +140,9 @@ function updatePlayerUI() {
             event.preventDefault();
         });
         
-        progressBar.addEventListener('mousedown', (event) => {
+        progressBar.addEventListener('mousedown', (event) => { 
             if (event.button === 2) {
+                isDragging = true;
                 event.preventDefault();
                 const rect = progressBar.getBoundingClientRect();
                 const clickPosition = (event.clientX - rect.left) / rect.width;
@@ -189,29 +192,40 @@ function updatePlayerUI() {
         
                 // dragging selection
                 const onMouseMove = (moveEvent) => {
+                    if (!isDragging) return;
+                    
                     const movePosition = (moveEvent.clientX - rect.left) / rect.width;
                     const movedTime = movePosition * audio.duration;
                     progressBar.endLoopTime = movedTime;
-        
-                    // ensure start is always before end
+    
                     if (progressBar.startLoopTime > progressBar.endLoopTime) {
                         [progressBar.startLoopTime, progressBar.endLoopTime] = [
                             progressBar.endLoopTime,
                             progressBar.startLoopTime,
                         ];
                     }
-        
-                    // highlight during drag
-                    progressBar.style.background = `linear-gradient(to right, 
-                        #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                        #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                        #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
-                        #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
+    
+                    // cancel any pending animation frame
+                    if (animationFrameId) {
+                        cancelAnimationFrame(animationFrameId);
+                    }
+    
+                    // schedule a new frame
+                    animationFrameId = requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar);
+                        updateProgressBarGradient(progressBar, audio);
+                    });
                 };
         
                 const onMouseUp = () => {
+                    isDragging = false;
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
+                    // Final update after drag ends
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar);
+                        updateProgressBarGradient(progressBar, audio);
+                    });
                 };
         
                 document.addEventListener('mousemove', onMouseMove);
@@ -223,6 +237,7 @@ function updatePlayerUI() {
     });
 }
 
+// this part might look weird, theres some optimization involved, waveforms are hard to work with
 function drawWaveform(canvas, waveformData) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const width = canvas.width;
@@ -243,55 +258,71 @@ function drawWaveform(canvas, waveformData) {
     }
 }
 
+function updateProgressBarGradient(progressBar, audio) {
+    if (progressBar.startLoopTime === undefined || progressBar.endLoopTime === undefined) {
+        progressBar.style.background = '#333';
+        return;
+    }
+
+    const startPercent = (progressBar.startLoopTime / audio.duration * 100).toFixed(2);
+    const endPercent = (progressBar.endLoopTime / audio.duration * 100).toFixed(2);
+    
+    progressBar.style.background = `linear-gradient(to right, 
+        #333 ${startPercent}%, 
+        #2bdbb0 ${startPercent}%, 
+        #2bdbb0 ${endPercent}%, 
+        #333 ${endPercent}%)`;
+}
+
 function updateWaveformProgress(audio, canvas, progressBar) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const width = canvas.width;
     const height = canvas.height;
-    ctx.clearRect(0, 0, width, height);
-    
-    // redraw waveform with colors for different sections
-    const barWidth = 2;
-    const gap = 1;
     const waveformData = canvas.waveformData;
     
     if (!waveformData) return;
+
+    ctx.clearRect(0, 0, width, height);
     
+    const barWidth = 2;
+    const gap = 1;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
-
-    // calculate loop positions in pixels
     const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
     const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
-    
-    // draw each bar with appropriate color
-    for (let i = 0; i < waveformData.length; i++) {
-        const x = i * (barWidth + gap);
-        const barHeight = Math.max(2, waveformData[i] * height * 0.8);
-        const y = (height - barHeight) / 2;
+
+    // draw in batches for better performance
+    const batchSize = 50;
+    for (let i = 0; i < waveformData.length; i += batchSize) {
+        const endIndex = Math.min(i + batchSize, waveformData.length);
         
-        // determine bar color based on position
-        if (x <= progressPixel) {
-            ctx.fillStyle = '#2bdbb0'; // green for played portion
-        } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
-                  x >= loopStartPixel && x <= loopEndPixel) {
-            //
-            ctx.fillStyle = '#4a9eff'; // blue for loop portion
-        } else {
-            ctx.fillStyle = '#333'; // gray for unplayed portion
+        ctx.beginPath();
+        for (let j = i; j < endIndex; j++) {
+            const x = j * (barWidth + gap);
+            const barHeight = Math.max(2, waveformData[j] * height * 0.8);
+            const y = (height - barHeight) / 2;
+
+            if (x <= progressPixel) {
+                ctx.fillStyle = '#2bdbb0';
+            } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
+                      x >= loopStartPixel && x <= loopEndPixel) {
+                ctx.fillStyle = '#4a9eff';
+            } else {
+                ctx.fillStyle = '#333';
+            }
+            
+            ctx.fillRect(x, y, barWidth, barHeight);
         }
-        
-        ctx.fillRect(x, y, barWidth, barHeight);
+        ctx.fill();
     }
 
     // draw loop points if they exist
     if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-        // start point
         ctx.fillStyle = '#4a9eff';
         const startX = (progressBar.startLoopTime / audio.duration) * width;
-        ctx.fillRect(startX - 1, 0, 2, height);
-        
-        // end point
         const endX = (progressBar.endLoopTime / audio.duration) * width;
+        
+        ctx.fillRect(startX - 1, 0, 2, height);
         ctx.fillRect(endX - 1, 0, 2, height);
     }
 }
