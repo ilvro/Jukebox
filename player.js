@@ -253,6 +253,7 @@ function updateProgressBarGradient(progressBar, audio) {
         #2bdbb0 ${endPercent}%, 
         #333 ${endPercent}%)`;
 }
+
 async function generateWaveform(audio, canvas) {
     try {
         canvas.width = 500;
@@ -313,32 +314,26 @@ function drawWaveform(canvas, waveformData) {
     canvas.waveformData = waveformData;
     ctx.clearRect(0, 0, width, height);
     
+    const barWidth = 2;
+    const gap = 1;
     const centerY = height / 2;
-
-    ctx.beginPath();
-    ctx.moveTo(0, centerY);
     
-    // draw the upper curve
     for (let i = 0; i < waveformData.length; i++) {
-        const x = (i / waveformData.length) * width;
-        const y = centerY - (waveformData[i].peak * height / 2);
-        if (i === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
-        }
+        const x = i * (barWidth + gap);
+        
+        const avgHeight = waveformData[i].average * height * 0.8;
+        const avgY = centerY - (avgHeight / 2);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(x, avgY, barWidth, avgHeight);
+        
+        const peakHeight = waveformData[i].peak * height * 0.8;
+        const peakTopY = centerY - (peakHeight / 2);
+        const peakBottomY = centerY + (peakHeight / 2) - 1;
+        
+        ctx.fillStyle = '#444';
+        ctx.fillRect(x, peakTopY, barWidth, 1);
+        ctx.fillRect(x, peakBottomY, barWidth, 1);
     }
-    
-    // draw the lower curve
-    for (let i = waveformData.length - 1; i >= 0; i--) {
-        const x = (i / waveformData.length) * width;
-        const y = centerY + (waveformData[i].peak * height / 2);
-        ctx.lineTo(x, y);
-    }
-    
-    ctx.closePath();
-    ctx.fillStyle = '#333';
-    ctx.fill();
 }
 
 function updateWaveformProgress(audio, canvas, progressBar) {
@@ -350,70 +345,58 @@ function updateWaveformProgress(audio, canvas, progressBar) {
     if (!waveformData) return;
 
     ctx.clearRect(0, 0, width, height);
+    
+    const barWidth = 2;
+    const gap = 1;
     const centerY = height / 2;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
-    
-    // draw background waveform
-    ctx.beginPath();
-    drawWaveformPath(ctx, waveformData, width, height);
-    ctx.fillStyle = '#333';
-    ctx.fill();
-    
-    // draw progress
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, progressPixel, height);
-    ctx.clip();
-    drawWaveformPath(ctx, waveformData, width, height);
-    ctx.fillStyle = '#2bdbb0';
-    ctx.fill();
-    ctx.restore();
-    
-    // draw loop section if exists
-    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-        const startX = (progressBar.startLoopTime / audio.duration) * width;
-        const endX = (progressBar.endLoopTime / audio.duration) * width;
-        
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(startX, 0, endX - startX, height);
-        ctx.clip();
-        drawWaveformPath(ctx, waveformData, width, height);
-        ctx.fillStyle = '#4a9eff';
-        ctx.fill();
-        ctx.restore();
-        
-        // Draw loop markers
-        ctx.fillStyle = '#4a9eff';
-        ctx.fillRect(startX - 1, 0, 2, height);
-        ctx.fillRect(endX - 1, 0, 2, height);
-    }
-}
+    const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
+    const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
 
-function drawWaveformPath(ctx, waveformData, width, height) {
-    const centerY = height / 2;
-    
-    ctx.beginPath();
-    ctx.moveTo(0, centerY);
-    
-    // draw upper curve
-    for (let i = 0; i < waveformData.length; i++) {
-        const x = (i / waveformData.length) * width;
-        const y = centerY - (waveformData[i].peak * height / 2);
-        if (i === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
+    // draw in batches for better performance
+    const batchSize = 50;
+    for (let i = 0; i < waveformData.length; i += batchSize) {
+        const endIndex = Math.min(i + batchSize, waveformData.length);
+        
+        for (let j = i; j < endIndex; j++) {
+            const x = j * (barWidth + gap);
+            
+            let mainColor, peakColor;
+            if (x <= progressPixel) {
+                mainColor = '#2bdbb0';
+                peakColor = '#1a9977';
+            } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
+                      x >= loopStartPixel && x <= loopEndPixel) {
+                mainColor = '#4a9eff';
+                peakColor = '#3a7ecc';
+            } else {
+                mainColor = '#333';
+                peakColor = '#444';
+            }
+            
+            const avgHeight = waveformData[j].average * height * 0.8;
+            const avgY = centerY - (avgHeight / 2);
+            ctx.fillStyle = mainColor;
+            ctx.fillRect(x, avgY, barWidth, avgHeight);
+            
+            const peakHeight = waveformData[j].peak * height * 0.8;
+            const peakTopY = centerY - (peakHeight / 2);
+            const peakBottomY = centerY + (peakHeight / 2) - 1;
+            
+            ctx.fillStyle = peakColor;
+            ctx.fillRect(x, peakTopY, barWidth, 1);
+            ctx.fillRect(x, peakBottomY, barWidth, 1);  
+        }
+
+        // draw loop points
+        if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+            ctx.fillStyle = '#4a9eff';
+            const startX = (progressBar.startLoopTime / audio.duration) * width;
+            const endX = (progressBar.endLoopTime / audio.duration) * width;
+            
+            ctx.fillRect(startX - 1, 0, 2, height);
+            ctx.fillRect(endX - 1, 0, 2, height);
         }
     }
-    
-    // draw lower curve
-    for (let i = waveformData.length - 1; i >= 0; i--) {
-        const x = (i / waveformData.length) * width;
-        const y = centerY + (waveformData[i].peak * height / 2);
-        ctx.lineTo(x, y);
-    }
-    
-    ctx.closePath();
 }
