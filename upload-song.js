@@ -115,6 +115,7 @@ async function savePreset() {
         }
         deletedSongs.length = 0;
 
+        let updatedData = [];
         for (const songItem of songItems) {
             const currentTitle = encodeURIComponent(songItem.querySelector('input').value);
             const originalTitle = encodeURIComponent(songItem.querySelector('input').defaultValue);
@@ -187,12 +188,13 @@ async function savePreset() {
             }
         
             console.log(`Saved ${currentTitle}`);
+            updatedData.push(presetData[existingIndex]);
         }
         
 
         const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
         const presetMetadataWritable = await presetMetadataHandle.createWritable();
-        await presetMetadataWritable.write(JSON.stringify(presetData, null, 2));
+        await presetMetadataWritable.write(JSON.stringify(updatedData, null, 2));
         await presetMetadataWritable.close();
 
         console.log('saved preset');
