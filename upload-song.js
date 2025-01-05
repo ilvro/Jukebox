@@ -92,6 +92,28 @@ async function savePreset() {
                 throw err;
             }
         }
+        // remove queued deleted songs from metadata and files
+        presetData = presetData.filter(
+            song => !deletedSongs.includes(decodeURIComponent(song.currentTitle))
+        );
+
+        for (let title of deletedSongs) {
+            title = encodeURIComponent(title);
+            try {
+                await directoryHandle.removeEntry(`${title}.mp3`);
+                console.log(`deleted audio file: ${title}.mp3`);
+            } catch (err) {
+                console.warn(`could not delete audio file for ${title}:`, err);
+            }
+
+            try {
+                await directoryHandle.removeEntry(`${title}.jpg`);
+                console.log(`deleted image file: ${title}.jpg`);
+            } catch (err) {
+                console.warn(`could not delete image file for ${title}:`, err);
+            }
+        }
+        deletedSongs.length = 0;
 
         for (const songItem of songItems) {
             const currentTitle = encodeURIComponent(songItem.querySelector('input').value);
@@ -428,6 +450,69 @@ uploadSubmit.addEventListener('click', () => {
         dimmer.style.visibility = 'hidden'; 
     }, 10);
 });
+
+// right click functions
+const deletedSongs = [];
+async function deleteSongFile(directoryHandle, fileName) {
+    try {
+        await directoryHandle.removeEntry(fileName);
+        console.log(`deleted ${fileName}`)
+    } catch (error) {
+        console.error(`error deleting file ${fileName}: `, error)
+    }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    const songGrid = document.getElementById('song-grid');
+    const contextMenu = document.createElement('div');
+
+    contextMenu.id = 'custom-context-menu';
+    contextMenu.style.position = 'absolute';
+    contextMenu.style.display = 'none';
+    contextMenu.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+    contextMenu.style.color = '#fff';
+    contextMenu.style.padding = '10px';
+    contextMenu.style.borderRadius = '5px';
+    contextMenu.style.zIndex = '1000';
+
+    const deleteOption = document.createElement('div');
+    deleteOption.innerText = 'Delete';
+    deleteOption.style.cursor = 'pointer';
+
+    contextMenu.appendChild(deleteOption);
+    document.body.appendChild(contextMenu);
+
+    let currentSongItem = null;
+    songGrid.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+
+        const songItem = event.target.closest('.song-item');
+        if (!songItem) return;
+
+        currentSongItem = songItem;
+        contextMenu.style.top = `${event.pageY}px`;
+        contextMenu.style.left = `${event.pageX}px`;
+        contextMenu.style.display = 'block';
+    });
+
+    document.addEventListener('click', () => {
+        contextMenu.style.display = 'none';
+    });
+
+    // delete functionality
+    deleteOption.addEventListener('click', async () => {
+        if (currentSongItem) {
+            const title = currentSongItem.querySelector('.title-input').defaultValue;
+            deletedSongs.push(title);
+            currentSongItem.remove();
+
+            document.dispatchEvent(new Event('songsUpdated'));
+            console.log(`queued ${title} for deletion`)
+        }
+
+        contextMenu.style.display = 'none';
+    });
+});
+
 
 // ------------------- styling ------------------------------
 uploadSongBtn.addEventListener('click', () => {
