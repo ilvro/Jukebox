@@ -55,79 +55,71 @@ document.addEventListener('DOMContentLoaded', function() {
 // rearranging =========================================================================================================================
 function enableDragAndDrop() {
     const songGrid = document.getElementById('song-grid');
-  
+    
     songGrid.addEventListener('dragstart', (event) => {
-      if (event.target.getAttribute('data-song-id') != null) {
-        const focusedInput = event.target.querySelector('.title-input:focus');
-        if (focusedInput) {
-            focusedInput.blur(); 
-        }
-        event.dataTransfer.setData('text/plain', event.target.dataset.songId);
-        event.target.classList.add('dragging');
-      }
-    });
-  
-    songGrid.addEventListener('dragover', (event) => {
-      if (event.target.getAttribute('data-song-id') != null) {
-        const focusedInput = event.target.querySelector('.title-input:focus');
-        if (focusedInput) {
-            focusedInput.blur();
-        }
-        event.preventDefault();
-        const x = event.clientX;
-        const y = event.clientY;
-        const afterElement = getDragAfterElement(songGrid, x, y);
-        const draggingItem = document.querySelector('.dragging');
-
-        if (!afterElement) {
-            songGrid.appendChild(draggingItem); // add to the end if no element is found
-        } 
-        else {
-            songGrid.insertBefore(draggingItem, afterElement);
-        }
-      }
-    });
-  
-    songGrid.addEventListener('drop', (event) => {
-      if (event.target.getAttribute('data-song-id') != null) {
-        const focusedInput = event.target.querySelector('.title-input:focus');
-        if (focusedInput) {
-            focusedInput.blur();
-        }
-        event.preventDefault();
-        const draggingItem = document.querySelector('.dragging');
-        draggingItem.classList.remove('dragging');
-        updateAllSongs();
-      }
-    });
-  
-    songGrid.addEventListener('dragend', (event) => {
-      if (event.target.getAttribute('data-song-id') != null) {
-        event.target.classList.remove('dragging');
-      }
-    });
-  }
-  
-  function getDragAfterElement(container, x, y) {
-    const draggableElements = [...container.querySelectorAll('.song-item:not(.dragging)')];
-
-    return draggableElements.reduce(
-        (closest, child) => {
-            const box = child.getBoundingClientRect();
-            const offsetX = x - box.left - box.width / 2;
-            const offsetY = y - box.top - box.height / 2;
-            const offset = Math.sqrt(offsetX ** 2 + offsetY ** 2); // combine offsets for grid logic
-
-            if (offset < closest.offset) {
-                return { offset: offset, element: child };
-            } else {
-                return closest;
+        const songItem = event.target.closest('.song-item');
+        if (songItem && songItem.getAttribute('data-song-id') != null) {
+            const focusedInput = songItem.querySelector('.title-input:focus');
+            if (focusedInput) {
+                focusedInput.blur();
             }
-        },
-        { offset: Number.POSITIVE_INFINITY }).element;
-    }
+            event.dataTransfer.setData('text/plain', songItem.dataset.songId);
+            songItem.classList.add('dragging');
+        }
+    });
 
-  
-  document.addEventListener('DOMContentLoaded', () => {
+    songGrid.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        const draggable = document.querySelector('.dragging');
+        if (!draggable) return;
+
+        const afterElement = getDragAfterElement(songGrid, event.clientX, event.clientY);
+        if (afterElement === null) {
+            songGrid.appendChild(draggable);
+        } else {
+            songGrid.insertBefore(draggable, afterElement);
+        }
+    });
+
+    songGrid.addEventListener('dragend', (event) => {
+        const songItem = event.target.closest('.song-item');
+        if (songItem) {
+            songItem.classList.remove('dragging');
+            updateAllSongs();
+        }
+    });
+}
+
+function getDragAfterElement(container, x, y) {
+    const draggableElements = [...container.querySelectorAll('.song-item:not(.dragging)')];
+    if (!draggableElements.length) return null;
+
+    const containerRect = container.getBoundingClientRect();
+    const itemRect = draggableElements[0].getBoundingClientRect();
+    const itemWidth = itemRect.width;
+    const itemHeight = itemRect.height;
+
+    const relativeX = x - containerRect.left;
+    const relativeY = y - containerRect.top;
+
+    const itemsPerRow = Math.floor(containerRect.width / itemWidth);
+    const currentRow = Math.floor(relativeY / itemHeight);
+    const currentCol = Math.floor(relativeX / itemWidth);
+
+    const targetIndex = (currentRow * itemsPerRow) + currentCol;
+    if (targetIndex >= draggableElements.length) {
+        return null;
+    }
+    const targetElement = draggableElements[targetIndex];
+    const targetBox = targetElement.getBoundingClientRect();
+
+    if (x > targetBox.left + targetBox.width / 2) {
+        return targetElement.nextElementSibling;
+    }
+    
+    return targetElement;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
     enableDragAndDrop();
-  });
+});
