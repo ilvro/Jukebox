@@ -349,13 +349,14 @@ button {
     margin: 0 10px;
     background: rgba(0, 0, 0, 0.2);
     border-radius: 3px;
+    padding: 0 3px;
 }
 
 .progress-bar {
     position: absolute;
     top: 50%;
-    left: 0;
-    width: 100%;
+    left: -2px;
+    width: calc(100% + 6px);
     height: 30px;
     transform: translateY(-50%);
     background: transparent !important;
@@ -372,6 +373,16 @@ button {
     border: none;
 }
 
+.waveform-canvas {
+    position: absolute;
+    top: 0;
+    left: 3px;
+    width: calc(100% - 6px);
+    height: 100%;
+    z-index: 1;
+    border-radius: 3px;
+}
+
 .progress-bar::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -385,19 +396,58 @@ button {
     box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
 }
 
-.waveform-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 1;
-    border-radius: 3px;
+/* firefox support */
+.progress-bar::-moz-range-track {
+    background: transparent !important;
+    height: 30px;
+    border: none;
+    cursor: pointer;
 }
 
-.volume-control {
-    width: 80px;
-    min-width: 80px;
+.progress-bar::-moz-range-thumb {
+    height: 6px;
+    width: 6px;
+    background: rgb(43, 219, 176);
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    z-index: 3;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+}
+
+.volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.2);
+    outline: none;
+    margin: 0;
+    padding: 0;
+    margin-left: -6px;
+    margin-right: -6px;
+    width: calc(100px + 12px); 
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgb(43, 219, 160);
+    cursor: pointer;
+    border: none;
+    /* Ensure the thumb sits centered on the track */
+    margin-top: -4px;  /* (thumb height - track height) / 2 */
+}
+
+/* Style the filled portion of the track */
+.volume-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    border: none;
 }
 
 /* ------------ genre ----------- */

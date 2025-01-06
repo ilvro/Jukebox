@@ -80,8 +80,11 @@ function updatePlayerUI() {
         trackDiv.dataset.songId = songId;
 
         const songElement = document.querySelector(`[data-song-id="${songId}"]`);
-        const songTitle = songElement.querySelector('input').value;
+        let songTitle = songElement.querySelector('input').value;
         const titleSpan = document.createElement('span');
+        if (songTitle.length > 15) {
+            songTitle = songTitle.substring(0, 15) + "...";
+        }
         titleSpan.textContent = songTitle;
         trackDiv.appendChild(titleSpan);
 
@@ -108,8 +111,9 @@ function updatePlayerUI() {
         volumeControl.max = 1;
         volumeControl.step = 0.01;
         volumeControl.value = audio.volume;
-        volumeControl.className = 'volume-control';
+        volumeControl.className = 'volume-slider';
         trackDiv.appendChild(volumeControl);
+
 
         progressBar.addEventListener('input', () => {
             audio.currentTime = progressBar.value;
@@ -117,6 +121,7 @@ function updatePlayerUI() {
 
         volumeControl.addEventListener('input', () => {
             audio.volume = volumeControl.value;
+            updateVolumeSlider(volumeControl);
         });
 
         generateWaveform(audio, waveformCanvas);
@@ -399,4 +404,17 @@ function updateWaveformProgress(audio, canvas, progressBar) {
             ctx.fillRect(endX - 1, 0, 2, height);
         }
     }
+}
+
+function updateVolumeSlider(slider) {
+    const value = slider.value;
+    const min = slider.min || 0;
+    const max = slider.max || 100;
+    const percentage = ((value - min) / (max - min)) * 100;
+    
+    slider.style.background = `linear-gradient(to right, 
+        rgb(43, 219, 160) 0%, 
+        rgb(43, 219, 160) ${percentage}%, 
+        rgba(255, 255, 255, 0.2) ${percentage}%, 
+        rgba(255, 255, 255, 0.2) 100%)`;
 }
