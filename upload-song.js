@@ -123,18 +123,20 @@ async function savePreset() {
             const imageUrl = songItem.querySelector('img').src;
             const genres = songItem.getAttribute('data-genres').split(',');
             const tags = songItem.querySelector('p').textContent.split(' + ');
-        
+
             // check for title changes
             const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
             if (existingIndex !== -1) {
                 console.log(`updating existing song: ${decodeURIComponent(originalTitle)} to ${decodeURIComponent(currentTitle)}`);
-                presetData[existingIndex] = {
+                const updatedSong = {
                     currentTitle,
                     genres,
                     tags
                 };
-        
-                // rename audio and image files
+
+                presetData[existingIndex] = updatedSong;
+
+                // rename audio and image files if the title changed
                 if (currentTitle !== originalTitle) {
                     try {
                         const oldAudioHandle = await directoryHandle.getFileHandle(`${originalTitle}.mp3`);
@@ -147,7 +149,7 @@ async function savePreset() {
                     } catch (err) {
                         console.warn(`audio file rename failed for ${decodeURIComponent(originalTitle)}:`, err);
                     }
-        
+
                     try {
                         const oldImageHandle = await directoryHandle.getFileHandle(`${originalTitle}.jpg`);
                         const newImageHandle = await directoryHandle.getFileHandle(`${currentTitle}.jpg`, { create: true });
@@ -160,11 +162,15 @@ async function savePreset() {
                         console.warn(`image file rename failed for ${decodeURIComponent(originalTitle)}:`, err);
                     }
                 }
+
+                updatedData.push(updatedSong);
             } else {
                 console.log(`adding new song: ${decodeURIComponent(currentTitle)}`);
-                presetData.push({ currentTitle, genres, tags });
+                const newSong = { currentTitle, genres, tags };
+                presetData.push(newSong);
+                updatedData.push(newSong);
             }
-        
+
             try {
                 await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
             } catch (err) {
@@ -175,7 +181,7 @@ async function savePreset() {
                 await audioWritable.write(audioBlob);
                 await audioWritable.close();
             }
-        
+
             try {
                 await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
             } catch (err) {
@@ -186,9 +192,8 @@ async function savePreset() {
                 await imageWritable.write(imageBlob);
                 await imageWritable.close();
             }
-        
-            console.log(`Saved ${currentTitle}`);
-            updatedData.push(presetData[existingIndex]);
+
+            console.log(`saved ${currentTitle}`);
         }
         
 
