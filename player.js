@@ -99,6 +99,11 @@ function updatePlayerUI() {
         const progressContainer = document.createElement('div');
         progressContainer.className = 'progress-container';
 
+        const timeTooltip = document.createElement('div');
+        timeTooltip.className = 'time-tooltip';
+        timeTooltip.style.display = 'none';
+        progressContainer.appendChild(timeTooltip);
+
         const waveformCanvas = document.createElement('canvas');
         waveformCanvas.className = 'waveform-canvas';
         progressContainer.appendChild(waveformCanvas);
@@ -122,6 +127,11 @@ function updatePlayerUI() {
         volumeControl.className = 'volume-slider';
         trackDiv.appendChild(volumeControl);
 
+        const formatTime = (timeInSeconds) => {
+            const minutes = Math.floor(timeInSeconds / 60);
+            const seconds = Math.floor(timeInSeconds % 60);
+            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        };
 
         progressBar.addEventListener('input', () => {
             audio.currentTime = progressBar.value;
@@ -144,28 +154,35 @@ function updatePlayerUI() {
 
             const rect = waveformCanvas.getBoundingClientRect();
             const mouseX = event.clientX - rect.left;
-            const canvasX = (mouseX / rect.width) * waveformCanvas.width;
-            
             hoveredTime = (mouseX / rect.width) * audio.duration;
+            timeTooltip.textContent = formatTime(hoveredTime);
+
+            const tooltipWidth = timeTooltip.offsetWidth;
+            let tooltipLeft = mouseX - (tooltipWidth / 2);
+            const containerWidth = progressContainer.offsetWidth;
+            if (tooltipLeft < 0) {
+                tooltipLeft = 0;
+            } else if (tooltipLeft + tooltipWidth > containerWidth) {
+                tooltipLeft = containerWidth - tooltipWidth;
+            }
+
+            timeTooltip.style.display = 'block';
+            timeTooltip.style.left = `${tooltipLeft}px`;
+            timeTooltip.style.bottom = '100%';
             
+            const canvasX = (mouseX / rect.width) * waveformCanvas.width;
             const barWidth = 2;
             const gap = 1;
             const totalBarWidth = barWidth + gap;
             const newHoveredBar = Math.floor(canvasX / totalBarWidth);
             
-            // Alignment
-            const barTime = (newHoveredBar * totalBarWidth / waveformCanvas.width) * audio.duration;
-            const nextBarTime = ((newHoveredBar + 1) * totalBarWidth / waveformCanvas.width) * audio.duration;
-            
             if (newHoveredBar !== hoveredBar && 
                 newHoveredBar >= 0 && 
-                newHoveredBar < waveformCanvas.waveformData?.length &&
-                hoveredTime >= barTime && 
-                hoveredTime <= nextBarTime) {
-                    hoveredBar = newHoveredBar;
-                    requestAnimationFrame(() => {
-                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                    });
+                newHoveredBar < waveformCanvas.waveformData?.length) {
+                hoveredBar = newHoveredBar;
+                requestAnimationFrame(() => {
+                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                });
             }
         });
 
@@ -179,6 +196,7 @@ function updatePlayerUI() {
         progressContainer.addEventListener('mouseleave', () => {
             hoveredBar = -1;
             hoveredTime = -1;
+            timeTooltip.style.display = 'none';
             requestAnimationFrame(() => {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
             });
@@ -212,7 +230,6 @@ function updatePlayerUI() {
             if (event.button === 2) {
                 isDragging = true;
                 event.preventDefault();
-                const rect = progressBar.getBoundingClientRect();
                 const selectedTime = getExactTime(event, waveformCanvas);
         
                 if (!progressBar.startLoopTime) { // set loop start point if there isnt one
@@ -284,8 +301,7 @@ function updatePlayerUI() {
                             progressBar.startLoopTime,
                         ];
                     }
-    
-                    // cancel any pending animation frame
+
                     if (animationFrameId) {
                         cancelAnimationFrame(animationFrameId);
                     }
@@ -318,9 +334,8 @@ function updatePlayerUI() {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
             });
 
-            // More precise loop check
             if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-                const precision = 0.01; // Increased precision (10ms)
+                const precision = 0.01;
                 if (audio.currentTime >= progressBar.endLoopTime - precision) {
                     audio.currentTime = progressBar.startLoopTime;
                 }

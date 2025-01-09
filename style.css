@@ -350,6 +350,7 @@ button {
     background: rgba(0, 0, 0, 0.2);
     border-radius: 3px;
     padding: 0 3px;
+    overflow: visible;
 }
 
 .progress-bar {
@@ -395,6 +396,33 @@ button {
     margin-top: 12px; /* centers the thumb */
     z-index: 3;
     box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+}
+
+.time-tooltip {
+    position: absolute;
+    background: rgba(28, 28, 28, 0.9);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    white-space: nowrap;
+    font-family: monospace;
+    transform-origin: center bottom;
+    bottom: 100%;
+    margin-bottom: 8px;
+}
+
+.time-tooltip::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid rgba(28, 28, 28, 0.9);
 }
 
 /* firefox support */
