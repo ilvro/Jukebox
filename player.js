@@ -71,6 +71,7 @@ playerContainer.addEventListener('mouseout', () => {
     }
 });
 
+
 function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
     playerContainer.innerHTML = '';
@@ -79,6 +80,12 @@ function updatePlayerUI() {
         const trackDiv = document.createElement('div');
         trackDiv.className = 'track-item';
         trackDiv.dataset.songId = songId;
+
+        const getExactTime = (event, element) => {
+            const rect = element.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            return (mouseX / rect.width) * audio.duration;
+        };
 
         const songElement = document.querySelector(`[data-song-id="${songId}"]`);
         let songTitle = songElement.querySelector('input').value;
@@ -139,7 +146,6 @@ function updatePlayerUI() {
             const mouseX = event.clientX - rect.left;
             const canvasX = (mouseX / rect.width) * waveformCanvas.width;
             
-            // Calculate exact time position
             hoveredTime = (mouseX / rect.width) * audio.duration;
             
             const barWidth = 2;
@@ -147,11 +153,10 @@ function updatePlayerUI() {
             const totalBarWidth = barWidth + gap;
             const newHoveredBar = Math.floor(canvasX / totalBarWidth);
             
-            // Ensure the hovered bar aligns with the time position
+            // Alignment
             const barTime = (newHoveredBar * totalBarWidth / waveformCanvas.width) * audio.duration;
             const nextBarTime = ((newHoveredBar + 1) * totalBarWidth / waveformCanvas.width) * audio.duration;
             
-            // Only update if we're within the valid range and the time aligns
             if (newHoveredBar !== hoveredBar && 
                 newHoveredBar >= 0 && 
                 newHoveredBar < waveformCanvas.waveformData?.length &&
@@ -164,7 +169,6 @@ function updatePlayerUI() {
             }
         });
 
-        // Click handler for precise seeking
         progressContainer.addEventListener('click', (event) => {
             if (hoveredTime >= 0 && hoveredTime <= audio.duration) {
                 audio.currentTime = hoveredTime;
@@ -209,8 +213,7 @@ function updatePlayerUI() {
                 isDragging = true;
                 event.preventDefault();
                 const rect = progressBar.getBoundingClientRect();
-                const clickPosition = (event.clientX - rect.left) / rect.width;
-                const selectedTime = clickPosition * audio.duration;
+                const selectedTime = getExactTime(event, waveformCanvas);
         
                 if (!progressBar.startLoopTime) { // set loop start point if there isnt one
                     progressBar.startLoopTime = selectedTime;
@@ -226,14 +229,18 @@ function updatePlayerUI() {
                         ];
                     }
                 } else { // handle special cases
-                    if (selectedTime < progressBar.startLoopTime) { // set new start loop time if clicked
-                        progressBar.startLoopTime = selectedTime;
-                    } else if (selectedTime > progressBar.endLoopTime) { // set new end loop time if clicked
+                    const distToStart = Math.abs(selectedTime - progressBar.startLoopTime);
+                    const distToEnd = Math.abs(selectedTime - progressBar.endLoopTime);
+                    
+                    if (distToStart < distToEnd) { // set new start loop time if clicked
+                        progressBar.startLoopTime = selectedTime; 
+                    } else { // set new end loop time if clicked
                         progressBar.endLoopTime = selectedTime;
-
+                    }
+                    /*
                     } else if (selectedTime < progressBar.endLoopTime && selectedTime > progressBar.startLoopTime) { // if selection is between the two points, make it the new start point
                         progressBar.startLoopTime = selectedTime;
-                    }
+                    }*/
                 }
 
                 if (rightClickTimer) { // reset loop times on rmb double click
@@ -247,6 +254,11 @@ function updatePlayerUI() {
                     }, 300);
                 }
         
+                updateProgressBarGradient(progressBar, audio);
+                requestAnimationFrame(() => {
+                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                });
+                
                 // highlight the selected loop range
                 progressBar.style.background = `linear-gradient(to right, 
                     #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
@@ -257,10 +269,14 @@ function updatePlayerUI() {
                 // dragging selection
                 const onMouseMove = (moveEvent) => {
                     if (!isDragging) return;
-                    
-                    const movePosition = (moveEvent.clientX - rect.left) / rect.width;
-                    const movedTime = movePosition * audio.duration;
+                    const movedTime = getExactTime(moveEvent, waveformCanvas);
                     progressBar.endLoopTime = movedTime;
+
+                    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime === undefined) {
+                        progressBar.endLoopTime = movedTime;
+                    } else {
+                        progressBar.endLoopTime = movedTime;
+                    }
     
                     if (progressBar.startLoopTime > progressBar.endLoopTime) {
                         [progressBar.startLoopTime, progressBar.endLoopTime] = [
@@ -274,10 +290,9 @@ function updatePlayerUI() {
                         cancelAnimationFrame(animationFrameId);
                     }
     
-                    // schedule a new frame
-                    animationFrameId = requestAnimationFrame(() => {
-                        updateWaveformProgress(audio, waveformCanvas, progressBar);
-                        updateProgressBarGradient(progressBar, audio);
+                    updateProgressBarGradient(progressBar, audio);
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                     });
                 };
         
@@ -285,7 +300,7 @@ function updatePlayerUI() {
                     isDragging = false;
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
-                    // Final update after drag ends
+
                     requestAnimationFrame(() => {
                         updateWaveformProgress(audio, waveformCanvas, progressBar);
                         updateProgressBarGradient(progressBar, audio);
@@ -294,6 +309,21 @@ function updatePlayerUI() {
         
                 document.addEventListener('mousemove', onMouseMove);
                 document.addEventListener('mouseup', onMouseUp);
+            }
+        });
+
+        audio.addEventListener('timeupdate', () => {
+            progressBar.value = audio.currentTime;
+            requestAnimationFrame(() => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+            });
+
+            // More precise loop check
+            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+                const precision = 0.01; // Increased precision (10ms)
+                if (audio.currentTime >= progressBar.endLoopTime - precision) {
+                    audio.currentTime = progressBar.startLoopTime;
+                }
             }
         });
 
@@ -308,8 +338,8 @@ function updateProgressBarGradient(progressBar, audio) {
         return;
     }
 
-    const startPercent = (progressBar.startLoopTime / audio.duration * 100).toFixed(2);
-    const endPercent = (progressBar.endLoopTime / audio.duration * 100).toFixed(2);
+    const startPercent = (progressBar.startLoopTime / audio.duration * 100).toFixed(4);
+    const endPercent = (progressBar.endLoopTime / audio.duration * 100).toFixed(4);
     
     progressBar.style.background = `linear-gradient(to right, 
         #333 ${startPercent}%, 
