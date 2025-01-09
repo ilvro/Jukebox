@@ -47,6 +47,7 @@ export { addSongToPlayer };
 
 // --------------------------------------------- 
 // player container/controller
+let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
 let animationFrameId = null;
@@ -124,10 +125,68 @@ function updatePlayerUI() {
             updateVolumeSlider(volumeControl);
         });
 
+        // hover effect
+        let hoveredBar = -1;
+        let hoveredTime = -1;
+        let lastMoveTime = 0;
+        const moveThrottle = 16;
+        progressContainer.addEventListener('mousemove', (event) => {
+            const currentTime = Date.now();
+            if (currentTime - lastMoveTime < moveThrottle) return;
+            lastMoveTime = currentTime;
+
+            const rect = waveformCanvas.getBoundingClientRect();
+            const mouseX = event.clientX - rect.left;
+            const canvasX = (mouseX / rect.width) * waveformCanvas.width;
+            
+            // Calculate exact time position
+            hoveredTime = (mouseX / rect.width) * audio.duration;
+            
+            const barWidth = 2;
+            const gap = 1;
+            const totalBarWidth = barWidth + gap;
+            const newHoveredBar = Math.floor(canvasX / totalBarWidth);
+            
+            // Ensure the hovered bar aligns with the time position
+            const barTime = (newHoveredBar * totalBarWidth / waveformCanvas.width) * audio.duration;
+            const nextBarTime = ((newHoveredBar + 1) * totalBarWidth / waveformCanvas.width) * audio.duration;
+            
+            // Only update if we're within the valid range and the time aligns
+            if (newHoveredBar !== hoveredBar && 
+                newHoveredBar >= 0 && 
+                newHoveredBar < waveformCanvas.waveformData?.length &&
+                hoveredTime >= barTime && 
+                hoveredTime <= nextBarTime) {
+                    hoveredBar = newHoveredBar;
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                    });
+            }
+        });
+
+        // Click handler for precise seeking
+        progressContainer.addEventListener('click', (event) => {
+            if (hoveredTime >= 0 && hoveredTime <= audio.duration) {
+                audio.currentTime = hoveredTime;
+                progressBar.value = hoveredTime;
+            }
+        });
+
+        progressContainer.addEventListener('mouseleave', () => {
+            hoveredBar = -1;
+            hoveredTime = -1;
+            requestAnimationFrame(() => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+            });
+        });
+        
         generateWaveform(audio, waveformCanvas);
         
         audio.addEventListener('timeupdate', () => {
             progressBar.value = audio.currentTime;
+            requestAnimationFrame(() => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar);
+            });
             updateWaveformProgress(audio, waveformCanvas, progressBar);
 
             // check loop
@@ -242,7 +301,7 @@ function updatePlayerUI() {
     });
 }
 
-// this part might look weird, theres some optimization involved, waveforms are hard to work with
+// this part might look weird, theres some optimization involved and waveforms are hard to work with
 function updateProgressBarGradient(progressBar, audio) {
     if (progressBar.startLoopTime === undefined || progressBar.endLoopTime === undefined) {
         progressBar.style.background = '#333';
@@ -263,36 +322,46 @@ async function generateWaveform(audio, canvas) {
     try {
         canvas.width = 500;
         canvas.height = 30;
+
+        if (!sharedAudioContext) {
+            sharedAudioContext = new AudioContext();
+        }
         
         const response = await fetch(audio.src);
         const arrayBuffer = await response.arrayBuffer();
-        const audioContext = new AudioContext();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
         
         const rawData = audioBuffer.getChannelData(0);
         const samplesPerPixel = Math.floor(rawData.length / canvas.width);
         const waveformData = new Array(canvas.width);
         
-        for (let i = 0; i < canvas.width; i++) {
-            const start = i * samplesPerPixel;
-            const end = start + samplesPerPixel;
-            let sum = 0;
-            let peakPositive = 0;
-            let peakNegative = 0;
+        const chunkSize = 1000;
+        for (let i = 0; i < canvas.width; i += chunkSize) {
+            await new Promise(resolve => setTimeout(resolve, 0));
             
-            for (let j = start; j < end; j++) {
-                const amplitude = rawData[j];
-                sum += Math.abs(amplitude);
-                if (amplitude > peakPositive) peakPositive = amplitude;
-                if (amplitude < peakNegative) peakNegative = amplitude;
+            const endChunk = Math.min(i + chunkSize, canvas.width);
+            for (let j = i; j < endChunk; j++) {
+                const start = j * samplesPerPixel;
+                const end = start + samplesPerPixel;
+                let sum = 0;
+                let peakPositive = 0;
+                let peakNegative = 0;
+                
+                for (let k = start; k < end; k++) {
+                    const amplitude = rawData[k];
+                    sum += Math.abs(amplitude);
+                    if (amplitude > peakPositive) peakPositive = amplitude;
+                    if (amplitude < peakNegative) peakNegative = amplitude;
+                }
+                
+                waveformData[j] = {
+                    average: sum / samplesPerPixel,
+                    peak: Math.max(Math.abs(peakPositive), Math.abs(peakNegative))
+                };
             }
-            
-            waveformData[i] = {
-                average: sum / samplesPerPixel,
-                peak: Math.max(Math.abs(peakPositive), Math.abs(peakNegative))
-            };
         }
 
+        // normalize waveform data
         let maxPeak = 0;
         let maxAverage = 0;
         waveformData.forEach(point => {
@@ -305,6 +374,7 @@ async function generateWaveform(audio, canvas) {
             point.average /= maxAverage;
         });
 
+        canvas.waveformData = waveformData;
         drawWaveform(canvas, waveformData);
 
     } catch (error) {
@@ -341,7 +411,7 @@ function drawWaveform(canvas, waveformData) {
     }
 }
 
-function updateWaveformProgress(audio, canvas, progressBar) {
+function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hoveredTime = -1) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const width = canvas.width;
     const height = canvas.height;
@@ -353,22 +423,36 @@ function updateWaveformProgress(audio, canvas, progressBar) {
     
     const barWidth = 2;
     const gap = 1;
+    const totalBarWidth = barWidth + gap;
     const centerY = height / 2;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
     const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
     const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
 
-    // draw in batches for better performance
+    // draw time indicator for hover position
+    if (hoveredTime >= 0) {
+        const hoverPixel = Math.floor((hoveredTime / audio.duration) * width);
+        ctx.fillStyle = 'rgba(74, 255, 219, 0.3)';
+        ctx.fillRect(hoverPixel - 1, 0, 2, height);
+    }
+
     const batchSize = 50;
     for (let i = 0; i < waveformData.length; i += batchSize) {
         const endIndex = Math.min(i + batchSize, waveformData.length);
         
         for (let j = i; j < endIndex; j++) {
-            const x = j * (barWidth + gap);
+            const x = j * totalBarWidth;
+            const barTime = (x / width) * audio.duration;
             
             let mainColor, peakColor;
-            if (x <= progressPixel) {
+            if (j === hoveredBar || 
+                (hoveredTime >= 0 && 
+                 barTime <= hoveredTime && 
+                 barTime + (totalBarWidth / width * audio.duration) >= hoveredTime)) {
+                mainColor = '#4affdb';
+                peakColor = '#2affdb';
+            } else if (x <= progressPixel) {
                 mainColor = '#2bdbb0';
                 peakColor = '#1a9977';
             } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
@@ -393,16 +477,16 @@ function updateWaveformProgress(audio, canvas, progressBar) {
             ctx.fillRect(x, peakTopY, barWidth, 1);
             ctx.fillRect(x, peakBottomY, barWidth, 1);  
         }
+    }
 
-        // draw loop points
-        if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-            ctx.fillStyle = '#4a9eff';
-            const startX = (progressBar.startLoopTime / audio.duration) * width;
-            const endX = (progressBar.endLoopTime / audio.duration) * width;
-            
-            ctx.fillRect(startX - 1, 0, 2, height);
-            ctx.fillRect(endX - 1, 0, 2, height);
-        }
+    // draw loop points
+    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+        ctx.fillStyle = '#4a9eff';
+        const startX = (progressBar.startLoopTime / audio.duration) * width;
+        const endX = (progressBar.endLoopTime / audio.duration) * width;
+        
+        ctx.fillRect(startX - 1, 0, 2, height);
+        ctx.fillRect(endX - 1, 0, 2, height);
     }
 }
 
