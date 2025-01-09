@@ -388,7 +388,8 @@ button {
     appearance: none;
     height: 6px;
     width: 6px;
-    background: rgb(43, 219, 176);
+    /*background: rgb(43, 219, 176);*/
+    background: transparent;
     border-radius: 50%;
     cursor: pointer;
     margin-top: 12px; /* centers the thumb */
