@@ -1,4 +1,11 @@
+import { setupAudioEffects } from './mixing.js';
 let activeAudios = {};
+let sharedAudioContext;
+const playerContainer = document.getElementById('player-container');
+const showPlayerBtn = document.getElementById('show-player-button');
+const doubleClickDelay = 300;
+let lastRightClickTime = 0;
+let isDragging = false;
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
@@ -45,14 +52,6 @@ function addSongToPlayer(songElement, audioFile) {
 
 export { addSongToPlayer };
 
-// --------------------------------------------- 
-// player container/controller
-let sharedAudioContext;
-const playerContainer = document.getElementById('player-container');
-const showPlayerBtn = document.getElementById('show-player-button');
-const doubleClickDelay = 300;
-let lastRightClickTime = 0;
-let isDragging = false;
 function showPlayer() {
     playerContainer.classList.toggle('active');
     playerContainer.classList.toggle('showBtn')
@@ -79,56 +78,6 @@ function isPointInSelectedRegion(time, progressBar) {
            time <= progressBar.selectedEndTime;
 }
 
-function createContextMenu(x, y, progressBar, audio) {
-    const existingMenu = document.querySelector('.waveform-context-menu');
-    if (existingMenu) {
-        existingMenu.remove();
-    }
-
-    const menu = document.createElement('div');
-    menu.className = 'waveform-context-menu';
-    menu.style.position = 'absolute';
-    menu.style.left = `${x}px`;
-    menu.style.top = `${y}px`;
-    menu.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
-    menu.style.borderRadius = '5px';
-    menu.style.padding = '10px';
-    menu.style.zIndex = '1000';
-
-    const applyLoopOption = document.createElement('div');
-    applyLoopOption.textContent = progressBar.isLooping ? 'Remove Loop' : 'Apply Loop';
-    applyLoopOption.style.cursor = 'pointer';
-
-    applyLoopOption.addEventListener('click', () => {
-        if (progressBar.isLooping) {
-            progressBar.isLooping = false;
-            progressBar.style.background = '#333';
-        } else if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
-            progressBar.isLooping = true;
-            updateProgressBarGradient(progressBar, audio);
-        }
-        menu.remove();
-    });
-
-    menu.appendChild(applyLoopOption);
-    document.body.appendChild(menu);
-
-    const closeMenu = (event) => {
-        if (!menu.contains(event.target)) {
-            menu.remove();
-            document.removeEventListener('click', closeMenu);
-        }
-    };
-
-    menu.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-    })
-    
-    setTimeout(() => {
-        document.addEventListener('click', closeMenu);
-    }, 0);
-}
-
 playerContainer.addEventListener('contextmenu', (event) => {
     event.preventDefault();
 })
@@ -138,15 +87,16 @@ function updatePlayerUI() {
     playerContainer.innerHTML = '';
 
     Object.entries(activeAudios).forEach(([songId, audio]) => {
-        const trackDiv = document.createElement('div');
-        trackDiv.className = 'track-item';
-        trackDiv.dataset.songId = songId;
-
         const getExactTime = (event, element) => {
             const rect = element.getBoundingClientRect();
             const mouseX = event.clientX - rect.left;
             return (mouseX / rect.width) * audio.duration;
         };
+
+        // UI
+        const trackDiv = document.createElement('div');
+        trackDiv.className = 'track-item';
+        trackDiv.dataset.songId = songId;
 
         const songElement = document.querySelector(`[data-song-id="${songId}"]`);
         const titleSpan = document.createElement('span');
@@ -270,19 +220,13 @@ function updatePlayerUI() {
             requestAnimationFrame(() => {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
             });
-        
-            if (progressBar.isLooping && progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
-                const precision = 0.01;
-                if (audio.currentTime >= progressBar.selectedEndTime - precision) {
-                    audio.currentTime = progressBar.selectedStartTime;
-                }
-            }
         });
 
         progressBar.addEventListener('contextmenu', (event) => {
             event.preventDefault();
         });
         
+        const audioEffects = setupAudioEffects(audio, progressBar);
         progressBar.addEventListener('mousedown', (event) => {
             if (event.button === 2) {
                 event.preventDefault();
@@ -297,12 +241,21 @@ function updatePlayerUI() {
                 lastRightClickTime = currentTime;
 
                 if (isPointInSelectedRegion(selectedTime, progressBar)) {
-                    createContextMenu(event.clientX, event.clientY, progressBar, audio);
+                    audioEffects.createContextMenu(
+                        event.clientX, 
+                        event.clientY,
+                        (progressBar, audio) => {
+                            updateProgressBarGradient(progressBar, audio);
+                        },
+                        () => {
+                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                        }
+                    );
                 } else if (isDoubleClick) {
-                    // clear selection and loop on double rmb
+                    // clear selection double rmb
                     progressBar.selectedStartTime = undefined;
                     progressBar.selectedEndTime = undefined;
-                    progressBar.isLooping = false;
+                    audioEffects.cleanup();
                     progressBar.style.background = '#333';
                     const existingMenu = document.querySelector('.waveform-context-menu');
                     if (existingMenu) {
@@ -533,7 +486,7 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         }
     }
 
-    // draw loop points
+    // draw selection points
     if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
         ctx.fillStyle = '#4a9eff';
         const startX = (progressBar.selectedStartTime / audio.duration) * width;
