@@ -20,6 +20,24 @@ export function setupAudioEffects(audio, progressBar) {
                     }
                 }
             }
+        },
+        slowdown: {
+            name: 'Slow Down (0.5x)',
+            active: false,
+            toggle: function() {
+                this.active = !this.active;
+                audio.playbackRate = this.active ? 0.5 : 1;
+                return this.active;
+            }
+        },
+        speedup: {
+            name: 'Speed Up (1.5x)',
+            active: false,
+            toggle: function() {
+                this.active = !this.active;
+                audio.playbackRate = this.active ? 1.5 : 1;
+                return this.active;
+            }
         }
     };
 
@@ -33,6 +51,7 @@ export function setupAudioEffects(audio, progressBar) {
 
         const menu = document.createElement('div');
         menu.className = 'waveform-context-menu';
+        menu.id = 'waveform-context-menu';
         Object.assign(menu.style, {
             position: 'absolute',
             left: `${x}px`,
@@ -40,22 +59,28 @@ export function setupAudioEffects(audio, progressBar) {
             backgroundColor: 'rgba(0, 0, 0, 0.3)',
             borderRadius: '5px',
             padding: '10px',
-            zIndex: '1000'
+            zIndex: '1000',
+            opacity: '0',
+            visibility: 'hidden',
+            transform: 'translateY(-10px)',
+            transition: 'opacity 0.3s ease, transform 0.5s ease, visibility 0.3s',
+            minWidth: '150px'
         });
 
         Object.entries(effects).forEach(([key, effect]) => {
             const menuItem = document.createElement('div');
             menuItem.textContent = `${effect.active ? 'Remove' : 'Apply'} ${effect.name}`;
-            menuItem.style.cursor = 'pointer';
+            menuItem.style.cursor = 'default';
             menuItem.style.padding = '5px';
-            menuItem.style.borderRadius = '3px';
+            menuItem.style.transition = 'border-bottom 0.3s ease';
+            menuItem.style.borderBottom = '1px solid transparent';
             
             menuItem.addEventListener('mouseover', () => {
-                menuItem.style.backgroundColor = 'rgba(43, 219, 160, 0.3)';
+                menuItem.style.borderBottom = '1px solid rgba(43, 219, 160)';
             });
             
             menuItem.addEventListener('mouseout', () => {
-                menuItem.style.backgroundColor = 'transparent';
+                menuItem.style.borderBottom = '1px solid transparent';
             });
 
             menuItem.addEventListener('click', () => {
@@ -70,7 +95,10 @@ export function setupAudioEffects(audio, progressBar) {
                     updateWaveformProgress();
                 }
                 
-                menu.remove();
+                menu.style.opacity = '0';
+                menu.style.transform = 'translateY(-10px)';
+                menu.style.visibility = 'hidden';
+                setTimeout(() => menu.remove(), 300);
             });
 
             menu.appendChild(menuItem);
@@ -78,20 +106,32 @@ export function setupAudioEffects(audio, progressBar) {
 
         document.body.appendChild(menu);
 
+        requestAnimationFrame(() => {
+            menu.style.opacity = '1';
+            menu.style.visibility = 'visible';
+            menu.style.transform = 'translateY(0)';
+        });
+
         const closeMenu = (event) => {
             if (!menu.contains(event.target)) {
-                menu.remove();
-                document.removeEventListener('click', closeMenu);
+                menu.style.opacity = '0';
+                menu.style.transform = 'translateY(-10px)';
+                menu.style.visibility = 'hidden';
+                
+                setTimeout(() => {
+                    menu.remove();
+                    document.removeEventListener('click', closeMenu);
+                }, 300); // Match transition duration
             }
         };
-
-        menu.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-        });
         
         setTimeout(() => {
             document.addEventListener('click', closeMenu);
         }, 0);
+
+        menu.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+        })
     }
 
     function cleanup() {

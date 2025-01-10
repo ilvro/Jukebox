@@ -66,7 +66,7 @@ playerContainer.addEventListener('mouseover', () => {
 });
 
 playerContainer.addEventListener('mouseout', () => {
-    if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn')) {
+    if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn') && !document.getElementById('waveform-context-menu')) {
         playerContainer.classList.remove('active');
     }
 });
@@ -242,8 +242,8 @@ function updatePlayerUI() {
 
                 if (isPointInSelectedRegion(selectedTime, progressBar)) {
                     audioEffects.createContextMenu(
-                        event.clientX, 
-                        event.clientY,
+                        event.pageX, 
+                        event.pageY,
                         (progressBar, audio) => {
                             updateProgressBarGradient(progressBar, audio);
                         },
