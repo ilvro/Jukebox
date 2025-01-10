@@ -50,7 +50,8 @@ export { addSongToPlayer };
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
-let animationFrameId = null;
+const doubleClickDelay = 300;
+let lastRightClickTime = 0;
 let isDragging = false;
 function showPlayer() {
     playerContainer.classList.toggle('active');
@@ -71,6 +72,66 @@ playerContainer.addEventListener('mouseout', () => {
     }
 });
 
+function isPointInSelectedRegion(time, progressBar) {
+    return progressBar.selectedStartTime !== undefined && 
+           progressBar.selectedEndTime !== undefined &&
+           time >= progressBar.selectedStartTime && 
+           time <= progressBar.selectedEndTime;
+}
+
+function createContextMenu(x, y, progressBar, audio) {
+    const existingMenu = document.querySelector('.waveform-context-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+
+    const menu = document.createElement('div');
+    menu.className = 'waveform-context-menu';
+    menu.style.position = 'absolute';
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+    menu.style.borderRadius = '5px';
+    menu.style.padding = '10px';
+    menu.style.zIndex = '1000';
+
+    const applyLoopOption = document.createElement('div');
+    applyLoopOption.textContent = progressBar.isLooping ? 'Remove Loop' : 'Apply Loop';
+    applyLoopOption.style.cursor = 'pointer';
+
+    applyLoopOption.addEventListener('click', () => {
+        if (progressBar.isLooping) {
+            progressBar.isLooping = false;
+            progressBar.style.background = '#333';
+        } else if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
+            progressBar.isLooping = true;
+            updateProgressBarGradient(progressBar, audio);
+        }
+        menu.remove();
+    });
+
+    menu.appendChild(applyLoopOption);
+    document.body.appendChild(menu);
+
+    const closeMenu = (event) => {
+        if (!menu.contains(event.target)) {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+        }
+    };
+
+    menu.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    })
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeMenu);
+    }, 0);
+}
+
+playerContainer.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+})
 
 function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
@@ -88,8 +149,8 @@ function updatePlayerUI() {
         };
 
         const songElement = document.querySelector(`[data-song-id="${songId}"]`);
-        let songTitle = songElement.querySelector('input').value;
         const titleSpan = document.createElement('span');
+        let songTitle = songElement.querySelector('input').value;
         if (songTitle.length > 15) {
             songTitle = songTitle.substring(0, 15) + "...";
         }
@@ -207,137 +268,85 @@ function updatePlayerUI() {
         audio.addEventListener('timeupdate', () => {
             progressBar.value = audio.currentTime;
             requestAnimationFrame(() => {
-                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar);
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
             });
-            updateWaveformProgress(audio, waveformCanvas, progressBar);
-
-            // check loop
-            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-                const precision = 0.1; // weird thing to make it a bit more precise, it doesnt loop at the exact end point due to how audio is processed in browsers
-                if (audio.currentTime >= progressBar.endLoopTime - precision) {
-                    audio.currentTime = progressBar.startLoopTime;
+        
+            if (progressBar.isLooping && progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
+                const precision = 0.01;
+                if (audio.currentTime >= progressBar.selectedEndTime - precision) {
+                    audio.currentTime = progressBar.selectedStartTime;
                 }
             }
         });
 
-        // loop selection
-        let rightClickTimer = null;
         progressBar.addEventListener('contextmenu', (event) => {
             event.preventDefault();
         });
         
-        progressBar.addEventListener('mousedown', (event) => { 
+        progressBar.addEventListener('mousedown', (event) => {
             if (event.button === 2) {
-                isDragging = true;
                 event.preventDefault();
                 const selectedTime = getExactTime(event, waveformCanvas);
-        
-                if (!progressBar.startLoopTime) { // set loop start point if there isnt one
-                    progressBar.startLoopTime = selectedTime;
-                } 
-                else if (!progressBar.endLoopTime) { // set loop end point if there isnt one
-                    progressBar.endLoopTime = selectedTime;
-        
-                    // ensure start is always before end
-                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
-                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
-                            progressBar.endLoopTime,
-                            progressBar.startLoopTime,
-                        ];
-                    }
-                } else { // handle special cases
-                    const distToStart = Math.abs(selectedTime - progressBar.startLoopTime);
-                    const distToEnd = Math.abs(selectedTime - progressBar.endLoopTime);
-                    
-                    if (distToStart < distToEnd) { // set new start loop time if clicked
-                        progressBar.startLoopTime = selectedTime; 
-                    } else { // set new end loop time if clicked
-                        progressBar.endLoopTime = selectedTime;
-                    }
-                    /*
-                    } else if (selectedTime < progressBar.endLoopTime && selectedTime > progressBar.startLoopTime) { // if selection is between the two points, make it the new start point
-                        progressBar.startLoopTime = selectedTime;
-                    }*/
+
+                if (isDragging) {
+                    return;
                 }
 
-                if (rightClickTimer) { // reset loop times on rmb double click
-                    progressBar.startLoopTime = undefined;
-                    progressBar.endLoopTime = undefined;
+                const currentTime = Date.now();
+                const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
+                lastRightClickTime = currentTime;
+
+                if (isPointInSelectedRegion(selectedTime, progressBar)) {
+                    createContextMenu(event.clientX, event.clientY, progressBar, audio);
+                } else if (isDoubleClick) {
+                    // clear selection and loop on double rmb
+                    progressBar.selectedStartTime = undefined;
+                    progressBar.selectedEndTime = undefined;
+                    progressBar.isLooping = false;
                     progressBar.style.background = '#333';
-                    rightClickTimer = null;
-                } else {
-                    rightClickTimer = setTimeout(() => {
-                        rightClickTimer = null;
-                    }, 300);
-                }
-        
-                updateProgressBarGradient(progressBar, audio);
-                requestAnimationFrame(() => {
-                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                });
-                
-                // highlight the selected loop range
-                progressBar.style.background = `linear-gradient(to right, 
-                    #333 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                    #2bdbb0 ${progressBar.startLoopTime / audio.duration * 100}%, 
-                    #2bdbb0 ${progressBar.endLoopTime / audio.duration * 100}%, 
-                    #333 ${progressBar.endLoopTime / audio.duration * 100}%)`;
-        
-                // dragging selection
-                const onMouseMove = (moveEvent) => {
-                    if (!isDragging) return;
-                    const movedTime = getExactTime(moveEvent, waveformCanvas);
-                    progressBar.endLoopTime = movedTime;
-
-                    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime === undefined) {
-                        progressBar.endLoopTime = movedTime;
-                    } else {
-                        progressBar.endLoopTime = movedTime;
+                    const existingMenu = document.querySelector('.waveform-context-menu');
+                    if (existingMenu) {
+                        existingMenu.remove();
                     }
-    
-                    if (progressBar.startLoopTime > progressBar.endLoopTime) {
-                        [progressBar.startLoopTime, progressBar.endLoopTime] = [
-                            progressBar.endLoopTime,
-                            progressBar.startLoopTime,
-                        ];
-                    }
-
-                    if (animationFrameId) {
-                        cancelAnimationFrame(animationFrameId);
-                    }
-    
-                    updateProgressBarGradient(progressBar, audio);
                     requestAnimationFrame(() => {
                         updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                     });
-                };
+                } else if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
+                    // start new selection only if there isnt one
+                    isDragging = true;
+                    progressBar.selectedStartTime = selectedTime;
+                    
+                    const onMouseMove = (moveEvent) => {
+                        if (!isDragging) return;
+                        const movedTime = getExactTime(moveEvent, waveformCanvas);
+                        progressBar.selectedEndTime = movedTime;
         
-                const onMouseUp = () => {
-                    isDragging = false;
-                    document.removeEventListener('mousemove', onMouseMove);
-                    document.removeEventListener('mouseup', onMouseUp);
-
-                    requestAnimationFrame(() => {
-                        updateWaveformProgress(audio, waveformCanvas, progressBar);
+                        if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
+                            [progressBar.selectedStartTime, progressBar.selectedEndTime] = [
+                                progressBar.selectedEndTime,
+                                progressBar.selectedStartTime,
+                            ];
+                        }
+        
                         updateProgressBarGradient(progressBar, audio);
-                    });
-                };
+                        requestAnimationFrame(() => {
+                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                        });
+                    };
         
-                document.addEventListener('mousemove', onMouseMove);
-                document.addEventListener('mouseup', onMouseUp);
-            }
-        });
-
-        audio.addEventListener('timeupdate', () => {
-            progressBar.value = audio.currentTime;
-            requestAnimationFrame(() => {
-                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-            });
-
-            if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
-                const precision = 0.01;
-                if (audio.currentTime >= progressBar.endLoopTime - precision) {
-                    audio.currentTime = progressBar.startLoopTime;
+                    const onMouseUp = () => {
+                        isDragging = false;
+                        document.removeEventListener('mousemove', onMouseMove);
+                        document.removeEventListener('mouseup', onMouseUp);
+                    };
+        
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                } else {
+                    const existingMenu = document.querySelector('.waveform-context-menu');
+                    if (existingMenu) {
+                        existingMenu.remove();
+                    }
                 }
             }
         });
@@ -348,13 +357,13 @@ function updatePlayerUI() {
 
 // this part might look weird, theres some optimization involved and waveforms are hard to work with
 function updateProgressBarGradient(progressBar, audio) {
-    if (progressBar.startLoopTime === undefined || progressBar.endLoopTime === undefined) {
+    if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
         progressBar.style.background = '#333';
         return;
     }
 
-    const startPercent = (progressBar.startLoopTime / audio.duration * 100).toFixed(4);
-    const endPercent = (progressBar.endLoopTime / audio.duration * 100).toFixed(4);
+    const startPercent = (progressBar.selectedStartTime / audio.duration * 100).toFixed(4);
+    const endPercent = (progressBar.selectedEndTime / audio.duration * 100).toFixed(4);
     
     progressBar.style.background = `linear-gradient(to right, 
         #333 ${startPercent}%, 
@@ -472,8 +481,8 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     const centerY = height / 2;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
-    const loopStartPixel = progressBar.startLoopTime ? Math.floor((progressBar.startLoopTime / audio.duration) * width) : -1;
-    const loopEndPixel = progressBar.endLoopTime ? Math.floor((progressBar.endLoopTime / audio.duration) * width) : -1;
+    const selectedStartPixel = progressBar.selectedStartTime ? Math.floor((progressBar.selectedStartTime / audio.duration) * width) : -1;
+    const selectedEndPixel = progressBar.selectedEndTime ? Math.floor((progressBar.selectedEndTime / audio.duration) * width) : -1;
 
     // draw time indicator for hover position
     if (hoveredTime >= 0) {
@@ -500,8 +509,8 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
             } else if (x <= progressPixel) {
                 mainColor = '#2bdbb0';
                 peakColor = '#1a9977';
-            } else if (loopStartPixel !== -1 && loopEndPixel !== -1 && 
-                      x >= loopStartPixel && x <= loopEndPixel) {
+            } else if (selectedStartPixel !== -1 && selectedEndPixel !== -1 && 
+                      x >= selectedStartPixel && x <= selectedEndPixel) {
                 mainColor = '#4a9eff';
                 peakColor = '#3a7ecc';
             } else {
@@ -525,10 +534,10 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     }
 
     // draw loop points
-    if (progressBar.startLoopTime !== undefined && progressBar.endLoopTime !== undefined) {
+    if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
         ctx.fillStyle = '#4a9eff';
-        const startX = (progressBar.startLoopTime / audio.duration) * width;
-        const endX = (progressBar.endLoopTime / audio.duration) * width;
+        const startX = (progressBar.selectedStartTime / audio.duration) * width;
+        const endX = (progressBar.selectedEndTime / audio.duration) * width;
         
         ctx.fillRect(startX - 1, 0, 2, height);
         ctx.fillRect(endX - 1, 0, 2, height);
