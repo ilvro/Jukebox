@@ -1,4 +1,33 @@
 export function setupAudioEffects(audio, progressBar) {
+    let audioContext = null;
+    let sourceNode = null;
+    let gainNode1 = null;
+    let gainNode2 = null;
+    let bufferSource = null;
+    let audioBuffer = null;
+
+    async function initializeAudioContext() {
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            sourceNode = audioContext.createMediaElementSource(audio);
+            gainNode1 = audioContext.createGain();
+            gainNode2 = audioContext.createGain();
+            sourceNode.connect(gainNode1);
+            gainNode1.connect(audioContext.destination);
+            gainNode2.connect(audioContext.destination);
+        }
+
+        if (!audioBuffer) {
+            try {
+                const response = await fetch(audio.src);
+                const arrayBuffer = await response.arrayBuffer();
+                audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            } catch (error) {
+                console.error("Error loading audio buffer:", error);
+            }
+        }
+    }
+
     const effects = {
         loop: {
             name: 'Loop',
@@ -38,10 +67,113 @@ export function setupAudioEffects(audio, progressBar) {
                 audio.playbackRate = this.active ? 1.5 : 1;
                 return this.active;
             }
+        },
+        crossfadeLoop: {
+            name: 'Loop with Crossfade',
+            active: false,
+            crossfadeDuration: 2,
+            isTransitioning: false,
+            async toggle() {
+                if (progressBar.selectedStartTime === undefined || 
+                    progressBar.selectedEndTime === undefined) {
+                    return false;
+                }
+
+                this.active = !this.active;
+
+                if (this.active) {
+                    await initializeAudioContext();
+                    gainNode1.gain.value = 1;
+                    gainNode2.gain.value = 0;
+                } else {
+                    if (bufferSource) {
+                        bufferSource.stop();
+                        bufferSource = null;
+                    }
+                    gainNode1.gain.value = 1;
+                    gainNode2.gain.value = 0;
+                }
+
+                return this.active;
+            },
+            handler: function() {
+                if (!this.active || !audioContext || !audioBuffer || 
+                    progressBar.selectedStartTime === undefined || 
+                    progressBar.selectedEndTime === undefined) {
+                    return;
+                }
+
+                const currentTime = audio.currentTime;
+                const startTime = progressBar.selectedStartTime;
+                const endTime = progressBar.selectedEndTime;
+                
+                if (currentTime >= endTime - this.crossfadeDuration && !this.isTransitioning) {
+                    this.isTransitioning = true;
+
+                    bufferSource = audioContext.createBufferSource();
+                    bufferSource.buffer = audioBuffer;
+                    bufferSource.connect(gainNode2);
+                    
+                    const startOffset = startTime;
+                    const now = audioContext.currentTime;
+                    
+                    gainNode1.gain.setValueAtTime(1, now);
+                    gainNode1.gain.linearRampToValueAtTime(0, now + this.crossfadeDuration);
+                    
+                    gainNode2.gain.setValueAtTime(0, now);
+                    gainNode2.gain.linearRampToValueAtTime(1, now + this.crossfadeDuration);
+
+                    bufferSource.start(now, startOffset);
+
+                    setTimeout(() => {
+                        audio.currentTime = startTime;
+                        [gainNode1, gainNode2] = [gainNode2, gainNode1];
+                        this.isTransitioning = false;
+                    }, this.crossfadeDuration * 1000);
+                }
+            }
         }
     };
 
-    audio.addEventListener('timeupdate', () => effects.loop.handler());
+    const handlerFunction = () => {
+        effects.loop.handler();
+        effects.crossfadeLoop.handler();
+    };
+    audio.addEventListener('timeupdate', handlerFunction);
+
+    audio.addEventListener('pause', () => {
+        if (effects.crossfadeLoop.active) {
+            effects.crossfadeLoop.toggle();
+        }
+    });
+
+    function cleanup() {
+        Object.values(effects).forEach(effect => {
+            if (effect.active) {
+                effect.toggle();
+            }
+        });
+
+        audio.removeEventListener('timeupdate', handlerFunction);
+
+        if (bufferSource) {
+            bufferSource.stop();
+            bufferSource = null;
+        }
+        if (gainNode1) {
+            gainNode1.disconnect();
+        }
+        if (gainNode2) {
+            gainNode2.disconnect();
+        }
+        if (sourceNode) {
+            sourceNode.disconnect();
+        }
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+    }
 
     function createContextMenu(x, y, updateProgressBarGradient, updateWaveformProgress) {
         const existingMenu = document.querySelector('.waveform-context-menu');
@@ -86,7 +218,7 @@ export function setupAudioEffects(audio, progressBar) {
             menuItem.addEventListener('click', () => {
                 const isNowActive = effect.toggle();
                 
-                if (key === 'loop') {
+                if (key === 'loop' || key === 'crossfadeLoop') {
                     if (!isNowActive) {
                         progressBar.style.background = '#333';
                     } else {
@@ -131,21 +263,12 @@ export function setupAudioEffects(audio, progressBar) {
 
         menu.addEventListener('contextmenu', (event) => {
             event.preventDefault();
-        })
-    }
-
-    function cleanup() {
-        Object.values(effects).forEach(effect => {
-            if (effect.active) {
-                effect.toggle();
-            }
         });
-        audio.removeEventListener('timeupdate', effects.loop.handler);
     }
 
     return {
         createContextMenu,
         cleanup,
-        isLooping: () => effects.loop.active
+        isLooping: () => effects.loop.active || effects.crossfadeLoop.active
     };
 }
