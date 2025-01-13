@@ -121,7 +121,7 @@ export function setupAudioEffects(audio, progressBar) {
                 setTimeout(() => {
                     menu.remove();
                     document.removeEventListener('click', closeMenu);
-                }, 300); // Match transition duration
+                }, 300);
             }
         };
         
