@@ -389,7 +389,6 @@ button {
     appearance: none;
     height: 6px;
     width: 6px;
-    /*background: rgb(43, 219, 176);*/
     background: transparent;
     border-radius: 50%;
     cursor: pointer;
@@ -436,7 +435,7 @@ button {
 .progress-bar::-moz-range-thumb {
     height: 6px;
     width: 6px;
-    background: rgb(43, 219, 176);
+    background: rgb(43, 219, 160);
     border-radius: 50%;
     border: none;
     cursor: pointer;
@@ -468,11 +467,9 @@ button {
     background: rgb(43, 219, 160);
     cursor: pointer;
     border: none;
-    /* Ensure the thumb sits centered on the track */
-    margin-top: -4px;  /* (thumb height - track height) / 2 */
+    margin-top: -4px; 
 }
 
-/* Style the filled portion of the track */
 .volume-slider::-webkit-slider-runnable-track {
     height: 4px;
     border-radius: 2px;
