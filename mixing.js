@@ -1,4 +1,7 @@
 export function setupAudioEffects(audio, progressBar) {
+    let crossfadeAudio = null;
+    const CROSSFADE_DURATION = 2;
+
     const effects = {
         loop: {
             name: 'Loop',
@@ -21,12 +24,100 @@ export function setupAudioEffects(audio, progressBar) {
                 }
             }
         },
+        smoothLoop: {
+            name: 'Smooth Loop',
+            active: false,
+            crossfading: false,
+            toggle: function() {
+                if (progressBar.selectedStartTime === undefined || 
+                    progressBar.selectedEndTime === undefined) {
+                    return false;
+                }
+                this.active = !this.active;
+                this.crossfading = false;
+                
+                // clean up previous crossfade audio
+                if (!this.active && crossfadeAudio) {
+                    crossfadeAudio.pause();
+                    crossfadeAudio = null;
+                }
+                
+                return this.active;
+            },
+            handler: function() {
+                if (!this.active || !progressBar.selectedStartTime || !progressBar.selectedEndTime) return;
+
+                const loopEndTime = progressBar.selectedEndTime;
+                const timeUntilEnd = loopEndTime - audio.currentTime;
+
+                // start crossfade when approaching the end of the loop
+                if (timeUntilEnd <= CROSSFADE_DURATION && !this.crossfading && audio.volume > 0) {
+                    this.crossfading = true;
+
+                    // create and set up the crossfade audio
+                    crossfadeAudio = new Audio(audio.src);
+                    crossfadeAudio.currentTime = progressBar.selectedStartTime;
+                    crossfadeAudio.playbackRate = audio.playbackRate;
+                    crossfadeAudio.volume = 0;
+                    
+                    const startTime = performance.now();
+                    const animate = () => {
+                        const elapsed = (performance.now() - startTime) / 1000;
+                        const progress = Math.min(elapsed / CROSSFADE_DURATION, 1);
+                        
+                        if (!this.active) {
+                            if (crossfadeAudio) {
+                                crossfadeAudio.pause();
+                                crossfadeAudio = null;
+                            }
+                            audio.volume = 1;
+                            this.crossfading = false;
+                            return;
+                        }
+                        
+                        // fade out original audio
+                        audio.volume = Math.max(0, 1 - progress);
+                        // fade in crossfade audio
+                        if (crossfadeAudio) {
+                            crossfadeAudio.volume = Math.min(1, progress);
+                        }
+                        
+                        if (progress < 1 && this.active) {
+                            requestAnimationFrame(animate);
+                        } else if (this.active) {
+                            // crossfade complete - prepare for next loop
+                            audio.currentTime = progressBar.selectedStartTime + CROSSFADE_DURATION;
+                            audio.volume = 1;
+                            if (crossfadeAudio) {
+                                crossfadeAudio.pause();
+                                crossfadeAudio = null;
+                            }
+                            this.crossfading = false;
+                        }
+                    };
+                    
+                    crossfadeAudio.play().catch(error => {
+                        console.error("Error playing crossfade audio:", error);
+                        this.crossfading = false;
+                        if (crossfadeAudio) {
+                            crossfadeAudio = null;
+                        }
+                        audio.volume = 1;
+                    });
+                    
+                    requestAnimationFrame(animate);
+                }
+            }
+        },
         slowdown: {
             name: 'Slow Down (0.5x)',
             active: false,
             toggle: function() {
                 this.active = !this.active;
                 audio.playbackRate = this.active ? 0.5 : 1;
+                if (crossfadeAudio) {
+                    crossfadeAudio.playbackRate = audio.playbackRate;
+                }
                 return this.active;
             }
         },
@@ -36,17 +127,41 @@ export function setupAudioEffects(audio, progressBar) {
             toggle: function() {
                 this.active = !this.active;
                 audio.playbackRate = this.active ? 1.5 : 1;
+                if (crossfadeAudio) {
+                    crossfadeAudio.playbackRate = audio.playbackRate;
+                }
                 return this.active;
             }
         }
     };
 
-    audio.addEventListener('timeupdate', () => effects.loop.handler());
+    const handleTimeUpdate = () => {
+        effects.loop.handler();
+        effects.smoothLoop.handler();
+    };
+    
+    audio.addEventListener('timeupdate', handleTimeUpdate);
 
     function createContextMenu(x, y, updateProgressBarGradient, updateWaveformProgress) {
         const existingMenu = document.querySelector('.waveform-context-menu');
         if (existingMenu) {
             existingMenu.remove();
+        }
+
+        // reset effects if theres no selection
+        if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
+            Object.values(effects).forEach(effect => {
+                effect.active = false;
+                if (effect.crossfading !== undefined) {
+                    effect.crossfading = false;
+                }
+            });
+            if (crossfadeAudio) {
+                crossfadeAudio.pause();
+                crossfadeAudio = null;
+            }
+            audio.volume = 1;
+            audio.playbackRate = 1;
         }
 
         const menu = document.createElement('div');
@@ -84,9 +199,16 @@ export function setupAudioEffects(audio, progressBar) {
             });
 
             menuItem.addEventListener('click', () => {
+                // deactivate other loop effect if this is a loop effect
+                if (key === 'loop' && effects.smoothLoop.active) {
+                    effects.smoothLoop.toggle();
+                } else if (key === 'smoothLoop' && effects.loop.active) {
+                    effects.loop.toggle();
+                }
+                
                 const isNowActive = effect.toggle();
                 
-                if (key === 'loop') {
+                if (key === 'loop' || key === 'smoothLoop') {
                     if (!isNowActive) {
                         progressBar.style.background = '#333';
                     } else {
@@ -131,21 +253,28 @@ export function setupAudioEffects(audio, progressBar) {
 
         menu.addEventListener('contextmenu', (event) => {
             event.preventDefault();
-        })
+        });
     }
 
     function cleanup() {
         Object.values(effects).forEach(effect => {
-            if (effect.active) {
-                effect.toggle();
+            effect.active = false;
+            if (effect.crossfading !== undefined) {
+                effect.crossfading = false;
             }
         });
-        audio.removeEventListener('timeupdate', effects.loop.handler);
+        if (crossfadeAudio) {
+            crossfadeAudio.pause();
+            crossfadeAudio = null;
+        }
+        audio.volume = 1;
+        audio.playbackRate = 1;
+        audio.removeEventListener('timeupdate', handleTimeUpdate);
     }
 
     return {
         createContextMenu,
         cleanup,
-        isLooping: () => effects.loop.active
+        isLooping: () => effects.loop.active || effects.smoothLoop.active
     };
 }
