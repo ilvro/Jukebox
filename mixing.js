@@ -3,6 +3,102 @@ export function setupAudioEffects(audio, progressBar) {
     const CROSSFADE_DURATION = 2;
     let originalPlaybackRate = 1;
 
+    let audioContext = null;
+    let sourceNode = null;
+    let mainGainNode = null;
+    let reverbNodes = null;
+    let dryGainNode = null;
+    let wetGainNode = null;
+    let isAudioContextInitialized = false;
+
+    function initializeAudioContext() {
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            sourceNode = audioContext.createMediaElementSource(audio);
+            
+            mainGainNode = audioContext.createGain();
+            dryGainNode = audioContext.createGain();
+            wetGainNode = audioContext.createGain();
+            
+            sourceNode.connect(dryGainNode);
+            sourceNode.connect(wetGainNode);
+            
+            dryGainNode.connect(mainGainNode);
+            mainGainNode.connect(audioContext.destination);
+            isAudioContextInitialized = true;
+        } else if (!isAudioContextInitialized) {
+            // reconnect nodes if context exists but was uninitialized
+            sourceNode.connect(dryGainNode);
+            sourceNode.connect(wetGainNode);
+            dryGainNode.connect(mainGainNode);
+            mainGainNode.connect(audioContext.destination);
+            isAudioContextInitialized = true;
+        }
+    }
+
+    function disconnectAudioContext() {
+        if (isAudioContextInitialized) {
+            try {
+                if (wetGainNode) {
+                    wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                }
+                if (dryGainNode) {
+                    dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                }
+
+                // disconnect reverb-related nodes
+                if (reverbNodes) {
+                    reverbNodes.delays.forEach(delay => delay.disconnect());
+                    reverbNodes.gains.forEach(gain => gain.disconnect());
+                    reverbNodes.output.disconnect();
+                    reverbNodes = null;
+                }
+
+                // disconnect wet path but keep dry path intact
+                if (sourceNode) {
+                    sourceNode.disconnect(wetGainNode);
+                }
+
+                isAudioContextInitialized = false;
+            } catch (error) {
+                console.error("Error disconnecting nodes:", error);
+            }
+        }
+    }
+
+    function createSyntheticReverb() { // uses delay nodes to create a reverb effect
+        const nodes = {
+            delays: [],
+            gains: [],
+            output: audioContext.createGain()
+        };
+
+        const delayTimes = [0.03, 0.05, 0.07, 0.11, 0.13];
+        const gainValues = [0.7, 0.5, 0.3, 0.2, 0.1];
+
+        for (let i = 0; i < delayTimes.length; i++) {
+            const delay = audioContext.createDelay(1);
+            delay.delayTime.value = delayTimes[i];
+
+            const gain = audioContext.createGain();
+            gain.gain.value = gainValues[i];
+
+            nodes.delays.push(delay);
+            nodes.gains.push(gain);
+
+            if (i === 0) {
+                wetGainNode.connect(delay);
+            } else {
+                nodes.delays[i-1].connect(delay);
+            }
+            delay.connect(gain);
+            gain.connect(nodes.output);
+        }
+
+        nodes.output.connect(mainGainNode);
+        return nodes;
+    }
+
     const effects = {
         loop: {
             name: 'Loop',
@@ -108,6 +204,56 @@ export function setupAudioEffects(audio, progressBar) {
                     
                     requestAnimationFrame(animate);
                 }
+            }
+        },
+        reverb: {
+            name: 'Reverb',
+            active: false,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    reverbNodes = createSyntheticReverb();
+
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                     currentTime <= progressBar.selectedEndTime;
+                            
+                            // smoothly transition the wet/dry mix
+                            const transitionTime = 0.05;
+                            wetGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.5 : 0, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                            dryGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.5 : 1, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        disconnectAudioContext();
+                    };
+                    wetGainNode.gain.value = 0;
+                    dryGainNode.gain.value = 1;
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
+                return this.active;
             }
         },
         slowdown: {
@@ -270,17 +416,26 @@ export function setupAudioEffects(audio, progressBar) {
 
     function cleanup() {
         Object.values(effects).forEach(effect => {
+            if (effect.cleanup) {
+                effect.cleanup();
+            }
             effect.active = false;
             if (effect.crossfading !== undefined) {
                 effect.crossfading = false;
             }
         });
+        
         if (crossfadeAudio) {
             crossfadeAudio.pause();
             crossfadeAudio = null;
         }
+
+        if (audioContext) {
+            disconnectAudioContext();
+        }
+
         audio.volume = 1;
-        audio.playbackRate = originalPlaybackRate;
+        audio.playbackRate = 1;
         audio.removeEventListener('timeupdate', handleTimeUpdate);
     }
 

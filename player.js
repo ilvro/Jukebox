@@ -231,15 +231,15 @@ function updatePlayerUI() {
             if (event.button === 2) {
                 event.preventDefault();
                 const selectedTime = getExactTime(event, waveformCanvas);
-
+        
                 if (isDragging) {
                     return;
                 }
-
+        
                 const currentTime = Date.now();
                 const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
                 lastRightClickTime = currentTime;
-
+        
                 if (isPointInSelectedRegion(selectedTime, progressBar)) {
                     audioEffects.createContextMenu(
                         event.pageX, 
@@ -252,18 +252,19 @@ function updatePlayerUI() {
                         }
                     );
                 } else if (isDoubleClick) {
-                    // clear selection double rmb
-                    progressBar.selectedStartTime = undefined;
-                    progressBar.selectedEndTime = undefined;
                     audioEffects.cleanup();
-                    progressBar.style.background = '#333';
-                    const existingMenu = document.querySelector('.waveform-context-menu');
-                    if (existingMenu) {
-                        existingMenu.remove();
-                    }
-                    requestAnimationFrame(() => {
-                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                    });
+                    setTimeout(() => { // small delay to ensure audio context is properly cleaned up
+                        progressBar.selectedStartTime = undefined;
+                        progressBar.selectedEndTime = undefined;
+                        progressBar.style.background = '#333';
+                        const existingMenu = document.querySelector('.waveform-context-menu');
+                        if (existingMenu) {
+                            existingMenu.remove();
+                        }
+                        requestAnimationFrame(() => {
+                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                        });
+                    }, 50);
                 } else if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
                     // start new selection only if there isnt one
                     isDragging = true;
