@@ -99,6 +99,21 @@ export function setupAudioEffects(audio, progressBar) {
         return nodes;
     }
 
+    function createTremolo() {
+        const tremolo = audioContext.createGain();
+        const lfo = audioContext.createOscillator();
+        const lfoGain = audioContext.createGain();
+        
+        lfo.frequency.value = 4.0;
+        lfoGain.gain.value = 0.5;
+        
+        lfo.connect(lfoGain);
+        lfoGain.connect(tremolo.gain);
+        lfo.start();
+        
+        return tremolo;
+    }
+
     const effects = {
         loop: {
             name: 'Loop',
@@ -251,6 +266,24 @@ export function setupAudioEffects(audio, progressBar) {
                     if (this.cleanup) {
                         this.cleanup();
                     }
+                }
+                
+                return this.active;
+            }
+        },
+        tremolo: {
+            name: 'Tremolo',
+            active: false,
+            node: null,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.node = createTremolo();
+                } else if (this.node) {
+                    this.node.disconnect();
+                    this.node = null;
                 }
                 
                 return this.active;
