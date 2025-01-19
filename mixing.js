@@ -107,11 +107,19 @@ export function setupAudioEffects(audio, progressBar) {
         lfo.frequency.value = 4.0;
         lfoGain.gain.value = 0.5;
         
+        // connect LFO through gain to modulate tremolo gain
         lfo.connect(lfoGain);
         lfoGain.connect(tremolo.gain);
         lfo.start();
         
-        return tremolo;
+        // connect the tremolo into the audio chain
+        wetGainNode.connect(tremolo);
+        tremolo.connect(mainGainNode);
+        
+        return {
+            tremolo,
+            lfo
+        };
     }
 
     const effects = {
@@ -274,16 +282,59 @@ export function setupAudioEffects(audio, progressBar) {
         tremolo: {
             name: 'Tremolo',
             active: false,
-            node: null,
+            nodes: null,
             toggle: function() {
                 this.active = !this.active;
                 
                 if (this.active) {
                     initializeAudioContext();
-                    this.node = createTremolo();
-                } else if (this.node) {
-                    this.node.disconnect();
-                    this.node = null;
+                    this.nodes = createTremolo();
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                     currentTime <= progressBar.selectedEndTime;
+                            
+                            // smoothly transition the wet/dry mix
+                            const transitionTime = 0.05;
+                            wetGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.5 : 0, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                            dryGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.5 : 1, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.nodes) {
+                            this.nodes.lfo.stop();
+                            wetGainNode.disconnect(this.nodes.tremolo);
+                            this.nodes.tremolo.disconnect();
+                            this.nodes = null;
+                        }
+                        // reset gains
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    
+                    // initialize gains
+                    wetGainNode.gain.value = 0;
+                    dryGainNode.gain.value = 1;
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
                 }
                 
                 return this.active;
