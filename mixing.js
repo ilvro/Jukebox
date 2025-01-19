@@ -13,7 +13,12 @@ export function setupAudioEffects(audio, progressBar) {
 
     function initializeAudioContext() {
         if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const contextOptions = {
+                latencyHint: 'playback',
+                sampleRate: 48000,
+            };
+            
+            audioContext = new (window.AudioContext || window.webkitAudioContext)(contextOptions);
             sourceNode = audioContext.createMediaElementSource(audio);
             
             mainGainNode = audioContext.createGain();
@@ -27,7 +32,6 @@ export function setupAudioEffects(audio, progressBar) {
             mainGainNode.connect(audioContext.destination);
             isAudioContextInitialized = true;
         } else if (!isAudioContextInitialized) {
-            // reconnect nodes if context exists but was uninitialized
             sourceNode.connect(dryGainNode);
             sourceNode.connect(wetGainNode);
             dryGainNode.connect(mainGainNode);
@@ -61,7 +65,7 @@ export function setupAudioEffects(audio, progressBar) {
 
                 isAudioContextInitialized = false;
             } catch (error) {
-                console.error("Error disconnecting nodes:", error);
+                console.error("error disconnecting nodes:", error);
             }
         }
     }
@@ -73,7 +77,6 @@ export function setupAudioEffects(audio, progressBar) {
             output: audioContext.createGain()
         };
     
-        // Add more delays and adjust times for a richer reverb
         const delayTimes = [0.03, 0.05, 0.07, 0.11, 0.13, 0.17, 0.2];
         const gainValues = [0.7, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05];
     
@@ -121,6 +124,27 @@ export function setupAudioEffects(audio, progressBar) {
             tremolo,
             lfo
         };
+    }
+
+    function createFilter(type) {
+        const filter = audioContext.createBiquadFilter();
+        filter.type = type;
+        
+        if (type === 'highpass') {
+            filter.frequency.value = 500;
+            filter.Q.value = 0.7;
+        } else if (type === 'lowpass') {
+            filter.frequency.value = 2000;
+            filter.Q.value = 0.7;
+        }
+
+        if (audioContext.sampleRate >= 96000) {
+            filter.oversample = '4x';
+        } else if (audioContext.sampleRate >= 48000) {
+            filter.oversample = '2x';
+        }
+
+        return filter;
     }
 
     const effects = {
@@ -280,6 +304,167 @@ export function setupAudioEffects(audio, progressBar) {
                 return this.active;
             }
         },
+        highpass: {
+            name: 'High-Pass Filter',
+            active: false,
+            filter: null,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.filter = createFilter('highpass');
+                    
+                    wetGainNode.connect(this.filter);
+                    this.filter.connect(mainGainNode);
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                     currentTime <= progressBar.selectedEndTime;
+                            
+                            // transition time for smoother crossfade
+                            const transitionTime = 0.1;
+                            wetGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.9999 : 0,
+                                audioContext.currentTime,
+                                transitionTime
+                            );
+                            dryGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0 : 0.9999,
+                                audioContext.currentTime,
+                                transitionTime
+                            );
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.filter) {
+                            // smooth disconnection
+                            wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.1);
+                            setTimeout(() => {
+                                wetGainNode.disconnect(this.filter);
+                                this.filter.disconnect();
+                                this.filter = null;
+                            }, 200);
+                        }
+                        // reset gains smoothly
+                        wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.1);
+                        dryGainNode.gain.setTargetAtTime(0.9999, audioContext.currentTime, 0.1);
+                    };
+                    
+                    // initialize gains
+                    wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                    dryGainNode.gain.setValueAtTime(0.9999, audioContext.currentTime);
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
+                return this.active;
+            },
+            setFrequency: function(value) {
+                if (this.filter) {
+                    // exponential ramp for smoother frequency changes
+                    this.filter.frequency.exponentialRampToValueAtTime(
+                        value,
+                        audioContext.currentTime + 0.1
+                    );
+                }
+            },
+            setQ: function(value) {
+                if (this.filter) {
+                    // linear ramp for Q changes
+                    this.filter.Q.linearRampToValueAtTime(
+                        value,
+                        audioContext.currentTime + 0.1
+                    );
+                }
+            }
+        },
+
+        lowpass: {
+            name: 'Low-Pass Filter',
+            active: false,
+            filter: null,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.filter = createFilter('lowpass');
+                    
+                    // connect filter to the audio path
+                    wetGainNode.connect(this.filter);
+                    this.filter.connect(mainGainNode);
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                     currentTime <= progressBar.selectedEndTime;
+                            
+                            // smoothly transition the wet/dry mix
+                            const transitionTime = 0.05;
+                            wetGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 1 : 0, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                            dryGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0 : 1, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.filter) {
+                            wetGainNode.disconnect(this.filter);
+                            this.filter.disconnect();
+                            this.filter = null;
+                        }
+                        // reset gains
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    
+                    // initialize gains
+                    wetGainNode.gain.value = 0;
+                    dryGainNode.gain.value = 1;
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
+                return this.active;
+            },
+            setFrequency: function(value) {
+                if (this.filter) {
+                    this.filter.frequency.setValueAtTime(value, audioContext.currentTime);
+                }
+            },
+            setQ: function(value) {
+                if (this.filter) {
+                    this.filter.Q.setValueAtTime(value, audioContext.currentTime);
+                }
+            }
+        },
+
         tremolo: {
             name: 'Tremolo',
             active: false,
