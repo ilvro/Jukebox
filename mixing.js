@@ -66,35 +66,36 @@ export function setupAudioEffects(audio, progressBar) {
         }
     }
 
-    function createSyntheticReverb() { // uses delay nodes to create a reverb effect
+    function createSyntheticReverb() {
         const nodes = {
             delays: [],
             gains: [],
             output: audioContext.createGain()
         };
-
-        const delayTimes = [0.03, 0.05, 0.07, 0.11, 0.13];
-        const gainValues = [0.7, 0.5, 0.3, 0.2, 0.1];
-
+    
+        // Add more delays and adjust times for a richer reverb
+        const delayTimes = [0.03, 0.05, 0.07, 0.11, 0.13, 0.17, 0.2];
+        const gainValues = [0.7, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05];
+    
         for (let i = 0; i < delayTimes.length; i++) {
             const delay = audioContext.createDelay(1);
             delay.delayTime.value = delayTimes[i];
-
+    
             const gain = audioContext.createGain();
             gain.gain.value = gainValues[i];
-
+    
             nodes.delays.push(delay);
             nodes.gains.push(gain);
-
+    
             if (i === 0) {
                 wetGainNode.connect(delay);
             } else {
-                nodes.delays[i-1].connect(delay);
+                nodes.delays[i - 1].connect(delay);
             }
             delay.connect(gain);
             gain.connect(nodes.output);
         }
-
+    
         nodes.output.connect(mainGainNode);
         return nodes;
     }
