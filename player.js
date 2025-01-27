@@ -261,6 +261,7 @@ function updatePlayerUI() {
                         if (existingMenu) {
                             existingMenu.remove();
                         }
+                        audioEffects.resetHandlers();
                         requestAnimationFrame(() => {
                             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                         });

@@ -10,6 +10,7 @@ export function setupAudioEffects(audio, progressBar) {
     let dryGainNode = null;
     let wetGainNode = null;
     let isAudioContextInitialized = false;
+    let timeUpdateHandler = null;
 
     function initializeAudioContext() {
         if (!audioContext) {
@@ -196,7 +197,7 @@ export function setupAudioEffects(audio, progressBar) {
                 const timeUntilEnd = loopEndTime - audio.currentTime;
 
                 // start crossfade when approaching the end of the loop
-                if (timeUntilEnd <= CROSSFADE_DURATION && !this.crossfading && audio.volume > 0) {
+                if (timeUntilEnd <= CROSSFADE_DURATION && !this.crossfading && audio.volume >= 0) {
                     this.crossfading = true;
 
                     // create and set up the crossfade audio
@@ -684,6 +685,26 @@ export function setupAudioEffects(audio, progressBar) {
         });
     }
 
+    function setupTimeUpdateHandler() {
+        // remove existing handler if it exists
+        if (timeUpdateHandler) {
+            audio.removeEventListener('timeupdate', timeUpdateHandler);
+        }
+
+        // create new handler
+        timeUpdateHandler = () => {
+            effects.loop.handler();
+            effects.smoothLoop.handler();
+            
+            const newRate = getEffectivePlaybackRate(audio.currentTime);
+            if (audio.playbackRate !== newRate) {
+                audio.playbackRate = newRate;
+            }
+        };
+        audio.addEventListener('timeupdate', timeUpdateHandler);
+    }
+    setupTimeUpdateHandler();
+
     function cleanup() {
         Object.values(effects).forEach(effect => {
             if (effect.cleanup) {
@@ -704,14 +725,21 @@ export function setupAudioEffects(audio, progressBar) {
             disconnectAudioContext();
         }
 
+        if (timeUpdateHandler) {
+            audio.removeEventListener('timeupdate', timeUpdateHandler);
+            timeUpdateHandler = null;
+        }
+
         audio.volume = 1;
         audio.playbackRate = 1;
-        audio.removeEventListener('timeupdate', handleTimeUpdate);
     }
 
     return {
         createContextMenu,
         cleanup,
-        isLooping: () => effects.loop.active || effects.smoothLoop.active
+        isLooping: () => effects.loop.active || effects.smoothLoop.active,
+        resetHandlers: () => {
+            setupTimeUpdateHandler();
+        }
     };
 }
