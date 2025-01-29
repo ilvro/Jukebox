@@ -78,8 +78,19 @@ export function setupAudioEffects(audio, progressBar) {
             output: audioContext.createGain()
         };
     
-        const delayTimes = [0.03, 0.05, 0.07, 0.11, 0.13, 0.17, 0.2];
-        const gainValues = [0.7, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05];
+        const delayTimes = [
+            0.02, // pre-delay
+            0.05, 0.08, 0.1, 0.15, 
+            0.2, 0.25, 0.3, 0.35, // more points for smoother decay
+            0.4
+        ];
+        
+        const gainValues = [
+            0.8, // initial reflection
+            0.6, 0.5, 0.4, 0.35,
+            0.3, 0.25, 0.2, 0.15, // gentler decay
+            0.1
+        ];
     
         for (let i = 0; i < delayTimes.length; i++) {
             const delay = audioContext.createDelay(1);
@@ -146,6 +157,40 @@ export function setupAudioEffects(audio, progressBar) {
         }
 
         return filter;
+    }
+
+    function createEnhancedSpeedProcessor(speed) {
+        const processor = {
+            delay: audioContext.createDelay(2.0),
+            lowpass: audioContext.createBiquadFilter(),
+            highpass: audioContext.createBiquadFilter(),
+            echo: audioContext.createDelay(1.0),
+            echoGain: audioContext.createGain(),
+            outputGain: audioContext.createGain()
+        };
+
+        processor.lowpass.type = 'lowpass';
+        processor.lowpass.frequency.value = speed < 1 ? 8000 : 12000; // warmer sound for slowed versions
+        processor.lowpass.Q.value = 0.5;
+
+        processor.highpass.type = 'highpass';
+        processor.highpass.frequency.value = speed < 1 ? 20 : 40;
+        processor.highpass.Q.value = 0.5;
+
+        processor.echo.delayTime.value = speed < 1 ? 0.08 : 0.04;
+        processor.echoGain.gain.value = speed < 1 ? 0.3 : 0.15;
+        processor.outputGain.gain.value = 0.9;
+
+        wetGainNode.connect(processor.highpass);
+        processor.highpass.connect(processor.lowpass);
+        processor.lowpass.connect(processor.delay);
+        processor.delay.connect(processor.echo);
+        processor.echo.connect(processor.echoGain);
+        processor.echoGain.connect(processor.delay);
+        processor.delay.connect(processor.outputGain);
+        processor.outputGain.connect(mainGainNode);
+
+        return processor;
     }
 
     const effects = {
@@ -618,20 +663,133 @@ export function setupAudioEffects(audio, progressBar) {
             }
         },
         slowdown: {
-            name: 'Slow Down (0.5x)',
+            name: 'Slow Down (0.75x)',  // Changed from 0.5x for more natural sound
             active: false,
+            processor: null,
             toggle: function() {
                 this.active = !this.active;
                 effects.speedup.active = false;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.processor = createEnhancedSpeedProcessor(0.75);
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                    currentTime <= progressBar.selectedEndTime;
+                            
+                            audio.preservesPitch = true;
+                        
+                            const transitionTime = 0.1;
+                            if (isInSelectedRegion) {
+                                wetGainNode.gain.setTargetAtTime(0.9, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(0.1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 0.7) > 0.01) {
+                                    audio.playbackRate = 0.7;
+                                }
+                            } else {
+                                wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 1.0) > 0.01) {
+                                    audio.playbackRate = 1.0;
+                                }
+                            }
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.processor) {
+                            wetGainNode.disconnect(this.processor.highpass);
+                            this.processor.highpass.disconnect();
+                            this.processor.lowpass.disconnect();
+                            this.processor.delay.disconnect();
+                            this.processor.echo.disconnect();
+                            this.processor.echoGain.disconnect();
+                            this.processor.outputGain.disconnect();
+                            this.processor = null;
+                        }
+                        audio.playbackRate = 1.0;
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
                 return this.active;
             }
         },
         speedup: {
-            name: 'Speed Up (1.5x)',
+            name: 'Speed Up (1.25x)',
             active: false,
+            processor: null,
             toggle: function() {
                 this.active = !this.active;
                 effects.slowdown.active = false;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.processor = createEnhancedSpeedProcessor(1.25);
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                    currentTime <= progressBar.selectedEndTime;        
+                            audio.preservesPitch = true;
+                            
+                            const transitionTime = 0.1;
+                            if (isInSelectedRegion) {
+                                wetGainNode.gain.setTargetAtTime(0.9, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(0.1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 1.3) > 0.01) {
+                                    audio.playbackRate = 1.3;
+                                }
+                            } else {
+                                wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 1.0) > 0.01) {
+                                    audio.playbackRate = 1.0;
+                                }
+                            }
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.processor) {
+                            wetGainNode.disconnect(this.processor.highpass);
+                            this.processor.highpass.disconnect();
+                            this.processor.lowpass.disconnect();
+                            this.processor.delay.disconnect();
+                            this.processor.echo.disconnect();
+                            this.processor.echoGain.disconnect();
+                            this.processor.outputGain.disconnect();
+                            this.processor = null;
+                        }
+                        audio.playbackRate = 1.0;
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
                 return this.active;
             }
         }
@@ -644,8 +802,8 @@ export function setupAudioEffects(audio, progressBar) {
 
         if (currentTime >= progressBar.selectedStartTime && 
             currentTime <= progressBar.selectedEndTime) {
-            if (effects.slowdown.active) return 0.5;
-            if (effects.speedup.active) return 1.5;
+            if (effects.slowdown.active) return 0.75;
+            if (effects.speedup.active) return 1.25;
         }
         return originalPlaybackRate;
     }
@@ -821,7 +979,7 @@ export function setupAudioEffects(audio, progressBar) {
         }
 
         audio.volume = 1;
-        audio.playbackRate = 1;
+        audio.playbackRate = 1; 
     }
 
     return {
