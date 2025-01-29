@@ -255,6 +255,96 @@ export function setupAudioEffects(audio, progressBar) {
                 }
             }
         },
+        echo: {
+            name: 'Echo',
+            active: false,
+            nodes: null,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    const delay = audioContext.createDelay(2.0);
+                    delay.delayTime.value = 0.3;
+                    
+                    const feedback = audioContext.createGain();
+                    feedback.gain.value = 0.4;
+                    
+                    const echoGain = audioContext.createGain();
+                    echoGain.gain.value = 0.5;
+                    
+                    wetGainNode.connect(delay);
+                    delay.connect(feedback);
+                    feedback.connect(delay);
+                    delay.connect(echoGain);
+                    echoGain.connect(mainGainNode);
+                    
+                    this.nodes = {
+                        delay,
+                        feedback,
+                        echoGain
+                    };
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                     currentTime <= progressBar.selectedEndTime;
+                            
+                            const transitionTime = 0.05;
+                            wetGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.7 : 0, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                            dryGainNode.gain.setTargetAtTime(
+                                isInSelectedRegion ? 0.7 : 1, 
+                                audioContext.currentTime, 
+                                transitionTime
+                            );
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.nodes) {
+                            wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.1);
+                            setTimeout(() => {
+                                wetGainNode.disconnect(this.nodes.delay);
+                                this.nodes.delay.disconnect();
+                                this.nodes.feedback.disconnect();
+                                this.nodes.echoGain.disconnect();
+                                this.nodes = null;
+                            }, 200);
+                        }
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    wetGainNode.gain.value = 0;
+                    dryGainNode.gain.value = 1;
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
+                return this.active;
+            },
+            setDelayTime: function(value) {
+                if (this.nodes && this.nodes.delay) {
+                    this.nodes.delay.delayTime.setValueAtTime(value, audioContext.currentTime);
+                }
+            },
+            setFeedback: function(value) {
+                if (this.nodes && this.nodes.feedback) {
+                    this.nodes.feedback.gain.setValueAtTime(value, audioContext.currentTime);
+                }
+            }
+        },
         reverb: {
             name: 'Reverb',
             active: false,
