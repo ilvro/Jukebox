@@ -193,6 +193,60 @@ export function setupAudioEffects(audio, progressBar) {
         return processor;
     }
 
+    function createNightcoreProcessor() {
+        const processor = {
+            input: audioContext.createGain(),
+            compressor: audioContext.createDynamicsCompressor(),
+            lowShelf: audioContext.createBiquadFilter(),
+            highShelf: audioContext.createBiquadFilter(),
+            presence: audioContext.createBiquadFilter(),
+            sparkleReverb: audioContext.createDelay(1.0),
+            reverbGain: audioContext.createGain(),
+            outputGain: audioContext.createGain()
+        };
+    
+        // adjusted compressor settings for better dynamics
+        processor.compressor.threshold.value = -24;
+        processor.compressor.knee.value = 10;
+        processor.compressor.ratio.value = 2.5;
+        processor.compressor.attack.value = 0.005;
+        processor.compressor.release.value = 0.2;
+    
+        // bass boost
+        processor.lowShelf.type = 'lowshelf';
+        processor.lowShelf.frequency.value = 150;
+        processor.lowShelf.gain.value = 3;
+    
+        // high end sparkle
+        processor.highShelf.type = 'highshelf';
+        processor.highShelf.frequency.value = 7000;
+        processor.highShelf.gain.value = 2;
+    
+        processor.presence.type = 'peaking';
+        processor.presence.frequency.value = 2500;
+        processor.presence.Q.value = 0.7;
+        processor.presence.gain.value = 2;
+    
+        // light reverb for space
+        processor.sparkleReverb.delayTime.value = 0.06;
+        processor.reverbGain.gain.value = 0.15;
+        processor.outputGain.gain.value = 1.0;
+    
+        wetGainNode.connect(processor.input);
+        processor.input.connect(processor.compressor);
+        processor.compressor.connect(processor.lowShelf);
+        processor.lowShelf.connect(processor.highShelf);
+        processor.highShelf.connect(processor.presence);
+        processor.presence.connect(processor.sparkleReverb);
+        processor.sparkleReverb.connect(processor.reverbGain);
+        processor.reverbGain.connect(processor.sparkleReverb);
+        processor.presence.connect(processor.outputGain);
+        processor.outputGain.connect(mainGainNode);
+    
+        return processor;
+    }
+    
+
     const effects = {
         loop: {
             name: 'Loop',
@@ -663,7 +717,7 @@ export function setupAudioEffects(audio, progressBar) {
             }
         },
         slowdown: {
-            name: 'Slow Down (0.75x)',  // Changed from 0.5x for more natural sound
+            name: 'Slow Down (0.75x)',
             active: false,
             processor: null,
             toggle: function() {
@@ -780,6 +834,74 @@ export function setupAudioEffects(audio, progressBar) {
                             this.processor = null;
                         }
                         audio.playbackRate = 1.0;
+                        wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+                        dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                    };
+                    
+                } else {
+                    if (this.cleanup) {
+                        this.cleanup();
+                    }
+                }
+                
+                return this.active;
+            }
+        },
+        nightcore: {
+            name: 'Nightcore',
+            active: false,
+            processor: null,
+            toggle: function() {
+                this.active = !this.active;
+                
+                if (this.active) {
+                    initializeAudioContext();
+                    this.processor = createNightcoreProcessor();
+                    
+                    const handleTimeUpdate = () => {
+                        if (progressBar.selectedStartTime !== undefined && 
+                            progressBar.selectedEndTime !== undefined) {
+                            
+                            const currentTime = audio.currentTime;
+                            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                                    currentTime <= progressBar.selectedEndTime;
+                            
+                            audio.preservesPitch = false; // important for nightcore
+                            
+                            const transitionTime = 0.1;
+                            if (isInSelectedRegion) {
+                                wetGainNode.gain.setTargetAtTime(0.9, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(0.1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 1.3) > 0.01) {
+                                    audio.playbackRate = 1.3;
+                                }
+                            } else {
+                                wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, transitionTime);
+                                dryGainNode.gain.setTargetAtTime(1, audioContext.currentTime, transitionTime);
+                                if (Math.abs(audio.playbackRate - 1.0) > 0.01) {
+                                    audio.playbackRate = 1.0;
+                                }
+                            }
+                        }
+                    };
+                    
+                    audio.addEventListener('timeupdate', handleTimeUpdate);
+                    this.cleanup = () => {
+                        audio.removeEventListener('timeupdate', handleTimeUpdate);
+                        if (this.processor) {
+                            this.processor.pitchShifter.node.disconnect();
+                            wetGainNode.disconnect(this.processor.pitchShifter.node);
+                            this.processor.compressor.disconnect();
+                            this.processor.lowShelf.disconnect();
+                            this.processor.highShelf.disconnect();
+                            this.processor.presence.disconnect();
+                            this.processor.sparkleReverb.disconnect();
+                            this.processor.reverbGain.disconnect();
+                            this.processor.outputGain.disconnect();
+                            this.processor = null;
+                        }
+                        audio.playbackRate = 1.0;
+                        audio.preservesPitch = true;
                         wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
                         dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
                     };
