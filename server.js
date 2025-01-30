@@ -1,4 +1,4 @@
-// npm install express @distube/ytdl-core@4.15.4 cors
+// npm install express @distube/ytdl-core@latest cors
 // node server.js
 
 // -------------------------------------------------------------------------------------------------------
@@ -39,7 +39,7 @@ app.post('/download/audio', async (req, res) => {
   const url = req.body.message;
   if (ytdl.validateURL(url)) {
     try {
-      const videoInfo = await ytdl.getInfo(url);
+      const videoInfo = await ytdl.getInfo(url, { playerClients: ["WEB"] });
       const videoTitle = videoInfo.videoDetails.title.replace('—', '-').replace("’", 'inquote');
 
       res.header('content-type', 'application/json')
