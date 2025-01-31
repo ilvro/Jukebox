@@ -308,10 +308,9 @@ export function setupAudioEffects(audio, progressBar) {
         }
     }
 
-    class PitchShiftEffect extends AudioEffect {
-        constructor(pitchFactor) {
-            super(`Pitch ${pitchFactor}x`);
-            this.pitchFactor = pitchFactor;
+    class PitchShiftEffect extends AudioEffect { // all this does is set preservePitch to false when speedup/slowdown is active
+        constructor() {
+            super(`Pitch Shift`);
         }
 
         setupNodes() {
@@ -582,8 +581,7 @@ export function setupAudioEffects(audio, progressBar) {
         smoothLoop: new SmoothLoopEffect(),
         speed075: new PlaybackSpeedEffect(0.75),
         speed125: new PlaybackSpeedEffect(1.25),
-        pitchUp: new PitchShiftEffect(1.3),
-        pitchDown: new PitchShiftEffect(0.7),
+        pitchShift: new PitchShiftEffect(),
         reverb: new ReverbEffect(),
         echo: new EchoEffect(),
         highpass: new FilterEffect('highpass'),
@@ -685,7 +683,7 @@ export function setupAudioEffects(audio, progressBar) {
     
         const categories = {
             'Playback': ['loop', 'smoothLoop'],
-            'Speed & Pitch': ['speed075', 'speed125', 'pitchUp', 'pitchDown'],
+            'Speed & Pitch': ['speed075', 'speed125', 'pitchShift', 'pitchUp', 'pitchDown'],
             'Effects': ['echo', 'reverb', 'tremolo'],
             'Filters': ['highpass', 'lowpass'],
             'Presets': ['nightcore']
