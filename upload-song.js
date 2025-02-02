@@ -304,6 +304,7 @@ async function loadPreset() {
             songItem.classList.add('song-item');
             songItem.setAttribute('draggable', 'true');
             songItem.setAttribute('data-genres', genres.join(','));
+            songItem.setAttribute('data-tags', tags.join(','));
             songItem.innerHTML = `
                 <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
                 <p>${tags.join(' + ')}</p>

@@ -20,7 +20,8 @@ function filterSongs(genre) {
     const songGrid = document.getElementById('song-grid');
     allSongs.forEach(song => {
         const songGenres = song.getAttribute('data-genres').split(',');
-        if (genre === 'all' || songGenres.includes(genre)) {
+        const songTags = song.getAttribute('data-tags').split(',');
+        if (genre === 'all' || songGenres.includes(genre) || songTags.includes(genre)) {
             songGrid.appendChild(song);
         }
         else {
