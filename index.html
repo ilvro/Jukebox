@@ -8,6 +8,7 @@
 
     <body>
         <div id="dimmer"></div>
+        <div id="filter-dimmer"></div>
         <header class="top-header">
             <h1 class="main-title">JUKEBOX</h1>
             <nav class="navbar-home-playlists">
@@ -39,13 +40,27 @@
 
         <div class="genre-filters">
             <input placeholder=" Search for..." oninput="searchInput()" id="searchBar">
-                <a href="#" class="filter-link selected" data-filter="all">Show All</a>
-                <a href="#" class="filter-link" data-filter="fun">fun</a>
-                <a href="#" class="filter-link" data-filter="hopeful">hopeful</a>
-                <a href="#" class="filter-link" data-filter="mystery">mystery</a>
-                <a href="#" class="filter-link" data-filter="suspense">suspense</a>
-                <a href="#" class="filter-link" data-filter="horror">horror</a>
-                <a href="#" class="filter-link" data-filter="sfx">sfx</a>
+            <div class="filter-dropdown" id="filter-dropdown">
+                <button class="filter-dropdown-button">Filter by...  ▼</button>
+                <div class="filter-dropdown-content">
+                    <div class="filter-category-header">View</div>
+                    <div class="filter-option">Show All</div>
+
+                    <div class="filter-category-header">Mood</div>
+                    <div class="filter-option">fun</div>
+                    <div class="filter-option">hopeful</div>
+                    <div class="filter-option">emotional</div>
+                    
+                    <div class="filter-category-header">Intensity</div>
+                    <div class="filter-option">mystery</div>
+                    <div class="filter-option">suspense</div>
+                    <div class="filter-option">horror</div>
+                    <div class="filter-option">battle</div>
+                    
+                    <div class="filter-category-header">Atmosphere</div>
+                    <div class="filter-option">ambient</div>
+                </div>
+            </div>
 
             </div>
 

@@ -1,56 +1,95 @@
 // filtering ===================================================================================================================
 let allSongs = [];
+const genreMenu = document.getElementById('filter-dropdown');
+const filterDimmer = document.getElementById('filter-dimmer');
+let activeFilters = new Set();
+
 function updateAllSongs() {
     allSongs = Array.from(document.querySelectorAll('.song-item'));
 }
 
 function searchInput() {
     let searchQuery = document.getElementById('searchBar').value.toLowerCase();
-    const songGrid = document.getElementById('song-grid');
-    songGrid.innerHTML = '';
-
+    
     allSongs.forEach(song => {
-        if (song.querySelector('input').value.toString().toLowerCase().includes(searchQuery)) {
-            songGrid.appendChild(song);
-        }
+        const matchesSearch = song.querySelector('input').value.toString().toLowerCase().includes(searchQuery);
+        const matchesFilters = activeFilters.size === 0 || 
+            songMatchesActiveFilters(song, activeFilters);
+        
+        song.style.display = (matchesSearch && matchesFilters) ? '' : 'none';
     });
 }
 
-function filterSongs(genre) {
-    const songGrid = document.getElementById('song-grid');
-    allSongs.forEach(song => {
-        const songGenres = song.getAttribute('data-genres').split(',');
-        const songTags = song.getAttribute('data-tags').split(',');
-        if (genre === 'all' || songGenres.includes(genre) || songTags.includes(genre)) {
-            songGrid.appendChild(song);
-        }
-        else {
-            try {
-                songGrid.removeChild(song);
-            }
-            catch {
-                // changing from genre1 to genre2 (fantasy to mystery for example) will error because it will loop through every single song, including the ones from other genres that aren't displayed and aren't children of the grid
-            }
-        }
-    })
+function songMatchesActiveFilters(song, filters) {
+    const songGenres = song.getAttribute('data-genres').split(',');
+    const songTags = song.getAttribute('data-tags').split(',');
+    
+    return Array.from(filters).some(filter => {
+        return songGenres.includes(filter) || songTags.includes(filter);
+    });
 }
+
+function applyFilters() {
+    const searchQuery = document.getElementById('searchBar').value.toLowerCase();
+    
+    allSongs.forEach(song => {
+        const matchesSearch = song.querySelector('input').value.toString().toLowerCase().includes(searchQuery);
+        const matchesFilters = activeFilters.size === 0 || 
+            songMatchesActiveFilters(song, activeFilters);
+        
+        song.style.display = (matchesSearch && matchesFilters) ? '' : 'none';
+    });
+}
+
+genreMenu.addEventListener('mouseover', () => {
+    filterDimmer.style.visibility = 'visible';
+    setTimeout(() => {
+        filterDimmer.style.opacity = '0.4';
+    }, 10);
+});
+
+genreMenu.addEventListener('mouseleave', () => {
+    filterDimmer.style.visibility = 'hidden';
+    setTimeout(() => {
+        filterDimmer.style.opacity = '0';
+    }, 10);
+});
 
 document.addEventListener('songsUpdated', updateAllSongs);
 document.addEventListener('DOMContentLoaded', function() {
-    const filterLinks = document.querySelectorAll('.genre-filters .filter-link');
-
-    filterLinks.forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-
-            filterLinks.forEach(l => l.classList.remove('selected'));
-            this.classList.add('selected');
-
-            const filter = this.getAttribute('data-filter');
-            console.log('selected filter: ', filter);
-            filterSongs(filter);
+    updateAllSongs();
+    
+    const filterList = document.querySelectorAll('.filter-option');
+    filterList.forEach(filter => {
+        const filterName = filter.textContent.replace('✓ ', '');
+        
+        filter.addEventListener('click', function(f) {
+            f.preventDefault();
+            
+            if (filterName === 'Show All') {
+                // clear all filters when "Show All" is clicked
+                activeFilters.clear();
+                filterList.forEach(f => {
+                    f.classList.remove('selected');
+                    f.textContent = f.textContent.replace('✓ ', '');
+                });
+            } else {
+                if (activeFilters.has(filterName)) {
+                    activeFilters.delete(filterName);
+                    filter.classList.remove('selected');
+                    filter.textContent = filterName;
+                } else {
+                    activeFilters.add(filterName);
+                    filter.classList.add('selected');
+                    filter.textContent = `✓ ${filterName}`;
+                }
+            }
+            
+            applyFilters();
         });
     });
+    
+    document.getElementById('searchBar').addEventListener('input', searchInput);
 });
 
 // rearranging =========================================================================================================================
