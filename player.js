@@ -1,4 +1,4 @@
-import { setupAudioEffects } from './mixing.js';
+import { setupAudioEffects } from './mixing/index.js';
 let activeAudios = {};
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
