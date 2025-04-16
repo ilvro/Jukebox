@@ -11,7 +11,7 @@
 */
 
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from './audio-context.js';
-import { LoopEffect, SmoothLoopEffect, PlaybackSpeedEffect, PitchShiftEffect } from './effects/playback-effects.js';
+import { LoopEffect, SmoothLoopEffect, PlaybackSpeedEffect, PitchShiftEffect, ReverseEffect } from './effects/playback-effects.js';
 import { ReverbEffect, EchoEffect, TremoloEffect } from './effects/time-effects.js';
 import { FilterEffect } from './effects/filter-effects.js';
 import { NightcoreEffect } from './effects/preset-effects.js';
@@ -29,6 +29,7 @@ export class EffectsRegistry {
         return {
             loop: new LoopEffect(),
             smoothLoop: new SmoothLoopEffect(),
+            reverse: new ReverseEffect(),
             speed075: new PlaybackSpeedEffect(0.75),
             speed125: new PlaybackSpeedEffect(1.25),
             pitchShift: new PitchShiftEffect(),
@@ -43,7 +44,7 @@ export class EffectsRegistry {
 
     getEffectsByCategory() {
         const categories = {
-            'Playback': ['loop', 'smoothLoop'],
+            'Playback': ['loop', 'smoothLoop', 'reverse'],
             'Speed & Pitch': ['speed075', 'speed125', 'pitchShift'],
             'Effects': ['echo', 'reverb', 'tremolo'],
             'Filters': ['highpass', 'lowpass'],
