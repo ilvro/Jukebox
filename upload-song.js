@@ -19,13 +19,13 @@ const songGrid = document.getElementById('song-grid');
 
 async function downloadVideo(youtubeLink) {
     try {
-        const audioPromise = fetch(`${API_URL}/download/audio`, {
+        const audioPromise = fetch(`${API_URL}/download/youtube/audio`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: youtubeLink })
         });
 
-        const thumbnailPromise = fetch(`${API_URL}/download/thumbnail`, {
+        const thumbnailPromise = fetch(`${API_URL}/download/youtube/thumbnail`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: youtubeLink })

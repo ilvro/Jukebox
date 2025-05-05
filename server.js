@@ -53,7 +53,7 @@ app.get('/', (req, res) => {
     res.json({ status: 'Server is running' });
 });
 
-app.post('/download/audio', async (req, res) => {
+app.post('/download/youtube/audio', async (req, res) => {
     const url = req.body.message;
 
     if (!url || !url.startsWith('http')) {
@@ -116,7 +116,7 @@ app.post('/download/audio', async (req, res) => {
 
   
 
-app.post('/download/thumbnail', async (req, res) => {
+app.post('/download/youtube/thumbnail', async (req, res) => {
     const url = req.body.message;
 
     if (!url || !url.startsWith('http')) {
@@ -150,7 +150,7 @@ app.post('/download/thumbnail', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('error in /download/thumbnail:', error);
+        console.error('error in /download/youtube/thumbnail:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
