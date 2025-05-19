@@ -12,6 +12,7 @@ const thumbnailFileInput = document.getElementById('thumbnail-file');
 
 const savePresetBtn = document.getElementById('save-preset-btn');
 const loadPresetBtn = document.getElementById('load-preset-btn');
+const loadSampleBtn = document.getElementById('load-sample-btn');
 const supportsFileSystemAccess = 'showDirectoryPicker' in window;
 
 const dimmer = document.getElementById('dimmer');
@@ -331,6 +332,90 @@ async function loadPreset() {
     }
 }
 
+async function loadSamplePreset() {
+    try {
+        console.log('Loading sample preset...');
+        songGrid.innerHTML = '';
+        
+        const sampleFolderPath = './sample/';
+        const metadataResponse = await fetch(`${sampleFolderPath}preset_metadata.json`);
+        if (!metadataResponse.ok) {
+            throw new Error(`Failed to fetch sample preset metadata: ${metadataResponse.status}`);
+        }
+        
+        const presetMetadata = await metadataResponse.json();
+        console.log('Loaded preset metadata:', presetMetadata);
+        
+        // process each song in the metadata
+        for (const songMetadata of presetMetadata) {
+            try {
+                const { currentTitle, genres, tags } = songMetadata;
+                const decodedTitle = decodeURIComponent(currentTitle);
+                
+                console.log(`Loading song: ${decodedTitle}`);
+                
+                const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+                // replace % with %25 to properly encode the already encoded characters
+                const fixedTitle = currentTitle.replace(/%/g, '%25');
+                
+                const audioPath = `${sampleFolderPath}${fixedTitle}.mp3`;
+                const imagePath = `${sampleFolderPath}${fixedTitle}.jpg`;
+                
+                console.log(`Fetching audio: ${audioPath}`);
+                console.log(`Fetching image: ${imagePath}`);
+                
+                const audioResponse = await fetch(audioPath);
+                const thumbnailResponse = await fetch(imagePath);
+                
+                if (!audioResponse.ok) {
+                    throw new Error(`Failed to fetch audio file: ${audioResponse.status}`);
+                }
+                
+                if (!thumbnailResponse.ok) {
+                    throw new Error(`Failed to fetch thumbnail file: ${thumbnailResponse.status}`);
+                }
+                
+                const audioBlob = await audioResponse.blob();
+                const thumbnailBlob = await thumbnailResponse.blob();
+                
+                const audioFile = new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' });
+                const thumbnailFile = new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' });
+                
+                const songItem = document.createElement('div');
+                songItem.classList.add('song-item');
+                songItem.setAttribute('draggable', 'true');
+                songItem.setAttribute('data-genres', updatedGenres.join(','));
+                songItem.setAttribute('data-tags', tags.join(','));
+                songItem.innerHTML = `
+                    <input spellcheck='false' class='title-input' value="${decodedTitle}"></input>
+                    <p>${tags.join(' + ')}</p>
+                    <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodedTitle}">
+                `;
+                
+                const titleInput = songItem.querySelector('.title-input');
+                titleInput.addEventListener('dragover', (event) => {
+                    event.preventDefault();
+                });
+                titleInput.addEventListener('drop', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                });
+                
+                songGrid.appendChild(songItem);
+                addSongToPlayer(songItem, audioFile);
+                console.log(`Added song: ${decodedTitle}`);
+            } catch (err) {
+                console.error(`Error loading song:`, err);
+            }
+        }
+        
+        console.log('Loaded sample preset');
+        document.dispatchEvent(new Event('songsUpdated'));
+    } catch (error) {
+        console.error('Error loading sample preset:', error);
+    }
+}
+
 async function handleFilesFallback(files) {
     const fileMap = {};
     for (const file of files) {
@@ -409,6 +494,7 @@ function getSelectedGenres() {
 
 savePresetBtn.addEventListener('click', savePreset);
 loadPresetBtn.addEventListener('click', loadPreset);
+loadSampleBtn.addEventListener('click', loadSamplePreset);
 
 youtubeLinkInput.addEventListener('paste', async (event) => {
     let youtubeLink = event.clipboardData.getData("text");
