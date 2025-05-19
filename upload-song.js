@@ -346,50 +346,63 @@ async function loadSamplePreset() {
         const presetMetadata = await metadataResponse.json();
         console.log('Loaded preset metadata:', presetMetadata);
         
-        // process each song in the metadata
-        for (const songMetadata of presetMetadata) {
-            try {
-                const { currentTitle, genres, tags } = songMetadata;
-                const decodedTitle = decodeURIComponent(currentTitle);
-                
-                console.log(`Loading song: ${decodedTitle}`);
-                
-                const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
-                // replace % with %25 to properly encode the already encoded characters
-                const fixedTitle = currentTitle.replace(/%/g, '%25');
-                
-                const audioPath = `${sampleFolderPath}${fixedTitle}.mp3`;
-                const imagePath = `${sampleFolderPath}${fixedTitle}.jpg`;
-                
-                console.log(`Fetching audio: ${audioPath}`);
-                console.log(`Fetching image: ${imagePath}`);
-                
-                const audioResponse = await fetch(audioPath);
-                const thumbnailResponse = await fetch(imagePath);
-                
-                if (!audioResponse.ok) {
-                    throw new Error(`Failed to fetch audio file: ${audioResponse.status}`);
-                }
-                
-                if (!thumbnailResponse.ok) {
-                    throw new Error(`Failed to fetch thumbnail file: ${thumbnailResponse.status}`);
-                }
-                
-                const audioBlob = await audioResponse.blob();
-                const thumbnailBlob = await thumbnailResponse.blob();
-                
-                const audioFile = new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' });
-                const thumbnailFile = new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' });
-                
+        // promises for all songs
+        const songPromises = presetMetadata.map(async (songMetadata) => {
+            const { currentTitle, genres, tags } = songMetadata;
+            const decodedTitle = decodeURIComponent(currentTitle);
+            const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+            const fixedTitle = currentTitle.replace(/%/g, '%25');
+            
+            const audioPath = `${sampleFolderPath}${fixedTitle}.mp3`;
+            const imagePath = `${sampleFolderPath}${fixedTitle}.jpg`;
+            
+            // fetch audio and image in parallel for faster processing
+            const [audioResponse, thumbnailResponse] = await Promise.all([
+                fetch(audioPath),
+                fetch(imagePath)
+            ]);
+            
+            if (!audioResponse.ok) {
+                throw new Error(`Failed to fetch audio file: ${audioResponse.status}`);
+            }
+            
+            if (!thumbnailResponse.ok) {
+                throw new Error(`Failed to fetch thumbnail file: ${thumbnailResponse.status}`);
+            }
+            
+            const [audioBlob, thumbnailBlob] = await Promise.all([
+                audioResponse.blob(),
+                thumbnailResponse.blob()
+            ]);
+            
+            return {
+                currentTitle,
+                decodedTitle,
+                updatedGenres,
+                tags,
+                audioFile: new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' }),
+                thumbnailFile: new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' })
+            };
+        });
+        
+        // process batches of songs to avoid overwhelming the browser (way faster this way)
+        const BATCH_SIZE = 5;
+        const totalSongs = songPromises.length;
+        
+        for (let i = 0; i < totalSongs; i += BATCH_SIZE) {
+            const batch = songPromises.slice(i, i + BATCH_SIZE);
+            const songBatch = await Promise.all(batch);
+
+            songBatch.forEach(song => {
                 const songItem = document.createElement('div');
                 songItem.classList.add('song-item');
                 songItem.setAttribute('draggable', 'true');
-                songItem.setAttribute('data-genres', updatedGenres.join(','));
-                songItem.setAttribute('data-tags', tags.join(','));
+                songItem.setAttribute('data-genres', song.updatedGenres.join(','));
+                songItem.setAttribute('data-tags', song.tags.join(','));
                 songItem.innerHTML = `
-                    <input spellcheck='false' class='title-input' value="${decodedTitle}"></input>
-                    <p>${tags.join(' + ')}</p>
-                    <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodedTitle}">
+                    <input spellcheck='false' class='title-input' value="${song.decodedTitle}"></input>
+                    <p>${song.tags.join(' + ')}</p>
+                    <img src="${URL.createObjectURL(song.thumbnailFile)}" alt="${song.decodedTitle}">
                 `;
                 
                 const titleInput = songItem.querySelector('.title-input');
@@ -402,11 +415,11 @@ async function loadSamplePreset() {
                 });
                 
                 songGrid.appendChild(songItem);
-                addSongToPlayer(songItem, audioFile);
-                console.log(`Added song: ${decodedTitle}`);
-            } catch (err) {
-                console.error(`Error loading song:`, err);
-            }
+                addSongToPlayer(songItem, song.audioFile);
+            });
+            
+            // give the browser a break
+            await new Promise(resolve => setTimeout(resolve, 0));
         }
         
         console.log('Loaded sample preset');
