@@ -233,6 +233,7 @@ async function loadPreset() {
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
+        /*
         const encodingMap = {
             '%20': '_20', // space
             '%21': '_21', // !
@@ -266,8 +267,12 @@ async function loadPreset() {
             '%7B': '_7B', // {
             '%7C': '_7C', // |
             '%7D': '_7D', // }
-            '%7E': '_7E'  // ~
+            '%7E': '_7E',  // ~
+            '%C3': '_C3',
+            '%AA': '_AA',
+            '%A1': '_A1'
         };
+        */
 
         for (const songMetadata of presetMetadata) {
             let { currentTitle, genres, tags } = songMetadata;
@@ -277,28 +282,25 @@ async function loadPreset() {
 
             let audioFile, thumbnailFile;
             try {
-                // first try with the original % encoding
-                const audioEntry = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
-                const thumbnailEntry = await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
+                // first try with the _ encoding (more common because google drive turns it into underscore)
+                const underscoreTitle = currentTitle.replace(/%/g, '_');
+                const audioEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.mp3`);
+                const thumbnailEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.jpg`);
                 audioFile = await audioEntry.getFile();
                 thumbnailFile = await thumbnailEntry.getFile();
             } catch (error) {
-                // try with _ encoding
+                // try with the original % encoding
                 try {
-                    let underscoreTitle = currentTitle;
-                    for (const [encoded, underscore] of Object.entries(encodingMap)) {
-                        underscoreTitle = underscoreTitle.split(encoded).join(underscore);
-                    }
-
-                    const audioEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.mp3`);
-                    const thumbnailEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.jpg`);
+                    const revertedTitle = revertUnderscoreEncoding(currentTitle);
+                    const audioEntry = await directoryHandle.getFileHandle(`${revertedTitle}.mp3`);
+                    const thumbnailEntry = await directoryHandle.getFileHandle(`${revertedTitle}.jpg`);
                     audioFile = await audioEntry.getFile();
                     thumbnailFile = await thumbnailEntry.getFile();
-                } catch (secondError) {
+                } catch (finalError) {
                     console.error(`could not load files for ${decodeURIComponent(currentTitle)}`);
                     continue;
                 }
-            }
+            }   
 
             // create song item
             const songItem = document.createElement('div');
@@ -503,6 +505,10 @@ function getSelectedGenres() {
         }
     })
     return selectedGenres;
+}
+
+function revertUnderscoreEncoding(title) { // because google drive turns presets into .zips and extracting them changes the name so we have to revert to the normal name to make the preset work again
+    return title.replace(/_([0-9A-F]{2})/g, '%$1');
 }
 
 savePresetBtn.addEventListener('click', savePreset);
