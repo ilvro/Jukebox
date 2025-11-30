@@ -18,7 +18,7 @@ Youtube doesn't allow public hosting for services like this, so it's necessary t
 1. Clone this repository with <a href='https://git-scm.com/downloads'> git<a/> and manually host the website on your machine (do not use an external server, VPN or proxy)
 2. Install the following <a href='https://nodejs.org/en/download'> node<a/> modules:
 ```bash
-npm install cors @distube/ytdl-core@4.15.4 express
+npm install cors yt-dlp-exec express
 ```
 
 Clone the <a href='https://github.com/ilvro/jukebox-backend'> backend<a/>, navigate to the directory and run the code on the terminal with `node server.js`

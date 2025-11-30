@@ -1,10 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
-const { spawn } = require('child_process');
-const fs = require('fs');
+const ytdlp = require('yt-dlp-exec');
 const https = require('https');
-const path = require('path');
 const app = express();
 const port = 3000;
 
@@ -12,42 +9,29 @@ const allowedOrigins = [
     'https://jukebox-wza8.onrender.com',
     'https://jukebox-backend-16sx.onrender.com',
     'http://127.0.0.1:5500'
-  ];
+];
 
 const corsOptions = {
     origin: function (origin, callback) {
-      if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-        callback(null, true);
-      } else {
-        callback(new Error('unrecognized origin, not allowed by CORS'));
-      }
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+            callback(null, true);
+        } else {
+            callback(new Error('Blocked by CORS'));
+        }
     },
     methods: ['POST', 'GET', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Content-Disposition'],
     exposedHeaders: ['Content-Disposition'],
     credentials: true,
     optionsSuccessStatus: 200
-  };
+};
+
 app.use(cors(corsOptions));
 app.use(express.json());
 
-const runCommand = (command) => {
-  return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(stdout || stderr);
-      }
-    });
-  });
+const sanitizeFilename = (title) => {
+    return title.replace(/[<>:"/\\|?*]/g, '-').trim();
 };
-
-async function getVideoTitle(url) {
-  const command = `yt-dlp --get-title ${url}`;
-  const title = await runCommand(command);
-  return title.trim().replace(/[<>:"/\\|?*]/g, '-');
-}
 
 app.get('/', (req, res) => {
     res.json({ status: 'Server is running' });
@@ -61,60 +45,60 @@ app.post('/download/youtube/audio', async (req, res) => {
     }
 
     try {
-        // fetch video information to get the title
-        const ytDlpInfoProcess = spawn('yt-dlp', ['--dump-json', url]);
-
-        let jsonData = '';
-        ytDlpInfoProcess.stdout.on('data', (data) => {
-            jsonData += data;
+        const info = await ytdlp(url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            noCheckCertificates: true
         });
 
-        ytDlpInfoProcess.on('close', (code) => {
-            if (code !== 0) {
-                return res.status(500).json({ success: false, message: 'Failed to fetch video info.' });
+        const videoTitle = sanitizeFilename(info.title || 'audio');
+
+        res.header('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
+        res.header('Content-Type', 'audio/mpeg');
+        res.set('Access-Control-Expose-Headers', 'Content-Disposition');
+
+        const audioStream = ytdlp.exec(url, {
+            format: 'bestaudio[ext=m4a]/bestaudio',
+            output: '-',
+            quiet: true,
+            noWarnings: true,
+            noCheckCertificates: true,
+            preferFreeFormats: true,
+            youtubeSkipDashManifest: true
+        });
+
+        audioStream.stdout.pipe(res);
+
+        audioStream.stderr.on('data', (data) => {
+            console.error('yt-dlp stderr:', data.toString());
+        });
+
+        audioStream.on('error', (error) => {
+            console.error('yt-dlp erro:', error.message);
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    success: false, 
+                    message: 'Error on audio download' 
+                });
             }
-
-            const videoInfo = JSON.parse(jsonData);
-            const videoTitle = videoInfo.title.replace(/[<>:"/\\|?*]/g, '-'); // Sanitize filename
-
-            // set headers for audio file response
-            res.header('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
-            res.header('Content-Type', 'audio/mpeg');
-            res.set('Access-Control-Expose-Headers', 'Content-Disposition');
-
-            // stream audio
-            const ytDlpAudioProcess = spawn('yt-dlp', [
-                '--quiet',
-                '--no-warnings',
-                '-f', 'bestaudio[ext=m4a]',
-                '-o', '-',
-                url
-            ]);
-
-            ytDlpAudioProcess.stdout.pipe(res);
-            ytDlpAudioProcess.stderr.on('data', (data) => {
-                console.error('yt-dlp error:', data.toString());
-            });
-
-            ytDlpAudioProcess.on('close', (audioCode) => {
-                if (audioCode !== 0) {
-                    res.status(500).json({ success: false, message: 'audio download failed' });
-                }
-            });
         });
 
-        ytDlpInfoProcess.stderr.on('data', (data) => {
-            console.error('yt-dlp info error:', data.toString());
+        audioStream.on('close', (code) => {
+            if (code !== 0 && code !== null) {
+                console.error(`yt-dlp - code ${code}`);
+            }
         });
 
     } catch (error) {
-        console.error('Error in /download/audio:', error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Error in /download/audio:', error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                success: false, 
+                message: 'Error when searching for audio information' 
+            });
+        }
     }
 });
-
-
-  
 
 app.post('/download/youtube/thumbnail', async (req, res) => {
     const url = req.body.message;
@@ -124,43 +108,58 @@ app.post('/download/youtube/thumbnail', async (req, res) => {
     }
 
     try {
-        const ytDlpInfoProcess = spawn('yt-dlp', ['--dump-json', url]);
-
-        let jsonData = '';
-        ytDlpInfoProcess.stdout.on('data', (data) => {
-            jsonData += data;
+        const info = await ytdlp(url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            noCheckCertificates: true
         });
 
-        ytDlpInfoProcess.on('close', (code) => {
-            if (code !== 0) {
-                return res.status(500).json({ success: false, message: 'failed to fetch video info' });
-            }
+        const thumbnails = info.thumbnails || [];
+        const thumbnailUrl = thumbnails.sort((a, b) => 
+            (b.width || 0) - (a.width || 0)
+        )[0]?.url || info.thumbnail;
 
-            const videoInfo = JSON.parse(jsonData);
-            const thumbnailUrl = videoInfo.thumbnail;
-
-            // fetch and stream the thumbnail
-            https.get(thumbnailUrl, (response) => {
-                res.setHeader('Content-Type', response.headers['content-type']);
-                response.pipe(res);
-            }).on('error', (err) => {
-                console.error('Error fetching thumbnail:', err);
-                res.status(500).json({ success: false, message: 'error fetching thumbnail' });
+        if (!thumbnailUrl) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Thumbnail image not found' 
             });
+        }
+
+        https.get(thumbnailUrl, (response) => {
+            res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
+            response.pipe(res);
+        }).on('error', (err) => {
+            console.error('Error when searching for thumbnail', err);
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    success: false, 
+                    message: 'Error when downloading thumbnail' 
+                });
+            }
         });
 
     } catch (error) {
-        console.error('error in /download/youtube/thumbnail:', error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Error in /download/thumbnail:', error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                success: false, 
+                message: 'Error when searching for thumbnail' 
+            });
+        }
     }
 });
 
-
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ success: false, message: 'Internal server error' });
+    console.error('Global error:', err);
+    if (!res.headersSent) {
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server internal error' 
+        });
+    }
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Running on http://localhost:${port}`);
 });
