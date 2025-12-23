@@ -19,13 +19,16 @@ export function setupAudioEffects(audio, progressBar) {
 
     function cleanup() {
         // deactivate all effects and disconnect audio context
+        const currentVolume = audio ? audio.volume : 1;
+        const currentPlaybackRate = audio ? audio.playbackRate : 1;
+
         effectsRegistry.deactivateAllEffects();
         disconnectAudioContext();
         
         // reset audio element properties
         if (audio) {
-            audio.volume = 1;
-            audio.playbackRate = 1;
+            audio.volume = currentVolume;
+            audio.playbackRate = currentPlaybackRate;
         }
     }
 

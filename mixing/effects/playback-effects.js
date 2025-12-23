@@ -34,6 +34,7 @@ export class SmoothLoopEffect extends AudioEffect {
         this.crossfading = false;
         this.crossfadeAudio = null;
         this.CROSSFADE_DURATION = 2;
+        this.originalVolume = 1;
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -59,15 +60,17 @@ export class SmoothLoopEffect extends AudioEffect {
                 this.crossfadeAudio.pause();
                 this.crossfadeAudio = null;
             }
-            audio.volume = 1;
+            audio.volume = this.originalVolume;
             this.crossfading = false;
         };
     }
 
     startCrossfade(audio, progressBar) {
         audio = this.audio;
-        progressBar = this.progressBar; // dont ask, it works and i want to sleep
+        progressBar = this.progressBar;
         this.crossfading = true;
+
+        this.originalVolume = audio.volume;
 
         this.crossfadeAudio = new Audio(audio.src);
         this.crossfadeAudio.currentTime = progressBar.selectedStartTime;
@@ -84,21 +87,21 @@ export class SmoothLoopEffect extends AudioEffect {
                     this.crossfadeAudio.pause();
                     this.crossfadeAudio = null;
                 }
-                audio.volume = 1;
+                audio.volume = this.originalVolume;
                 this.crossfading = false;
                 return;
             }
 
-            audio.volume = Math.max(0, 1 - progress);
+            audio.volume = this.originalVolume * Math.max(0, 1 - progress);
             if (this.crossfadeAudio) {
-                this.crossfadeAudio.volume = Math.min(1, progress);
+                this.crossfadeAudio.volume = this.originalVolume * Math.min(1, progress);
             }
 
             if (progress < 1 && this.active) {
                 requestAnimationFrame(animate);
             } else if (this.active) {
                 audio.currentTime = progressBar.selectedStartTime + this.CROSSFADE_DURATION;
-                audio.volume = 1;
+                audio.volume = this.originalVolume;
                 if (this.crossfadeAudio) {
                     this.crossfadeAudio.pause();
                     this.crossfadeAudio = null;
@@ -113,7 +116,7 @@ export class SmoothLoopEffect extends AudioEffect {
             if (this.crossfadeAudio) {
                 this.crossfadeAudio = null;
             }
-            audio.volume = 1;
+            audio.volume = this.originalVolume;
         });
 
         requestAnimationFrame(animate);
@@ -125,7 +128,7 @@ export class SmoothLoopEffect extends AudioEffect {
                 this.crossfadeAudio.pause();
                 this.crossfadeAudio = null;
             }
-            this.audio.volume = 1;
+            this.audio.volume = this.originalVolume;
             this.crossfading = false;
             if (this.cleanup) this.cleanup();
             this.active = false;
