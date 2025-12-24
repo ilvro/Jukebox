@@ -1,4 +1,4 @@
-import { addSongToPlayer } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -32,9 +32,9 @@ async function downloadVideo(youtubeLink) {
             body: JSON.stringify({ message: youtubeLink })
         });
 
-        const [audioResponse, thumbnailResponse] = await Promise.all([audioPromise, thumbnailPromise]); // send requests in parallel for faster downloading
-
-        // handle audio response
+        const [audioResponse, thumbnailResponse] = await Promise.all([audioPromise, thumbnailPromise]);
+        
+	// handle audio response
         if (!audioResponse.ok) {
             throw new Error(`audio download failed: ${audioResponse.statusText}`);
         }
@@ -42,11 +42,11 @@ async function downloadVideo(youtubeLink) {
         if (!contentDisposition) {
             throw new Error('missing Content-Disposition header in audio response');
         }
-        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4).replace("inquote", '’');
+        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4).replace("inquote", 'â€™');
         const audioBlob = await audioResponse.blob();
         const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: "audio/mpeg" });
 
-        // handle thumbnail response
+	// handle thumbnail response
         if (!thumbnailResponse.ok) {
             throw new Error(`thumbnail download failed: ${thumbnailResponse.statusText}`);
         }
@@ -55,7 +55,7 @@ async function downloadVideo(youtubeLink) {
             type: thumbnailResponse.headers.get('Content-Type')
         });
 
-        // populate input forms
+	// populate input forms
         const audioDataTransfer = new DataTransfer();
         audioDataTransfer.items.add(audioFile);
         songFileInput.files = audioDataTransfer.files;
@@ -80,12 +80,12 @@ async function savePreset() {
         const songItems = document.querySelectorAll('.song-item');
         let presetData = [];
 
-        // load preset_metadata.json if it exists, create one if it doesnt
+	// load preset_metadata.json if it exists, create one if it doesnt
         try {
             const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
             const metadataFile = await presetMetadataHandle.getFile();
             const metadataText = await metadataFile.text();
-            presetData = metadataText.trim() ? JSON.parse(metadataText) : []; // wow
+            presetData = metadataText.trim() ? JSON.parse(metadataText) : [];
         } catch (err) {
             if (err.name === 'NotFoundError') {
                 console.log('no existing preset_metadata.json, starting fresh');
@@ -93,7 +93,8 @@ async function savePreset() {
                 throw err;
             }
         }
-        // remove queued deleted songs from metadata and files
+
+	// remove queued deleted songs from metadata and files
         presetData = presetData.filter(
             song => !deletedSongs.includes(decodeURIComponent(song.currentTitle))
         );
@@ -124,20 +125,24 @@ async function savePreset() {
             const imageUrl = songItem.querySelector('img').src;
             const genres = songItem.getAttribute('data-genres').split(',');
             const tags = songItem.querySelector('p').textContent.split(' + ');
+            
+            const songId = songItem.dataset.songId;
+            const markers = getMarkers(songId);
 
-            // check for title changes
+	    // check for title changes
             const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
             if (existingIndex !== -1) {
                 console.log(`updating existing song: ${decodeURIComponent(originalTitle)} to ${decodeURIComponent(currentTitle)}`);
                 const updatedSong = {
                     currentTitle,
                     genres,
-                    tags
+                    tags,
+                    markers
                 };
 
                 presetData[existingIndex] = updatedSong;
 
-                // rename audio and image files if the title changed
+		// rename audio and image files if the title changed
                 if (currentTitle !== originalTitle) {
                     try {
                         const oldAudioHandle = await directoryHandle.getFileHandle(`${originalTitle}.mp3`);
@@ -167,7 +172,7 @@ async function savePreset() {
                 updatedData.push(updatedSong);
             } else {
                 console.log(`adding new song: ${decodeURIComponent(currentTitle)}`);
-                const newSong = { currentTitle, genres, tags };
+                const newSong = { currentTitle, genres, tags, markers };
                 presetData.push(newSong);
                 updatedData.push(newSong);
             }
@@ -196,7 +201,6 @@ async function savePreset() {
 
             console.log(`saved ${currentTitle}`);
         }
-        
 
         const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
         const presetMetadataWritable = await presetMetadataHandle.createWritable();
@@ -209,10 +213,9 @@ async function savePreset() {
     }
 }
 
-
 async function loadPreset() {
     if (!window.showDirectoryPicker) {
-        // android user, use alternate fallback function
+    	// android user, use alternate fallback function
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
         fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
@@ -233,49 +236,8 @@ async function loadPreset() {
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-        /*
-        const encodingMap = {
-            '%20': '_20', // space
-            '%21': '_21', // !
-            '%22': '_22', // "
-            '%23': '_23', // #
-            '%24': '_24', // $
-            '%25': '_25', // %
-            '%26': '_26', // &
-            '%27': '_27', // '
-            '%28': '_28', // (
-            '%29': '_29', // )
-            '%2A': '_2A', // *
-            '%2B': '_2B', // +
-            '%2C': '_2C', // ,
-            '%2D': '_2D', // -
-            '%2E': '_2E', // .
-            '%2F': '_2F', // /
-            '%3A': '_3A', // :
-            '%3B': '_3B', // ;
-            '%3C': '_3C', // <
-            '%3D': '_3D', // =
-            '%3E': '_3E', // >
-            '%3F': '_3F', // ?
-            '%40': '_40', // @
-            '%5B': '_5B', // [
-            '%5C': '_5C', // \
-            '%5D': '_5D', // ]
-            '%5E': '_5E', // ^
-            '%5F': '_5F', // _
-            '%60': '_60', // `
-            '%7B': '_7B', // {
-            '%7C': '_7C', // |
-            '%7D': '_7D', // }
-            '%7E': '_7E',  // ~
-            '%C3': '_C3',
-            '%AA': '_AA',
-            '%A1': '_A1'
-        };
-        */
-
         for (const songMetadata of presetMetadata) {
-            let { currentTitle, genres, tags } = songMetadata;
+            let { currentTitle, genres, tags, markers } = songMetadata;
 
             genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
             songMetadata.genres = genres;
@@ -289,7 +251,7 @@ async function loadPreset() {
                 audioFile = await audioEntry.getFile();
                 thumbnailFile = await thumbnailEntry.getFile();
             } catch (error) {
-                // try with the original % encoding
+            	// try with the original % encoding
                 try {
                     const revertedTitle = revertUnderscoreEncoding(currentTitle);
                     const audioEntry = await directoryHandle.getFileHandle(`${revertedTitle}.mp3`);
@@ -300,9 +262,9 @@ async function loadPreset() {
                     console.error(`could not load files for ${decodeURIComponent(currentTitle)}`);
                     continue;
                 }
-            }   
+            }
 
-            // create song item
+	    // create song item
             const songItem = document.createElement('div');
             songItem.classList.add('song-item');
             songItem.setAttribute('draggable', 'true');
@@ -314,7 +276,7 @@ async function loadPreset() {
                 <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
             `;
 
-            // disables input and audio blob links from being dragged to the title input
+	    // disables input and audio blob links from being dragged to the title input
             const titleInput = songItem.querySelector('.title-input');
             titleInput.addEventListener('dragover', (event) => {
                 event.preventDefault();
@@ -326,6 +288,11 @@ async function loadPreset() {
 
             songGrid.appendChild(songItem);
             addSongToPlayer(songItem, audioFile);
+            
+            // load markers
+            if (markers && markers.length > 0) {
+                setMarkers(songItem.dataset.songId, markers);
+            }
         }
         console.log('loaded preset');
         document.dispatchEvent(new Event('songsUpdated'));
@@ -350,7 +317,7 @@ async function loadSamplePreset() {
         
         // promises for all songs
         const songPromises = presetMetadata.map(async (songMetadata) => {
-            const { currentTitle, genres, tags } = songMetadata;
+            const { currentTitle, genres, tags, markers } = songMetadata;
             const decodedTitle = decodeURIComponent(currentTitle);
             const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
             const fixedTitle = currentTitle.replace(/%/g, '%25');
@@ -382,12 +349,13 @@ async function loadSamplePreset() {
                 decodedTitle,
                 updatedGenres,
                 tags,
+                markers,
                 audioFile: new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' }),
                 thumbnailFile: new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' })
             };
         });
         
-        // process batches of songs to avoid overwhelming the browser (way faster this way)
+        // processes batches of song to avoid overwhelming the browser (way faster this way)
         const BATCH_SIZE = 5;
         const totalSongs = songPromises.length;
         
@@ -418,6 +386,10 @@ async function loadSamplePreset() {
                 
                 songGrid.appendChild(songItem);
                 addSongToPlayer(songItem, song.audioFile);
+                
+                if (song.markers && song.markers.length > 0) {
+                    setMarkers(songItem.dataset.songId, song.markers);
+                }
             });
             
             // give the browser a break
@@ -446,7 +418,7 @@ async function handleFilesFallback(files) {
     const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
     for (const songMetadata of presetMetadata) {
-        let { currentTitle, genres, tags } = songMetadata;
+        let { currentTitle, genres, tags, markers } = songMetadata;
         genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
 
         const audioFile = fileMap[`${currentTitle}.mp3`];
@@ -478,6 +450,10 @@ async function handleFilesFallback(files) {
 
         songGrid.appendChild(songItem);
         addSongToPlayer(songItem, audioFile);
+        
+        if (markers && markers.length > 0) {
+            setMarkers(songItem.dataset.songId, markers);
+        }
     }
     console.log('loaded files via fallback');
     document.dispatchEvent(new Event('songsUpdated'));
@@ -507,7 +483,7 @@ function getSelectedGenres() {
     return selectedGenres;
 }
 
-function revertUnderscoreEncoding(title) { // because google drive turns presets into .zips and extracting them changes the name so we have to revert to the normal name to make the preset work again
+function revertUnderscoreEncoding(title) { // because google drive turns presets into .zips and extracting them changes the name, so we have to revert to the normal name to make the preset work again
     return title.replace(/_([0-9A-F]{2})/g, '%$1');
 }
 
@@ -532,7 +508,7 @@ uploadSubmit.addEventListener('click', () => {
     try {
         title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
     } catch {
-        title = thumbnail.name.toString().slice(0, -4); // use raw name as fallback
+        title = thumbnail.name.toString().slice(0, -4);
     }
     
     const genres = getSelectedGenres();
@@ -566,14 +542,7 @@ uploadSubmit.addEventListener('click', () => {
 
 // right click functions
 const deletedSongs = [];
-async function deleteSongFile(directoryHandle, fileName) {
-    try {
-        await directoryHandle.removeEntry(fileName);
-        console.log(`deleted ${fileName}`)
-    } catch (error) {
-        console.error(`error deleting file ${fileName}: `, error)
-    }
-}
+
 document.addEventListener('DOMContentLoaded', () => {
     const songGrid = document.getElementById('song-grid');
     const contextMenu = document.createElement('div');
@@ -591,10 +560,16 @@ document.addEventListener('DOMContentLoaded', () => {
     deleteOption.innerText = 'Delete';
     deleteOption.style.cursor = 'pointer';
 
+    const editGenresOption = document.createElement('div');
+    editGenresOption.innerText = 'Edit Genres';
+    editGenresOption.style.cursor = 'pointer';
+
+    contextMenu.appendChild(editGenresOption);
     contextMenu.appendChild(deleteOption);
     document.body.appendChild(contextMenu);
 
     let currentSongItem = null;
+
     songGrid.addEventListener('contextmenu', (event) => {
         event.preventDefault();
 
@@ -624,8 +599,162 @@ document.addEventListener('DOMContentLoaded', () => {
 
         contextMenu.style.display = 'none';
     });
+
+    editGenresOption.addEventListener('click', () => {
+        if (currentSongItem) {
+            showEditGenresPopup(currentSongItem);
+        }
+        contextMenu.style.display = 'none';
+    });
 });
 
+function showEditGenresPopup(songItem) {
+    const existingPopup = document.getElementById('edit-genres-popup');
+    if (existingPopup) {
+        existingPopup.remove();
+    }
+
+    const popup = document.createElement('div');
+    popup.id = 'edit-genres-popup';
+    popup.className = 'popup';
+    Object.assign(popup.style, {
+        visibility: 'visible',
+        opacity: '1'
+    });
+
+    const header = document.createElement('header');
+    header.className = 'popup-header';
+    
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.className = 'upload-end-btns';
+    
+    const saveButton = document.createElement('button');
+    saveButton.id = 'edit-submit';
+    saveButton.className = 'button';
+    saveButton.textContent = 'Save';
+    
+    const cancelButton = document.createElement('button');
+    cancelButton.id = 'edit-cancel';
+    cancelButton.className = 'red-button';
+    cancelButton.textContent = 'X';
+    
+    buttonsContainer.appendChild(saveButton);
+    buttonsContainer.appendChild(cancelButton);
+    header.appendChild(buttonsContainer);
+    popup.appendChild(header);
+
+    const content = document.createElement('div');
+    content.className = 'popup-content';
+    content.innerHTML = '<br><br>';
+
+    const currentGenres = songItem.getAttribute('data-genres').split(',');
+    const currentTags = songItem.getAttribute('data-tags').split(',');
+
+    const allGenres = ['fun', 'hopeful', 'mystery', 'suspense', 'horror', 'sfx'];
+    const allTags = ['ambient', 'investigation', 'event', 'battle', 'emotional'];
+
+    const uploadStep = document.createElement('div');
+    uploadStep.className = 'upload-step';
+    
+    const label = document.createElement('label');
+    label.textContent = 'Select the song\'s genres:';
+    uploadStep.appendChild(label);
+
+    const tagCheckboxes = document.createElement('div');
+    tagCheckboxes.className = 'genre-checkboxes';
+    tagCheckboxes.id = 'tag-checkboxes';
+    
+    allTags.forEach(tag => {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `edit-tag-${tag}`;
+        checkbox.name = 'tag';
+        checkbox.value = tag;
+        checkbox.checked = currentTags.includes(tag);
+
+        const checkboxLabel = document.createElement('label');
+        checkboxLabel.htmlFor = `edit-tag-${tag}`;
+        checkboxLabel.className = 'genre-btn';
+        checkboxLabel.textContent = tag;
+
+        tagCheckboxes.appendChild(checkbox);
+        tagCheckboxes.appendChild(checkboxLabel);
+    });
+    
+    uploadStep.appendChild(tagCheckboxes);
+
+    const genreCheckboxes = document.createElement('div');
+    genreCheckboxes.className = 'genre-checkboxes';
+    genreCheckboxes.id = 'genre-checkboxes';
+
+    allGenres.forEach(genre => {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `edit-genre-${genre}`;
+        checkbox.name = 'genre';
+        checkbox.value = genre;
+        checkbox.checked = currentGenres.includes(genre);
+
+        const checkboxLabel = document.createElement('label');
+        checkboxLabel.htmlFor = `edit-genre-${genre}`;
+        checkboxLabel.className = 'genre-btn';
+        checkboxLabel.textContent = genre;
+
+        genreCheckboxes.appendChild(checkbox);
+        genreCheckboxes.appendChild(checkboxLabel);
+    });
+
+    uploadStep.appendChild(genreCheckboxes);
+    content.appendChild(uploadStep);
+    popup.appendChild(content);
+
+    saveButton.addEventListener('click', () => {
+        const selectedTags = [];
+        const selectedGenres = [];
+
+        allTags.forEach(tag => {
+            const checkbox = document.getElementById(`edit-tag-${tag}`);
+            if (checkbox && checkbox.checked) {
+                selectedTags.push(tag);
+            }
+        });
+
+        allGenres.forEach(genre => {
+            const checkbox = document.getElementById(`edit-genre-${genre}`);
+            if (checkbox && checkbox.checked) {
+                selectedGenres.push(genre);
+            }
+        });
+
+        songItem.setAttribute('data-genres', selectedGenres.join(','));
+        songItem.setAttribute('data-tags', selectedTags.join(','));
+        songItem.querySelector('p').textContent = selectedTags.join(' + ');
+
+        popup.style.opacity = '0';
+        document.getElementById('dimmer').style.opacity = '0';
+        setTimeout(() => {
+            popup.remove();
+            document.getElementById('dimmer').style.visibility = 'hidden';
+        }, 300);
+    });
+
+    cancelButton.addEventListener('click', () => {
+        popup.style.opacity = '0';
+        document.getElementById('dimmer').style.opacity = '0';
+        setTimeout(() => {
+            popup.remove();
+            document.getElementById('dimmer').style.visibility = 'hidden';
+        }, 300);
+    });
+
+    const dimmer = document.getElementById('dimmer');
+    dimmer.style.visibility = 'visible';
+    setTimeout(() => {
+        dimmer.style.opacity = '0.6';
+    }, 10);
+
+    document.body.appendChild(popup);
+}
 
 // ------------------- styling ------------------------------
 uploadSongBtn.addEventListener('click', () => {

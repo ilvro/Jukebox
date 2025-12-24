@@ -7,6 +7,8 @@ const doubleClickDelay = 300;
 let lastRightClickTime = 0;
 let isDragging = false;
 
+const songMarkers = {};
+
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
     audio.preload = 'auto';
@@ -44,13 +46,50 @@ function addSongToPlayer(songElement, audioFile) {
     const songId = `song-${Date.now()}`;
     songElement.dataset.songId = songId;
     
+    if (!songMarkers[songId]) {
+        songMarkers[songId] = [];
+    }
+    
     const audio = createAudioElement(audioUrl);
     addClickListenerToSongItem(songElement, audio);
 
     updatePlayerUI();
 }
 
-export { addSongToPlayer };
+function addMarker(songId, time) {
+    if (!songMarkers[songId]) {
+        songMarkers[songId] = [];
+    }
+    
+    const exists = songMarkers[songId].some(marker => Math.abs(marker - time) < 0.5);
+    if (!exists) {
+        songMarkers[songId].push(time);
+        songMarkers[songId].sort((a, b) => a - b); // mantém ordenado
+        return true;
+    }
+    return false;
+}
+
+function removeMarker(songId, time) {
+    if (!songMarkers[songId]) return false;
+    
+    const index = songMarkers[songId].findIndex(marker => Math.abs(marker - time) < 0.5);
+    if (index !== -1) {
+        songMarkers[songId].splice(index, 1);
+        return true;
+    }
+    return false;
+}
+
+function getMarkers(songId) {
+    return songMarkers[songId] || [];
+}
+
+function setMarkers(songId, markers) {
+    songMarkers[songId] = markers || [];
+}
+
+export { addSongToPlayer, getMarkers, setMarkers };
 
 function showPlayer() {
     playerContainer.classList.toggle('active');
@@ -156,6 +195,7 @@ function updatePlayerUI() {
         // hover effect
         let hoveredBar = -1;
         let hoveredTime = -1;
+        let hoveredMarker = -1;
         let lastMoveTime = 0;
         const moveThrottle = 16;
         progressContainer.addEventListener('mousemove', (event) => {
@@ -187,12 +227,23 @@ function updatePlayerUI() {
             const totalBarWidth = barWidth + gap;
             const newHoveredBar = Math.floor(canvasX / totalBarWidth);
             
-            if (newHoveredBar !== hoveredBar && 
-                newHoveredBar >= 0 && 
-                newHoveredBar < waveformCanvas.waveformData?.length) {
-                hoveredBar = newHoveredBar;
+            // check if hovering over a marker (2 second tolerance for better UX)
+            const markers = songMarkers[songId] || [];
+            let newHoveredMarker = -1;
+            for (let i = 0; i < markers.length; i++) {
+                if (Math.abs(hoveredTime - markers[i]) < 2.0) {
+                    newHoveredMarker = i;
+                    break;
+                }
+            }
+            
+            if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
+                if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
+                    hoveredBar = newHoveredBar;
+                }
+                hoveredMarker = newHoveredMarker;
                 requestAnimationFrame(() => {
-                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
                 });
             }
         });
@@ -204,12 +255,36 @@ function updatePlayerUI() {
             }
         });
 
+        // middle mouse button to add markers
+        progressContainer.addEventListener('mousedown', (event) => {
+            if (event.button === 1) {
+                event.preventDefault();
+                const clickTime = getExactTime(event, waveformCanvas);
+                
+                // try to remove the marker first, if there isnt one, add one
+                const removed = removeMarker(songId, clickTime);
+                if (!removed) {
+                    const added = addMarker(songId, clickTime);
+                    if (added) {
+                        console.log(`Marcador adicionado em ${formatTime(clickTime)}`);
+                    }
+                } else {
+                    console.log(`Marcador removido de ${formatTime(clickTime)}`);
+                }
+                
+                requestAnimationFrame(() => {
+                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                });
+            }
+        });
+
         progressContainer.addEventListener('mouseleave', () => {
             hoveredBar = -1;
             hoveredTime = -1;
+            hoveredMarker = -1;
             timeTooltip.style.display = 'none';
             requestAnimationFrame(() => {
-                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
             });
         });
         
@@ -253,7 +328,7 @@ function updatePlayerUI() {
                     );
                 } else if (isDoubleClick) {
                     audioEffects.cleanup();
-                    setTimeout(() => { // small delay to ensure audio context is properly cleaned up
+                    setTimeout(() => {
                         progressBar.selectedStartTime = undefined;
                         progressBar.selectedEndTime = undefined;
                         progressBar.style.background = '#333';
@@ -266,7 +341,6 @@ function updatePlayerUI() {
                         });
                     }, 50);
                 } else if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
-                    // start new selection only if there isnt one
                     isDragging = true;
                     progressBar.selectedStartTime = selectedTime;
                     
@@ -284,7 +358,7 @@ function updatePlayerUI() {
         
                         updateProgressBarGradient(progressBar, audio);
                         requestAnimationFrame(() => {
-                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
                         });
                     };
         
@@ -309,7 +383,6 @@ function updatePlayerUI() {
     });
 }
 
-// this part might look weird, theres some optimization involved and waveforms are hard to work with
 function updateProgressBarGradient(progressBar, audio) {
     if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
         progressBar.style.background = '#333';
@@ -369,7 +442,6 @@ async function generateWaveform(audio, canvas) {
             }
         }
 
-        // normalize waveform data
         let maxPeak = 0;
         let maxAverage = 0;
         waveformData.forEach(point => {
@@ -419,7 +491,7 @@ function drawWaveform(canvas, waveformData) {
     }
 }
 
-function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hoveredTime = -1) {
+function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hoveredTime = -1, hoveredMarker = -1) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const width = canvas.width;
     const height = canvas.height;
@@ -438,7 +510,6 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     const selectedStartPixel = progressBar.selectedStartTime ? Math.floor((progressBar.selectedStartTime / audio.duration) * width) : -1;
     const selectedEndPixel = progressBar.selectedEndTime ? Math.floor((progressBar.selectedEndTime / audio.duration) * width) : -1;
 
-    // draw time indicator for hover position
     if (hoveredTime >= 0) {
         const hoverPixel = Math.floor((hoveredTime / audio.duration) * width);
         ctx.fillStyle = 'rgba(74, 255, 219, 0.3)';
@@ -487,7 +558,6 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         }
     }
 
-    // draw selection points
     if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
         ctx.fillStyle = '#4a9eff';
         const startX = (progressBar.selectedStartTime / audio.duration) * width;
@@ -495,6 +565,18 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         
         ctx.fillRect(startX - 1, 0, 2, height);
         ctx.fillRect(endX - 1, 0, 2, height);
+    }
+
+    // draw markers
+    const trackDiv = canvas.closest('.track-item');
+    const songId = trackDiv?.dataset.songId;
+    if (songId && songMarkers[songId]) {
+        songMarkers[songId].forEach((markerTime, index) => {
+            const markerX = (markerTime / audio.duration) * width;
+            // change color if hovering over this marker
+            ctx.fillStyle = index === hoveredMarker ? '#ffdd00' : '#ffaa00';
+            ctx.fillRect(markerX - 1.5, 0, 3, height);
+        });
     }
 }
 
