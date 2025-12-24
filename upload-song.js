@@ -617,9 +617,15 @@ function showEditGenresPopup(songItem) {
     const popup = document.createElement('div');
     popup.id = 'edit-genres-popup';
     popup.className = 'popup';
+    
+    // ensure proper positioning and z-index
     Object.assign(popup.style, {
-        visibility: 'visible',
-        opacity: '1'
+        position: 'fixed',
+        left: '50%',
+        top: '45%',
+        transform: 'translate(-50%, -50%)',
+        zIndex: '4',
+        pointerEvents: 'auto'
     });
 
     const header = document.createElement('header');
@@ -647,8 +653,8 @@ function showEditGenresPopup(songItem) {
     content.className = 'popup-content';
     content.innerHTML = '<br><br>';
 
-    const currentGenres = songItem.getAttribute('data-genres').split(',');
-    const currentTags = songItem.getAttribute('data-tags').split(',');
+    const currentGenres = songItem.getAttribute('data-genres').split(',').filter(g => g);
+    const currentTags = songItem.getAttribute('data-tags').split(',').filter(t => t);
 
     const allGenres = ['fun', 'hopeful', 'mystery', 'suspense', 'horror', 'sfx'];
     const allTags = ['ambient', 'investigation', 'event', 'battle', 'emotional'];
@@ -662,13 +668,13 @@ function showEditGenresPopup(songItem) {
 
     const tagCheckboxes = document.createElement('div');
     tagCheckboxes.className = 'genre-checkboxes';
-    tagCheckboxes.id = 'tag-checkboxes';
+    tagCheckboxes.id = 'edit-tag-checkboxes';
     
     allTags.forEach(tag => {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.id = `edit-tag-${tag}`;
-        checkbox.name = 'tag';
+        checkbox.name = 'edit-tag';
         checkbox.value = tag;
         checkbox.checked = currentTags.includes(tag);
 
@@ -685,13 +691,13 @@ function showEditGenresPopup(songItem) {
 
     const genreCheckboxes = document.createElement('div');
     genreCheckboxes.className = 'genre-checkboxes';
-    genreCheckboxes.id = 'genre-checkboxes';
+    genreCheckboxes.id = 'edit-genre-checkboxes';
 
     allGenres.forEach(genre => {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.id = `edit-genre-${genre}`;
-        checkbox.name = 'genre';
+        checkbox.name = 'edit-genre';
         checkbox.value = genre;
         checkbox.checked = currentGenres.includes(genre);
 
@@ -731,29 +737,32 @@ function showEditGenresPopup(songItem) {
         songItem.querySelector('p').textContent = selectedTags.join(' + ');
 
         popup.style.opacity = '0';
-        document.getElementById('dimmer').style.opacity = '0';
+        dimmer.style.opacity = '0';
         setTimeout(() => {
-            popup.remove();
-            document.getElementById('dimmer').style.visibility = 'hidden';
+            popup.style.visibility = 'hidden';
+            dimmer.style.visibility = 'hidden';
         }, 300);
     });
 
     cancelButton.addEventListener('click', () => {
         popup.style.opacity = '0';
-        document.getElementById('dimmer').style.opacity = '0';
+        dimmer.style.opacity = '0';
         setTimeout(() => {
-            popup.remove();
-            document.getElementById('dimmer').style.visibility = 'hidden';
+            popup.style.visibility = 'hidden';
+            dimmer.style.visibility = 'hidden';
         }, 300);
     });
 
     const dimmer = document.getElementById('dimmer');
+    document.body.appendChild(popup);
+    
+    // trigger transition after element is added to DOM
+    popup.style.visibility = 'visible';
     dimmer.style.visibility = 'visible';
     setTimeout(() => {
+        popup.style.opacity = '1';
         dimmer.style.opacity = '0.6';
     }, 10);
-
-    document.body.appendChild(popup);
 }
 
 // ------------------- styling ------------------------------
