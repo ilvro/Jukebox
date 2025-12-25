@@ -9,6 +9,10 @@ let isDragging = false;
 
 const songMarkers = {};
 
+// increased marker snap tolerance for better UX - snapping to nearby markers
+const MARKER_SNAP_TOLERANCE = 2.0;
+const SMOOTH_SKIP_DURATION = 1.5; // duration of crossfade when smooth skipping
+
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
     audio.preload = 'auto';
@@ -56,6 +60,17 @@ function addSongToPlayer(songElement, audioFile) {
     updatePlayerUI();
 }
 
+// snap time to nearest marker if within tolerance
+function snapToMarker(songId, time) {
+    const markers = songMarkers[songId] || [];
+    for (let marker of markers) {
+        if (Math.abs(marker - time) < MARKER_SNAP_TOLERANCE) {
+            return marker;
+        }
+    }
+    return time;
+}
+
 function addMarker(songId, time) {
     if (!songMarkers[songId]) {
         songMarkers[songId] = [];
@@ -64,7 +79,7 @@ function addMarker(songId, time) {
     const exists = songMarkers[songId].some(marker => Math.abs(marker - time) < 0.5);
     if (!exists) {
         songMarkers[songId].push(time);
-        songMarkers[songId].sort((a, b) => a - b); // mantém ordenado
+        songMarkers[songId].sort((a, b) => a - b);
         return true;
     }
     return false;
@@ -89,7 +104,153 @@ function setMarkers(songId, markers) {
     songMarkers[songId] = markers || [];
 }
 
+// smooth skip to a marker using crossfade
+function smoothSkipToMarker(audio, targetTime) {
+    const originalVolume = audio.volume;
+    
+    // create a second audio element for crossfade
+    const crossfadeAudio = new Audio(audio.src);
+    crossfadeAudio.currentTime = targetTime;
+    crossfadeAudio.playbackRate = audio.playbackRate;
+    crossfadeAudio.volume = 0;
+    
+    const startTime = performance.now();
+    
+    const animate = () => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
+        
+        // fade out original, fade in new position
+        audio.volume = originalVolume * Math.max(0, 1 - progress);
+        crossfadeAudio.volume = originalVolume * Math.min(1, progress);
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        } else {
+            // switch to new position
+            audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
+            audio.volume = originalVolume;
+            crossfadeAudio.pause();
+        }
+    };
+    
+    crossfadeAudio.play().catch(error => {
+        console.error("Error playing crossfade audio:", error);
+        audio.volume = originalVolume;
+    });
+    
+    requestAnimationFrame(animate);
+}
+
+// create context menu for marker actions
+function createMarkerContextMenu(x, y, songId, markerTime, audio) {
+    const existingMenu = document.querySelector('.marker-context-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+    
+    const menu = document.createElement('div');
+    menu.className = 'marker-context-menu';
+    Object.assign(menu.style, {
+        position: 'absolute',
+        left: `${x}px`,
+        top: `${y}px`,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        borderRadius: '5px',
+        padding: '10px',
+        zIndex: '1001',
+        opacity: '0',
+        visibility: 'hidden',
+        transform: 'translateY(-10px)',
+        transition: 'opacity 0.3s ease, transform 0.5s ease, visibility 0.3s',
+        minWidth: '150px'
+    });
+    
+    const formatTime = (timeInSeconds) => {
+        const minutes = Math.floor(timeInSeconds / 60);
+        const seconds = Math.floor(timeInSeconds % 60);
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    };
+    
+    const header = document.createElement('div');
+    header.textContent = `Marker at ${formatTime(markerTime)}`;
+    header.style.color = '#2bdba0';
+    header.style.fontSize = '0.8em';
+    header.style.textTransform = 'uppercase';
+    header.style.padding = '5px';
+    header.style.marginBottom = '5px';
+    menu.appendChild(header);
+    
+    const smoothSkipItem = document.createElement('div');
+    smoothSkipItem.className = 'context-menu-item';
+    smoothSkipItem.textContent = 'Smooth Skip';
+    Object.assign(smoothSkipItem.style, {
+        cursor: 'default',
+        padding: '5px 5px 5px 15px',
+        transition: 'all 0.3s ease',
+        borderLeft: '2px solid transparent',
+        color: '#fff'
+    });
+    
+    smoothSkipItem.addEventListener('mouseover', () => {
+        smoothSkipItem.style.borderLeft = '2px solid #2bdba0';
+        smoothSkipItem.style.backgroundColor = 'rgba(43, 219, 160, 0.1)';
+    });
+    
+    smoothSkipItem.addEventListener('mouseout', () => {
+        smoothSkipItem.style.borderLeft = '2px solid transparent';
+        smoothSkipItem.style.backgroundColor = 'transparent';
+    });
+    
+    smoothSkipItem.addEventListener('click', () => {
+        smoothSkipToMarker(audio, markerTime);
+        menu.style.opacity = '0';
+        menu.style.transform = 'translateY(-10px)';
+        menu.style.visibility = 'hidden';
+        setTimeout(() => menu.remove(), 300);
+    });
+    
+    menu.appendChild(smoothSkipItem);
+    
+    document.body.appendChild(menu);
+    
+    // animate menu appearance
+    requestAnimationFrame(() => {
+        menu.style.opacity = '1';
+        menu.style.visibility = 'visible';
+        menu.style.transform = 'translateY(0)';
+    });
+    
+    const closeMenu = (event) => {
+        if (!menu.contains(event.target)) {
+            menu.style.opacity = '0';
+            menu.style.transform = 'translateY(-10px)';
+            menu.style.visibility = 'hidden';
+            
+            setTimeout(() => {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }, 300);
+        }
+    };
+    
+    setTimeout(() => {
+        document.addEventListener('click', closeMenu);
+    }, 0);
+    
+    menu.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
+    
+    return menu;
+}
+
 export { addSongToPlayer, getMarkers, setMarkers };
+
+// listen for genre updates and refresh player UI
+document.addEventListener('genresUpdated', () => {
+    updatePlayerUI();
+});
 
 function showPlayer() {
     playerContainer.classList.toggle('active');
@@ -138,13 +299,31 @@ function updatePlayerUI() {
         trackDiv.dataset.songId = songId;
 
         const songElement = document.querySelector(`[data-song-id="${songId}"]`);
+        
+        const titleContainer = document.createElement('div');
+        titleContainer.style.display = 'flex';
+        titleContainer.style.flexDirection = 'column';
+        titleContainer.style.gap = '2px';
+        
         const titleSpan = document.createElement('span');
         let songTitle = songElement.querySelector('input').value;
         if (songTitle.length > 15) {
             songTitle = songTitle.substring(0, 15) + "...";
         }
         titleSpan.textContent = songTitle;
-        trackDiv.appendChild(titleSpan);
+        titleContainer.appendChild(titleSpan);
+        
+        // add genres/tags display
+        const tags = songElement.getAttribute('data-tags');
+        if (tags && tags.trim() !== '') {
+            const tagsSpan = document.createElement('span');
+            tagsSpan.textContent = tags.split(',').join(' + ');
+            tagsSpan.style.fontSize = '0.7em';
+            tagsSpan.style.color = '#888';
+            titleContainer.appendChild(tagsSpan);
+        }
+        
+        trackDiv.appendChild(titleContainer);
 
         const progressContainer = document.createElement('div');
         progressContainer.className = 'progress-container';
@@ -227,11 +406,11 @@ function updatePlayerUI() {
             const totalBarWidth = barWidth + gap;
             const newHoveredBar = Math.floor(canvasX / totalBarWidth);
             
-            // check if hovering over a marker (2 second tolerance for better UX)
+            // check if hovering over a marker with increased tolerance
             const markers = songMarkers[songId] || [];
             let newHoveredMarker = -1;
             for (let i = 0; i < markers.length; i++) {
-                if (Math.abs(hoveredTime - markers[i]) < 2.0) {
+                if (Math.abs(hoveredTime - markers[i]) < MARKER_SNAP_TOLERANCE) {
                     newHoveredMarker = i;
                     break;
                 }
@@ -249,9 +428,12 @@ function updatePlayerUI() {
         });
 
         progressContainer.addEventListener('click', (event) => {
-            if (hoveredTime >= 0 && hoveredTime <= audio.duration) {
-                audio.currentTime = hoveredTime;
-                progressBar.value = hoveredTime;
+            // snap to marker if clicking near one
+            let clickTime = hoveredTime;
+            if (clickTime >= 0 && clickTime <= audio.duration) {
+                clickTime = snapToMarker(songId, clickTime);
+                audio.currentTime = clickTime;
+                progressBar.value = clickTime;
             }
         });
 
@@ -259,17 +441,20 @@ function updatePlayerUI() {
         progressContainer.addEventListener('mousedown', (event) => {
             if (event.button === 1) {
                 event.preventDefault();
-                const clickTime = getExactTime(event, waveformCanvas);
+                let clickTime = getExactTime(event, waveformCanvas);
+                
+                // snap to existing marker if nearby
+                const snappedTime = snapToMarker(songId, clickTime);
                 
                 // try to remove the marker first, if there isnt one, add one
-                const removed = removeMarker(songId, clickTime);
+                const removed = removeMarker(songId, snappedTime);
                 if (!removed) {
-                    const added = addMarker(songId, clickTime);
+                    const added = addMarker(songId, snappedTime);
                     if (added) {
-                        console.log(`Marcador adicionado em ${formatTime(clickTime)}`);
+                        console.log(`Marker added at ${formatTime(snappedTime)}`);
                     }
                 } else {
-                    console.log(`Marcador removido de ${formatTime(clickTime)}`);
+                    console.log(`Marker removed from ${formatTime(snappedTime)}`);
                 }
                 
                 requestAnimationFrame(() => {
@@ -302,19 +487,27 @@ function updatePlayerUI() {
         });
         
         const audioEffects = setupAudioEffects(audio, progressBar);
+        
+        let rightClickStartPos = null;
+        let hasMovedMouse = false;
+        
         progressBar.addEventListener('mousedown', (event) => {
             if (event.button === 2) {
                 event.preventDefault();
-                const selectedTime = getExactTime(event, waveformCanvas);
+                let selectedTime = getExactTime(event, waveformCanvas);
         
                 if (isDragging) {
                     return;
                 }
+                
+                // store initial click position and reset movement flag
+                rightClickStartPos = { x: event.clientX, y: event.clientY, time: selectedTime };
+                hasMovedMouse = false;
         
                 const currentTime = Date.now();
                 const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
                 lastRightClickTime = currentTime;
-        
+                
                 if (isPointInSelectedRegion(selectedTime, progressBar)) {
                     audioEffects.createContextMenu(
                         event.pageX, 
@@ -346,7 +539,22 @@ function updatePlayerUI() {
                     
                     const onMouseMove = (moveEvent) => {
                         if (!isDragging) return;
-                        const movedTime = getExactTime(moveEvent, waveformCanvas);
+                        
+                        // check if mouse has moved significantly (more than 5 pixels)
+                        const moveDistance = Math.sqrt(
+                            Math.pow(moveEvent.clientX - rightClickStartPos.x, 2) + 
+                            Math.pow(moveEvent.clientY - rightClickStartPos.y, 2)
+                        );
+                        
+                        if (moveDistance > 5) {
+                            hasMovedMouse = true;
+                        }
+                        
+                        let movedTime = getExactTime(moveEvent, waveformCanvas);
+                        
+                        // snap end point to marker if nearby
+                        movedTime = snapToMarker(songId, movedTime);
+                        
                         progressBar.selectedEndTime = movedTime;
         
                         if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
@@ -362,10 +570,42 @@ function updatePlayerUI() {
                         });
                     };
         
-                    const onMouseUp = () => {
+                    const onMouseUp = (upEvent) => {
                         isDragging = false;
                         document.removeEventListener('mousemove', onMouseMove);
                         document.removeEventListener('mouseup', onMouseUp);
+                        
+                        // if mouse didn't move, treat as a click on marker (not a drag)
+                        if (!hasMovedMouse && rightClickStartPos) {
+                            // check if clicked on a marker
+                            const markers = songMarkers[songId] || [];
+                            let clickedMarker = null;
+                            for (let marker of markers) {
+                                if (Math.abs(rightClickStartPos.time - marker) < MARKER_SNAP_TOLERANCE) {
+                                    clickedMarker = marker;
+                                    break;
+                                }
+                            }
+                            
+                            // if clicked on a marker without dragging, show marker context menu
+                            if (clickedMarker !== null) {
+                                // clear any selection that might have been started
+                                progressBar.selectedStartTime = undefined;
+                                progressBar.selectedEndTime = undefined;
+                                progressBar.style.background = '#333';
+                                
+                                createMarkerContextMenu(
+                                    upEvent.pageX,
+                                    upEvent.pageY,
+                                    songId,
+                                    clickedMarker,
+                                    audio
+                                );
+                            }
+                        }
+                        
+                        rightClickStartPos = null;
+                        hasMovedMouse = false;
                     };
         
                     document.addEventListener('mousemove', onMouseMove);
