@@ -31,7 +31,9 @@ export class EffectsRegistry {
             smoothLoop: new SmoothLoopEffect(),
             reverse: new ReverseEffect(),
             speed075: new PlaybackSpeedEffect(0.75),
+            speed090: new PlaybackSpeedEffect(0.90),
             speed125: new PlaybackSpeedEffect(1.25),
+            speed110: new PlaybackSpeedEffect(1.10),
             pitchShift: new PitchShiftEffect(),
             reverb: new ReverbEffect(),
             echo: new EchoEffect(),
@@ -45,7 +47,7 @@ export class EffectsRegistry {
     getEffectsByCategory() {
         const categories = {
             'Playback': ['loop', 'smoothLoop', 'reverse'],
-            'Speed & Pitch': ['speed075', 'speed125', 'pitchShift'],
+            'Speed & Pitch': ['speed075', 'speed090', 'speed110', 'speed125', 'pitchShift'],
             'Effects': ['echo', 'reverb', 'tremolo'],
             'Filters': ['highpass', 'lowpass'],
             'Presets': ['nightcore']
