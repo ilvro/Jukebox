@@ -69,19 +69,30 @@ export class SmoothLoopEffect extends AudioEffect {
         audio = this.audio;
         progressBar = this.progressBar;
         this.crossfading = true;
-
+    
         this.originalVolume = audio.volume;
-
+    
         this.crossfadeAudio = new Audio(audio.src);
-        this.crossfadeAudio.currentTime = progressBar.selectedStartTime;
-        this.crossfadeAudio.playbackRate = audio.playbackRate;
+        
+        // calculate the exact time considering playback rate
+        // the crossfade audio needs to start at a position that will align 
+        // perfectly with where the main audio will be when crossfade completes
+        const currentPlaybackRate = audio.playbackRate;
+        const adjustedStartTime = progressBar.selectedStartTime;
+        
+        this.crossfadeAudio.currentTime = adjustedStartTime;
+        this.crossfadeAudio.playbackRate = currentPlaybackRate;
+        this.crossfadeAudio.preservesPitch = audio.preservesPitch;
         this.crossfadeAudio.volume = 0;
-
+        
+        // preload to avoid gaps
+        this.crossfadeAudio.load();
+    
         const startTime = performance.now();
         const animate = () => {
             const elapsed = (performance.now() - startTime) / 1000;
             const progress = Math.min(elapsed / this.CROSSFADE_DURATION, 1);
-
+    
             if (!this.active) {
                 if (this.crossfadeAudio) {
                     this.crossfadeAudio.pause();
@@ -91,16 +102,18 @@ export class SmoothLoopEffect extends AudioEffect {
                 this.crossfading = false;
                 return;
             }
-
+    
             audio.volume = this.originalVolume * Math.max(0, 1 - progress);
             if (this.crossfadeAudio) {
                 this.crossfadeAudio.volume = this.originalVolume * Math.min(1, progress);
             }
-
+    
             if (progress < 1 && this.active) {
                 requestAnimationFrame(animate);
             } else if (this.active) {
-                audio.currentTime = progressBar.selectedStartTime + this.CROSSFADE_DURATION;
+                // calculate where to jump considering playback rate
+                const timeElapsed = this.CROSSFADE_DURATION * currentPlaybackRate;
+                audio.currentTime = progressBar.selectedStartTime + timeElapsed;
                 audio.volume = this.originalVolume;
                 if (this.crossfadeAudio) {
                     this.crossfadeAudio.pause();
@@ -109,8 +122,10 @@ export class SmoothLoopEffect extends AudioEffect {
                 this.crossfading = false;
             }
         };
-
-        this.crossfadeAudio.play().catch(error => {
+    
+        this.crossfadeAudio.play().then(() => {
+            requestAnimationFrame(animate);
+        }).catch(error => {
             console.error("Error playing crossfade audio:", error);
             this.crossfading = false;
             if (this.crossfadeAudio) {
@@ -118,8 +133,6 @@ export class SmoothLoopEffect extends AudioEffect {
             }
             audio.volume = this.originalVolume;
         });
-
-        requestAnimationFrame(animate);
     }
 
     deactivate() {

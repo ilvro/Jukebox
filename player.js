@@ -9,9 +9,8 @@ let isDragging = false;
 
 const songMarkers = {};
 
-// increased marker snap tolerance for better UX - snapping to nearby markers
-const MARKER_SNAP_TOLERANCE = 2.0;
-const SMOOTH_SKIP_DURATION = 1.5; // duration of crossfade when smooth skipping
+const MARKER_SNAP_TOLERANCE = 2.5;
+const SMOOTH_SKIP_DURATION = 2.5;
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
@@ -104,7 +103,7 @@ function setMarkers(songId, markers) {
     songMarkers[songId] = markers || [];
 }
 
-// smooth skip to a marker using crossfade
+// smooth skip to a marker using crossfade with equal-power crossfade curve
 function smoothSkipToMarker(audio, targetTime) {
     const originalVolume = audio.volume;
     
@@ -112,20 +111,28 @@ function smoothSkipToMarker(audio, targetTime) {
     const crossfadeAudio = new Audio(audio.src);
     crossfadeAudio.currentTime = targetTime;
     crossfadeAudio.playbackRate = audio.playbackRate;
+    crossfadeAudio.preservesPitch = audio.preservesPitch;
     crossfadeAudio.volume = 0;
     
+    // preload the audio to avoid gap
+    crossfadeAudio.load();
+    
+    let animationFrameId;
     const startTime = performance.now();
     
     const animate = () => {
         const elapsed = (performance.now() - startTime) / 1000;
         const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
         
-        // fade out original, fade in new position
-        audio.volume = originalVolume * Math.max(0, 1 - progress);
-        crossfadeAudio.volume = originalVolume * Math.min(1, progress);
+        // use equal-power crossfade curve (cosine) for smoother transition
+        const fadeOutCurve = Math.cos(progress * Math.PI * 0.5);
+        const fadeInCurve = Math.sin(progress * Math.PI * 0.5);
+        
+        audio.volume = originalVolume * fadeOutCurve;
+        crossfadeAudio.volume = originalVolume * fadeInCurve;
         
         if (progress < 1) {
-            requestAnimationFrame(animate);
+            animationFrameId = requestAnimationFrame(animate);
         } else {
             // switch to new position
             audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
@@ -134,12 +141,16 @@ function smoothSkipToMarker(audio, targetTime) {
         }
     };
     
-    crossfadeAudio.play().catch(error => {
+    // start playing immediately to avoid gap
+    crossfadeAudio.play().then(() => {
+        animationFrameId = requestAnimationFrame(animate);
+    }).catch(error => {
         console.error("Error playing crossfade audio:", error);
         audio.volume = originalVolume;
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
     });
-    
-    requestAnimationFrame(animate);
 }
 
 // create context menu for marker actions
@@ -508,7 +519,25 @@ function updatePlayerUI() {
                 const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
                 lastRightClickTime = currentTime;
                 
-                if (isPointInSelectedRegion(selectedTime, progressBar)) {
+                // check if hovering over a marker (use the hover detection which has better tolerance)
+                const markers = songMarkers[songId] || [];
+                let clickedMarker = null;
+                
+                // if we're hovering over a marker, use that marker
+                if (hoveredMarker >= 0 && hoveredMarker < markers.length) {
+                    clickedMarker = markers[hoveredMarker];
+                }
+                
+                // if clicked on a marker, show marker menu (even if inside a region)
+                if (clickedMarker !== null) {
+                    createMarkerContextMenu(
+                        event.pageX,
+                        event.pageY,
+                        songId,
+                        clickedMarker,
+                        audio
+                    );
+                } else if (isPointInSelectedRegion(selectedTime, progressBar)) {
                     audioEffects.createContextMenu(
                         event.pageX, 
                         event.pageY,
