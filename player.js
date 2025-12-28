@@ -518,26 +518,16 @@ function updatePlayerUI() {
                 const currentTime = Date.now();
                 const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
                 lastRightClickTime = currentTime;
-                
-                // check if hovering over a marker (use the hover detection which has better tolerance)
+
                 const markers = songMarkers[songId] || [];
-                let clickedMarker = null;
-                
-                // if we're hovering over a marker, use that marker
-                if (hoveredMarker >= 0 && hoveredMarker < markers.length) {
-                    clickedMarker = markers[hoveredMarker];
+                let isOverMarker = false;
+                for (let marker of markers) {
+                    if (Math.abs(selectedTime - marker) < MARKER_SNAP_TOLERANCE) {
+                        isOverMarker = true;
+                        break;
+                    }
                 }
-                
-                // if clicked on a marker, show marker menu (even if inside a region)
-                if (clickedMarker !== null) {
-                    createMarkerContextMenu(
-                        event.pageX,
-                        event.pageY,
-                        songId,
-                        clickedMarker,
-                        audio
-                    );
-                } else if (isPointInSelectedRegion(selectedTime, progressBar)) {
+                if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
                     audioEffects.createContextMenu(
                         event.pageX, 
                         event.pageY,
@@ -562,14 +552,13 @@ function updatePlayerUI() {
                             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                         });
                     }, 50);
-                } else if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
+                } else if ((!progressBar.selectedStartTime || !progressBar.selectedEndTime) || isOverMarker) {
                     isDragging = true;
                     progressBar.selectedStartTime = selectedTime;
                     
                     const onMouseMove = (moveEvent) => {
                         if (!isDragging) return;
                         
-                        // check if mouse has moved significantly (more than 5 pixels)
                         const moveDistance = Math.sqrt(
                             Math.pow(moveEvent.clientX - rightClickStartPos.x, 2) + 
                             Math.pow(moveEvent.clientY - rightClickStartPos.y, 2)
@@ -580,10 +569,7 @@ function updatePlayerUI() {
                         }
                         
                         let movedTime = getExactTime(moveEvent, waveformCanvas);
-                        
-                        // snap end point to marker if nearby
                         movedTime = snapToMarker(songId, movedTime);
-                        
                         progressBar.selectedEndTime = movedTime;
         
                         if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
@@ -604,9 +590,8 @@ function updatePlayerUI() {
                         document.removeEventListener('mousemove', onMouseMove);
                         document.removeEventListener('mouseup', onMouseUp);
                         
-                        // if mouse didn't move, treat as a click on marker (not a drag)
+                        // Lógica de clique no Marker (inalterada da resposta anterior)
                         if (!hasMovedMouse && rightClickStartPos) {
-                            // check if clicked on a marker
                             const markers = songMarkers[songId] || [];
                             let clickedMarker = null;
                             for (let marker of markers) {
@@ -616,13 +601,7 @@ function updatePlayerUI() {
                                 }
                             }
                             
-                            // if clicked on a marker without dragging, show marker context menu
                             if (clickedMarker !== null) {
-                                // clear any selection that might have been started
-                                progressBar.selectedStartTime = undefined;
-                                progressBar.selectedEndTime = undefined;
-                                progressBar.style.background = '#333';
-                                
                                 createMarkerContextMenu(
                                     upEvent.pageX,
                                     upEvent.pageY,
