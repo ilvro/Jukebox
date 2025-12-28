@@ -30,7 +30,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 const sanitizeFilename = (title) => {
-    return title.replace(/[<>:"/\\|?*]/g, '-').trim();
+    return title.replace(/[<>:"/\\|?*]/g, '-').trim().replace(/[—–−]/g, '-');
 };
 
 app.get('/', (req, res) => {
