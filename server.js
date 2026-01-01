@@ -30,7 +30,23 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 const sanitizeFilename = (title) => {
-    return title.replace(/[<>:"/\\|?*]/g, '-').trim().replace(/[—–−]/g, '-');
+    if (!title) return 'audio';
+    
+    let sanitized = title
+        .replace(/[<>:"/\\|?*]/g, '-')
+        .replace(/[—–−]/g, '-')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/\.+$/g, '');
+    
+    const maxLength = 200;
+    if (sanitized.length > maxLength) {
+        const truncated = sanitized.substring(0, maxLength);
+        const lastSpace = truncated.lastIndexOf(' ');
+        sanitized = lastSpace > maxLength * 0.8 ? truncated.substring(0, lastSpace) : truncated;
+    }
+    
+    return sanitized || 'audio';
 };
 
 app.get('/', (req, res) => {
@@ -53,7 +69,11 @@ app.post('/download/youtube/audio', async (req, res) => {
 
         const videoTitle = sanitizeFilename(info.title || 'audio');
 
-        res.header('Content-Disposition', `attachment; filename="${videoTitle}.mp3"`);
+        const encodedFilename = encodeURIComponent(videoTitle)
+            .replace(/['()]/g, escape)
+            .replace(/\*/g, '%2A');
+
+        res.header('Content-Disposition', `attachment; filename*=UTF-8''${encodedFilename}.mp3`);
         res.header('Content-Type', 'audio/mpeg');
         res.set('Access-Control-Expose-Headers', 'Content-Disposition');
 

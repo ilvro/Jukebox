@@ -42,7 +42,21 @@ async function downloadVideo(youtubeLink) {
         if (!contentDisposition) {
             throw new Error('missing Content-Disposition header in audio response');
         }
-        const videoTitle = contentDisposition.split('filename=')[1].replace(/"/g, '').slice(0, -4).replace("inquote", 'â€™');
+        
+        let videoTitle;
+        const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/);
+        if (filenameStarMatch) {
+            videoTitle = decodeURIComponent(filenameStarMatch[1]).replace('.mp3', '');
+        } else {
+            const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+            if (filenameMatch) {
+                videoTitle = filenameMatch[1].replace('.mp3', '').replace(/"/g, '');
+            } else {
+                videoTitle = 'audio';
+            }
+        }
+        videoTitle = videoTitle.replace(/\.mp3$/i, '').trim();
+        
         const audioBlob = await audioResponse.blob();
         const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: "audio/mpeg" });
 
