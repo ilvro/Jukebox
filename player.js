@@ -8,13 +8,19 @@ let lastRightClickTime = 0;
 let isDragging = false;
 
 const songMarkers = {};
+const waveformCache = new Map();
+const waveformGenerationQueue = new Map(); // Track pending generations
+const MAX_WAVEFORM_WIDTH = 500; // Back to original resolution
+const MAX_WAVEFORM_WIDTH_LONG = 150; // For very long tracks
+const MAX_CONCURRENT_GENERATIONS = 1; // Only 1 waveform at a time
+let currentGenerations = 0;
 
 const MARKER_SNAP_TOLERANCE = 2.5;
 const SMOOTH_SKIP_DURATION = 2.5;
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
-    audio.preload = 'auto';
+    audio.preload = 'metadata'; // Changed from 'auto' - don't preload full audio
     return audio;
 }
 
@@ -46,7 +52,7 @@ function addSongToPlayer(songElement, audioFile) {
     const audioUrl = URL.createObjectURL(audioFile);
     songElement.dataset.audioUrl = audioUrl;
     
-    const songId = `song-${Date.now()}`;
+    const songId = `song-${Date.now()}-${Math.random()}`;
     songElement.dataset.songId = songId;
     
     if (!songMarkers[songId]) {
@@ -59,7 +65,6 @@ function addSongToPlayer(songElement, audioFile) {
     updatePlayerUI();
 }
 
-// snap time to nearest marker if within tolerance
 function snapToMarker(songId, time) {
     const markers = songMarkers[songId] || [];
     for (let marker of markers) {
@@ -103,18 +108,15 @@ function setMarkers(songId, markers) {
     songMarkers[songId] = markers || [];
 }
 
-// smooth skip to a marker using crossfade with equal-power crossfade curve
 function smoothSkipToMarker(audio, targetTime) {
     const originalVolume = audio.volume;
     
-    // create a second audio element for crossfade
     const crossfadeAudio = new Audio(audio.src);
     crossfadeAudio.currentTime = targetTime;
     crossfadeAudio.playbackRate = audio.playbackRate;
     crossfadeAudio.preservesPitch = audio.preservesPitch;
     crossfadeAudio.volume = 0;
     
-    // preload the audio to avoid gap
     crossfadeAudio.load();
     
     let animationFrameId;
@@ -124,7 +126,6 @@ function smoothSkipToMarker(audio, targetTime) {
         const elapsed = (performance.now() - startTime) / 1000;
         const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
         
-        // use equal-power crossfade curve (cosine) for smoother transition
         const fadeOutCurve = Math.cos(progress * Math.PI * 0.5);
         const fadeInCurve = Math.sin(progress * Math.PI * 0.5);
         
@@ -134,14 +135,12 @@ function smoothSkipToMarker(audio, targetTime) {
         if (progress < 1) {
             animationFrameId = requestAnimationFrame(animate);
         } else {
-            // switch to new position
             audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
             audio.volume = originalVolume;
             crossfadeAudio.pause();
         }
     };
     
-    // start playing immediately to avoid gap
     crossfadeAudio.play().then(() => {
         animationFrameId = requestAnimationFrame(animate);
     }).catch(error => {
@@ -153,7 +152,6 @@ function smoothSkipToMarker(audio, targetTime) {
     });
 }
 
-// create context menu for marker actions
 function createMarkerContextMenu(x, y, songId, markerTime, audio) {
     const existingMenu = document.querySelector('.marker-context-menu');
     if (existingMenu) {
@@ -225,7 +223,6 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio) {
     
     document.body.appendChild(menu);
     
-    // animate menu appearance
     requestAnimationFrame(() => {
         menu.style.opacity = '1';
         menu.style.visibility = 'visible';
@@ -258,7 +255,6 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio) {
 
 export { addSongToPlayer, getMarkers, setMarkers };
 
-// listen for genre updates and refresh player UI
 document.addEventListener('genresUpdated', () => {
     updatePlayerUI();
 });
@@ -304,7 +300,6 @@ function updatePlayerUI() {
             return (mouseX / rect.width) * audio.duration;
         };
 
-        // UI
         const trackDiv = document.createElement('div');
         trackDiv.className = 'track-item';
         trackDiv.dataset.songId = songId;
@@ -324,7 +319,6 @@ function updatePlayerUI() {
         titleSpan.textContent = songTitle;
         titleContainer.appendChild(titleSpan);
         
-        // add genres/tags display
         const tags = songElement.getAttribute('data-tags');
         if (tags && tags.trim() !== '') {
             const tagsSpan = document.createElement('span');
@@ -346,6 +340,8 @@ function updatePlayerUI() {
 
         const waveformCanvas = document.createElement('canvas');
         waveformCanvas.className = 'waveform-canvas';
+        waveformCanvas.width = MAX_WAVEFORM_WIDTH;
+        waveformCanvas.height = 30;
         progressContainer.appendChild(waveformCanvas);
 
         const progressBar = document.createElement('input');
@@ -382,12 +378,12 @@ function updatePlayerUI() {
             updateVolumeSlider(volumeControl);
         });
 
-        // hover effect
         let hoveredBar = -1;
         let hoveredTime = -1;
         let hoveredMarker = -1;
         let lastMoveTime = 0;
         const moveThrottle = 16;
+        
         progressContainer.addEventListener('mousemove', (event) => {
             const currentTime = Date.now();
             if (currentTime - lastMoveTime < moveThrottle) return;
@@ -417,7 +413,6 @@ function updatePlayerUI() {
             const totalBarWidth = barWidth + gap;
             const newHoveredBar = Math.floor(canvasX / totalBarWidth);
             
-            // check if hovering over a marker with increased tolerance
             const markers = songMarkers[songId] || [];
             let newHoveredMarker = -1;
             for (let i = 0; i < markers.length; i++) {
@@ -439,7 +434,6 @@ function updatePlayerUI() {
         });
 
         progressContainer.addEventListener('click', (event) => {
-            // snap to marker if clicking near one
             let clickTime = hoveredTime;
             if (clickTime >= 0 && clickTime <= audio.duration) {
                 clickTime = snapToMarker(songId, clickTime);
@@ -448,16 +442,13 @@ function updatePlayerUI() {
             }
         });
 
-        // middle mouse button to add markers
         progressContainer.addEventListener('mousedown', (event) => {
             if (event.button === 1) {
                 event.preventDefault();
                 let clickTime = getExactTime(event, waveformCanvas);
                 
-                // snap to existing marker if nearby
                 const snappedTime = snapToMarker(songId, clickTime);
                 
-                // try to remove the marker first, if there isnt one, add one
                 const removed = removeMarker(songId, snappedTime);
                 if (!removed) {
                     const added = addMarker(songId, snappedTime);
@@ -484,7 +475,13 @@ function updatePlayerUI() {
             });
         });
         
-        generateWaveform(audio, waveformCanvas);
+        // Use lazy loading only for long tracks (>20 minutes)
+        const isLongTrack = audio.duration > 1200; // 20 minutes = 1200 seconds
+        if (isLongTrack) {
+            generateWaveformLazy(audio, waveformCanvas, songId);
+        } else {
+            generateWaveformDirect(audio, waveformCanvas, songId);
+        }
         
         audio.addEventListener('timeupdate', () => {
             progressBar.value = audio.currentTime;
@@ -511,7 +508,6 @@ function updatePlayerUI() {
                     return;
                 }
                 
-                // store initial click position and reset movement flag
                 rightClickStartPos = { x: event.clientX, y: event.clientY, time: selectedTime };
                 hasMovedMouse = false;
         
@@ -590,7 +586,6 @@ function updatePlayerUI() {
                         document.removeEventListener('mousemove', onMouseMove);
                         document.removeEventListener('mouseup', onMouseUp);
                         
-                        // Lógica de clique no Marker (inalterada da resposta anterior)
                         if (!hasMovedMouse && rightClickStartPos) {
                             const markers = songMarkers[songId] || [];
                             let clickedMarker = null;
@@ -647,31 +642,42 @@ function updateProgressBarGradient(progressBar, audio) {
         #333 ${endPercent}%)`;
 }
 
-async function generateWaveform(audio, canvas) {
+// Direct generation for short tracks (<20 minutes)
+async function generateWaveformDirect(audio, canvas, songId) {
+    // Check cache first
+    if (waveformCache.has(songId)) {
+        const cachedData = waveformCache.get(songId);
+        canvas.waveformData = cachedData;
+        drawWaveform(canvas, cachedData);
+        return;
+    }
+    
+    // Generate immediately without queue
     try {
-        canvas.width = 500;
-        canvas.height = 30;
-
         if (!sharedAudioContext) {
-            sharedAudioContext = new AudioContext();
+            sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         
         const response = await fetch(audio.src);
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
         
-        const rawData = audioBuffer.getChannelData(0);
-        const samplesPerPixel = Math.floor(rawData.length / canvas.width);
-        const waveformData = new Array(canvas.width);
+        canvas.width = MAX_WAVEFORM_WIDTH;
         
-        const chunkSize = 1000;
-        for (let i = 0; i < canvas.width; i += chunkSize) {
+        const rawData = audioBuffer.getChannelData(0);
+        const samplesPerPixel = Math.floor(rawData.length / MAX_WAVEFORM_WIDTH);
+        const waveformData = new Array(MAX_WAVEFORM_WIDTH);
+        
+        // Faster processing for short tracks
+        const chunkSize = 2000;
+        for (let i = 0; i < MAX_WAVEFORM_WIDTH; i += chunkSize) {
             await new Promise(resolve => setTimeout(resolve, 0));
             
-            const endChunk = Math.min(i + chunkSize, canvas.width);
+            const endChunk = Math.min(i + chunkSize, MAX_WAVEFORM_WIDTH);
             for (let j = i; j < endChunk; j++) {
                 const start = j * samplesPerPixel;
-                const end = start + samplesPerPixel;
+                const end = Math.min(start + samplesPerPixel, rawData.length);
+                
                 let sum = 0;
                 let peakPositive = 0;
                 let peakNegative = 0;
@@ -690,8 +696,9 @@ async function generateWaveform(audio, canvas) {
             }
         }
 
-        let maxPeak = 0;
-        let maxAverage = 0;
+        // Normalize
+        let maxPeak = 0.001;
+        let maxAverage = 0.001;
         waveformData.forEach(point => {
             maxPeak = Math.max(maxPeak, point.peak);
             maxAverage = Math.max(maxAverage, point.average);
@@ -702,11 +709,148 @@ async function generateWaveform(audio, canvas) {
             point.average /= maxAverage;
         });
 
+        waveformCache.set(songId, waveformData);
         canvas.waveformData = waveformData;
         drawWaveform(canvas, waveformData);
 
     } catch (error) {
-        console.error("Error generating waveform:", error);
+        console.error("Direct waveform generation error:", error);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+}
+
+// LAZY LOADING: For long tracks (>20 minutes) - Draw placeholder first, generate in background
+function generateWaveformLazy(audio, canvas, songId) {
+    // Draw placeholder immediately
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#222';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#666';
+    ctx.font = '10px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Loading...', canvas.width / 2, canvas.height / 2);
+    
+    // Check if already cached
+    if (waveformCache.has(songId)) {
+        const cachedData = waveformCache.get(songId);
+        canvas.waveformData = cachedData;
+        drawWaveform(canvas, cachedData);
+        return;
+    }
+    
+    // Check if already queued
+    if (waveformGenerationQueue.has(songId)) {
+        return;
+    }
+    
+    // Queue for generation
+    waveformGenerationQueue.set(songId, { audio, canvas });
+    processWaveformQueue();
+}
+
+// Process queue one at a time
+async function processWaveformQueue() {
+    if (currentGenerations >= MAX_CONCURRENT_GENERATIONS) {
+        return;
+    }
+    
+    const nextEntry = Array.from(waveformGenerationQueue.entries())[0];
+    if (!nextEntry) {
+        return;
+    }
+    
+    const [songId, { audio, canvas }] = nextEntry;
+    waveformGenerationQueue.delete(songId);
+    currentGenerations++;
+    
+    try {
+        await generateWaveformActual(audio, canvas, songId);
+    } catch (error) {
+        console.error('Waveform generation failed:', error);
+    } finally {
+        currentGenerations--;
+        // Process next in queue
+        if (waveformGenerationQueue.size > 0) {
+            setTimeout(() => processWaveformQueue(), 100);
+        }
+    }
+}
+
+async function generateWaveformActual(audio, canvas, songId) {
+    try {
+        if (!sharedAudioContext) {
+            sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        const response = await fetch(audio.src);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+        
+        const duration = audioBuffer.duration;
+        const targetWidth = duration > 600 ? MAX_WAVEFORM_WIDTH_LONG : MAX_WAVEFORM_WIDTH;
+        canvas.width = targetWidth;
+        
+        const rawData = audioBuffer.getChannelData(0);
+        const samplesPerPixel = Math.floor(rawData.length / targetWidth);
+        const waveformData = new Array(targetWidth);
+        
+        // Process with huge chunks and subsampling
+        const chunkSize = Math.max(1, Math.floor(targetWidth / 10));
+        for (let i = 0; i < targetWidth; i += chunkSize) {
+            await new Promise(resolve => setTimeout(resolve, 50)); // Longer yield
+            
+            const endChunk = Math.min(i + chunkSize, targetWidth);
+            for (let j = i; j < endChunk; j++) {
+                const start = j * samplesPerPixel;
+                const end = Math.min(start + samplesPerPixel, rawData.length);
+                
+                // Aggressive subsampling for large files
+                const sampleStep = samplesPerPixel > 50000 ? Math.floor(samplesPerPixel / 500) : Math.max(1, Math.floor(samplesPerPixel / 5000));
+                
+                let sum = 0;
+                let peakPositive = 0;
+                let peakNegative = 0;
+                let sampleCount = 0;
+                
+                for (let k = start; k < end; k += sampleStep) {
+                    const amplitude = rawData[k];
+                    sum += Math.abs(amplitude);
+                    if (amplitude > peakPositive) peakPositive = amplitude;
+                    if (amplitude < peakNegative) peakNegative = amplitude;
+                    sampleCount++;
+                }
+                
+                waveformData[j] = {
+                    average: sampleCount > 0 ? sum / sampleCount : 0,
+                    peak: Math.max(Math.abs(peakPositive), Math.abs(peakNegative))
+                };
+            }
+        }
+
+        // Normalize
+        let maxPeak = 0.001; // Prevent division by zero
+        let maxAverage = 0.001;
+        waveformData.forEach(point => {
+            maxPeak = Math.max(maxPeak, point.peak);
+            maxAverage = Math.max(maxAverage, point.average);
+        });
+
+        waveformData.forEach(point => {
+            point.peak /= maxPeak;
+            point.average /= maxAverage;
+        });
+
+        waveformCache.set(songId, waveformData);
+        canvas.waveformData = waveformData;
+        drawWaveform(canvas, waveformData);
+
+    } catch (error) {
+        console.error("Waveform generation error:", error);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 }
 
@@ -764,7 +908,7 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         ctx.fillRect(hoverPixel - 1, 0, 2, height);
     }
 
-    const batchSize = 50;
+    const batchSize = 100;
     for (let i = 0; i < waveformData.length; i += batchSize) {
         const endIndex = Math.min(i + batchSize, waveformData.length);
         
@@ -815,13 +959,11 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         ctx.fillRect(endX - 1, 0, 2, height);
     }
 
-    // draw markers
     const trackDiv = canvas.closest('.track-item');
     const songId = trackDiv?.dataset.songId;
     if (songId && songMarkers[songId]) {
         songMarkers[songId].forEach((markerTime, index) => {
             const markerX = (markerTime / audio.duration) * width;
-            // change color if hovering over this marker
             ctx.fillStyle = index === hoveredMarker ? '#ffdd00' : '#ffaa00';
             ctx.fillRect(markerX - 1.5, 0, 3, height);
         });
