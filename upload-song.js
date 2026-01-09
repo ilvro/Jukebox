@@ -18,14 +18,68 @@ const supportsFileSystemAccess = 'showDirectoryPicker' in window;
 const dimmer = document.getElementById('dimmer');
 const songGrid = document.getElementById('song-grid');
 
+function createLoadingIndicator() {
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'loading-indicator';
+    loadingDiv.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 20px 40px;
+        border-radius: 10px;
+        z-index: 10000;
+        font-size: 18px;
+        text-align: center;
+    `;
+    loadingDiv.innerHTML = `
+        <div>Downloading from YouTube...</div>
+        <div style="margin-top: 10px; font-size: 14px;" id="loading-status">Please wait...</div>
+    `;
+    document.body.appendChild(loadingDiv);
+    return loadingDiv;
+}
+
+function updateLoadingStatus(message) {
+    const statusEl = document.getElementById('loading-status');
+    if (statusEl) {
+        statusEl.textContent = message;
+    }
+}
+
+function removeLoadingIndicator() {
+    const loadingDiv = document.getElementById('loading-indicator');
+    if (loadingDiv) {
+        loadingDiv.remove();
+    }
+}
+
+let isDownloading = false;
+
+window.addEventListener('beforeunload', (event) => {
+    if (isDownloading) {
+        event.preventDefault();
+        event.returnValue = '';
+        return '';
+    }
+});
+
 async function downloadVideo(youtubeLink) {
+    isDownloading = true;
+    const loadingIndicator = createLoadingIndicator();
+    
     try {
+        updateLoadingStatus('Fetching audio...');
+        
         const audioPromise = fetch(`${API_URL}/download/youtube/audio`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: youtubeLink })
         });
 
+        updateLoadingStatus('Fetching thumbnail...');
         const thumbnailPromise = fetch(`${API_URL}/download/youtube/thumbnail`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -34,10 +88,17 @@ async function downloadVideo(youtubeLink) {
 
         const [audioResponse, thumbnailResponse] = await Promise.all([audioPromise, thumbnailPromise]);
         
-	// handle audio response
+        console.log('Audio response status:', audioResponse.status);
+        console.log('Thumbnail response status:', thumbnailResponse.status);
+        
+        // handle audio response
         if (!audioResponse.ok) {
-            throw new Error(`audio download failed: ${audioResponse.statusText}`);
+            const errorText = await audioResponse.text();
+            console.error('Audio response error:', errorText);
+            throw new Error(`audio download failed: ${audioResponse.statusText} - ${errorText}`);
         }
+        
+        updateLoadingStatus('Processing audio...');
         const contentDisposition = audioResponse.headers.get('Content-Disposition');
         if (!contentDisposition) {
             throw new Error('missing Content-Disposition header in audio response');
@@ -46,30 +107,42 @@ async function downloadVideo(youtubeLink) {
         let videoTitle;
         const filenameStarMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/);
         if (filenameStarMatch) {
-            videoTitle = decodeURIComponent(filenameStarMatch[1]).replace('.mp3', '');
+            videoTitle = decodeURIComponent(filenameStarMatch[1]).replace(/\.(mp3|m4a)$/, '');
         } else {
             const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
             if (filenameMatch) {
-                videoTitle = filenameMatch[1].replace('.mp3', '').replace(/"/g, '');
+                videoTitle = filenameMatch[1].replace(/\.(mp3|m4a)$/, '').replace(/"/g, '');
             } else {
                 videoTitle = 'audio';
             }
         }
-        videoTitle = videoTitle.replace(/\.mp3$/i, '').trim();
+        videoTitle = videoTitle.replace(/\.(mp3|m4a)$/i, '').trim();
+        
+        console.log('Video title:', videoTitle);
         
         const audioBlob = await audioResponse.blob();
-        const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: "audio/mpeg" });
+        console.log('Audio blob size:', audioBlob.size, 'bytes');
+        console.log('Audio blob type:', audioBlob.type);
+        
+        if (audioBlob.size === 0) {
+            throw new Error('Audio file is empty');
+        }
+        
+        const audioFile = new File([audioBlob], `${videoTitle}.mp3`, { type: 'audio/mpeg' });
 
-	// handle thumbnail response
+        // handle thumbnail response
+        updateLoadingStatus('Processing thumbnail...');
         if (!thumbnailResponse.ok) {
-            throw new Error(`thumbnail download failed: ${thumbnailResponse.statusText}`);
+            const errorText = await thumbnailResponse.text();
+            console.error('Thumbnail response error:', errorText);
+            throw new Error(`thumbnail download failed: ${thumbnailResponse.statusText} - ${errorText}`);
         }
         const thumbnailBlob = await thumbnailResponse.blob();
         const thumbnailFile = new File([thumbnailBlob], `${videoTitle}.jpg`, {
             type: thumbnailResponse.headers.get('Content-Type')
         });
 
-	// populate input forms
+        // populate input forms
         const audioDataTransfer = new DataTransfer();
         audioDataTransfer.items.add(audioFile);
         songFileInput.files = audioDataTransfer.files;
@@ -78,8 +151,22 @@ async function downloadVideo(youtubeLink) {
         thumbnailDataTransfer.items.add(thumbnailFile);
         thumbnailFileInput.files = thumbnailDataTransfer.files;
 
+        updateLoadingStatus('Download complete! ✓');
+        setTimeout(() => {
+            removeLoadingIndicator();
+            isDownloading = false;
+        }, 1000);
+
+        console.log('Download successful:', videoTitle);
+
     } catch (error) {
         console.error('download failed:', error);
+        console.error('Error stack:', error.stack);
+        updateLoadingStatus(`Error: ${error.message}`);
+        setTimeout(() => {
+            removeLoadingIndicator();
+            isDownloading = false;
+        }, 5000);
     }
 }
 
@@ -94,7 +181,7 @@ async function savePreset() {
         const songItems = document.querySelectorAll('.song-item');
         let presetData = [];
 
-	// load preset_metadata.json if it exists, create one if it doesnt
+        // load preset_metadata.json if it exists, create one if it doesnt
         try {
             const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
             const metadataFile = await presetMetadataHandle.getFile();
@@ -108,7 +195,7 @@ async function savePreset() {
             }
         }
 
-	// remove queued deleted songs from metadata and files
+        // remove queued deleted songs from metadata and files
         presetData = presetData.filter(
             song => !deletedSongs.includes(decodeURIComponent(song.currentTitle))
         );
@@ -143,7 +230,7 @@ async function savePreset() {
             const songId = songItem.dataset.songId;
             const markers = getMarkers(songId);
 
-	    // check for title changes
+            // check for title changes
             const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
             if (existingIndex !== -1) {
                 console.log(`updating existing song: ${decodeURIComponent(originalTitle)} to ${decodeURIComponent(currentTitle)}`);
@@ -156,7 +243,7 @@ async function savePreset() {
 
                 presetData[existingIndex] = updatedSong;
 
-		// rename audio and image files if the title changed
+                // rename audio and image files if the title changed
                 if (currentTitle !== originalTitle) {
                     try {
                         const oldAudioHandle = await directoryHandle.getFileHandle(`${originalTitle}.mp3`);
@@ -229,7 +316,7 @@ async function savePreset() {
 
 async function loadPreset() {
     if (!window.showDirectoryPicker) {
-    	// android user, use alternate fallback function
+        // android user, use alternate fallback function
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
         fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
@@ -265,7 +352,7 @@ async function loadPreset() {
                 audioFile = await audioEntry.getFile();
                 thumbnailFile = await thumbnailEntry.getFile();
             } catch (error) {
-            	// try with the original % encoding
+                // try with the original % encoding
                 try {
                     const revertedTitle = revertUnderscoreEncoding(currentTitle);
                     const audioEntry = await directoryHandle.getFileHandle(`${revertedTitle}.mp3`);
@@ -278,7 +365,7 @@ async function loadPreset() {
                 }
             }
 
-	    // create song item
+            // create song item
             const songItem = document.createElement('div');
             songItem.classList.add('song-item');
             songItem.setAttribute('draggable', 'true');
@@ -290,7 +377,7 @@ async function loadPreset() {
                 <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
             `;
 
-	    // disables input and audio blob links from being dragged to the title input
+            // disables input and audio blob links from being dragged to the title input
             const titleInput = songItem.querySelector('.title-input');
             titleInput.addEventListener('dragover', (event) => {
                 event.preventDefault();
@@ -506,11 +593,44 @@ loadPresetBtn.addEventListener('click', loadPreset);
 loadSampleBtn.addEventListener('click', loadSamplePreset);
 
 youtubeLinkInput.addEventListener('paste', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    
     let youtubeLink = event.clipboardData.getData("text");
+    
+    // manually insert the text since we prevented default
+    youtubeLinkInput.value = youtubeLink;
+    
     if (youtubeLink.includes('youtube.com/watch?v=')) {
         await downloadVideo(youtubeLink);
     } else {
         console.log('invalid url');
+    }
+    
+    return false;
+});
+
+// Also prevent form submission if Enter is pressed
+youtubeLinkInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        return false;
+    }
+});
+
+// Prevent any default action on the input itself
+youtubeLinkInput.addEventListener('submit', (event) => {
+    event.preventDefault();
+    return false;
+});
+
+// Stop navigation when clicking anywhere on the popup
+uploadPopup.addEventListener('click', (event) => {
+    // Don't prevent clicks on buttons
+    if (!event.target.matches('button')) {
+        event.stopPropagation();
     }
 });
 
@@ -518,6 +638,12 @@ uploadSubmit.addEventListener('click', () => {
     // remember to loop through added genres later
     const thumbnail = thumbnailFileInput.files[0];
     const audio = songFileInput.files[0];
+    
+    if (!thumbnail || !audio) {
+        alert('Please select both an audio file and a thumbnail!');
+        return;
+    }
+    
     let title;
     try {
         title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
@@ -667,8 +793,11 @@ function showEditGenresPopup(songItem) {
     content.className = 'popup-content';
     content.innerHTML = '<br><br>';
 
-    const currentGenres = songItem.getAttribute('data-genres').split(',').filter(g => g);
-    const currentTags = songItem.getAttribute('data-tags').split(',').filter(t => t);
+    const genresAttr = songItem.getAttribute('data-genres');
+    const tagsAttr = songItem.getAttribute('data-tags');
+    
+    const currentGenres = genresAttr ? genresAttr.split(',').filter(g => g.trim()) : [];
+    const currentTags = tagsAttr ? tagsAttr.split(',').filter(t => t.trim()) : [];
 
     const allGenres = ['fun', 'hopeful', 'mystery', 'suspense', 'horror', 'sfx'];
     const allTags = ['ambient', 'investigation', 'event', 'battle', 'emotional'];
@@ -748,7 +877,11 @@ function showEditGenresPopup(songItem) {
 
         songItem.setAttribute('data-genres', selectedGenres.join(','));
         songItem.setAttribute('data-tags', selectedTags.join(','));
-        songItem.querySelector('p').textContent = selectedTags.join(' + ');
+        
+        const pTag = songItem.querySelector('p');
+        if (pTag) {
+            pTag.textContent = selectedTags.join(' + ');
+        }
 
         popup.style.opacity = '0';
         dimmer.style.opacity = '0';
@@ -770,7 +903,6 @@ function showEditGenresPopup(songItem) {
     const dimmer = document.getElementById('dimmer');
     document.body.appendChild(popup);
     
-    // trigger transition after element is added to DOM
     popup.style.visibility = 'visible';
     dimmer.style.visibility = 'visible';
     setTimeout(() => {
