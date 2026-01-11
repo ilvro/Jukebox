@@ -9,10 +9,10 @@ let isDragging = false;
 
 const songMarkers = {};
 const waveformCache = new Map();
-const waveformGenerationQueue = new Map(); // Track pending generations
-const MAX_WAVEFORM_WIDTH = 500; // Back to original resolution
-const MAX_WAVEFORM_WIDTH_LONG = 150; // For very long tracks
-const MAX_CONCURRENT_GENERATIONS = 1; // Only 1 waveform at a time
+const waveformGenerationQueue = new Map();
+const MAX_WAVEFORM_WIDTH = 500;
+const MAX_WAVEFORM_WIDTH_LONG = 150;
+const MAX_CONCURRENT_GENERATIONS = 1;
 let currentGenerations = 0;
 
 const MARKER_SNAP_TOLERANCE = 2.5;
@@ -20,7 +20,7 @@ const SMOOTH_SKIP_DURATION = 2.5;
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
-    audio.preload = 'metadata'; // Changed from 'auto' - don't preload full audio
+    audio.preload = 'metadata';
     return audio;
 }
 
@@ -475,8 +475,7 @@ function updatePlayerUI() {
             });
         });
         
-        // Use lazy loading only for long tracks (>20 minutes)
-        const isLongTrack = audio.duration > 1200; // 20 minutes = 1200 seconds
+        const isLongTrack = audio.duration > 1200;
         if (isLongTrack) {
             generateWaveformLazy(audio, waveformCanvas, songId);
         } else {
@@ -642,9 +641,7 @@ function updateProgressBarGradient(progressBar, audio) {
         #333 ${endPercent}%)`;
 }
 
-// Direct generation for short tracks (<20 minutes)
 async function generateWaveformDirect(audio, canvas, songId) {
-    // Check cache first
     if (waveformCache.has(songId)) {
         const cachedData = waveformCache.get(songId);
         canvas.waveformData = cachedData;
@@ -652,7 +649,6 @@ async function generateWaveformDirect(audio, canvas, songId) {
         return;
     }
     
-    // Generate immediately without queue
     try {
         if (!sharedAudioContext) {
             sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -668,7 +664,6 @@ async function generateWaveformDirect(audio, canvas, songId) {
         const samplesPerPixel = Math.floor(rawData.length / MAX_WAVEFORM_WIDTH);
         const waveformData = new Array(MAX_WAVEFORM_WIDTH);
         
-        // Faster processing for short tracks
         const chunkSize = 2000;
         for (let i = 0; i < MAX_WAVEFORM_WIDTH; i += chunkSize) {
             await new Promise(resolve => setTimeout(resolve, 0));
@@ -696,7 +691,6 @@ async function generateWaveformDirect(audio, canvas, songId) {
             }
         }
 
-        // Normalize
         let maxPeak = 0.001;
         let maxAverage = 0.001;
         waveformData.forEach(point => {
@@ -721,9 +715,7 @@ async function generateWaveformDirect(audio, canvas, songId) {
     }
 }
 
-// LAZY LOADING: For long tracks (>20 minutes) - Draw placeholder first, generate in background
 function generateWaveformLazy(audio, canvas, songId) {
-    // Draw placeholder immediately
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#222';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -732,7 +724,6 @@ function generateWaveformLazy(audio, canvas, songId) {
     ctx.textAlign = 'center';
     ctx.fillText('Loading...', canvas.width / 2, canvas.height / 2);
     
-    // Check if already cached
     if (waveformCache.has(songId)) {
         const cachedData = waveformCache.get(songId);
         canvas.waveformData = cachedData;
@@ -740,17 +731,14 @@ function generateWaveformLazy(audio, canvas, songId) {
         return;
     }
     
-    // Check if already queued
     if (waveformGenerationQueue.has(songId)) {
         return;
     }
     
-    // Queue for generation
     waveformGenerationQueue.set(songId, { audio, canvas });
     processWaveformQueue();
 }
 
-// Process queue one at a time
 async function processWaveformQueue() {
     if (currentGenerations >= MAX_CONCURRENT_GENERATIONS) {
         return;
@@ -771,7 +759,6 @@ async function processWaveformQueue() {
         console.error('Waveform generation failed:', error);
     } finally {
         currentGenerations--;
-        // Process next in queue
         if (waveformGenerationQueue.size > 0) {
             setTimeout(() => processWaveformQueue(), 100);
         }
@@ -796,17 +783,15 @@ async function generateWaveformActual(audio, canvas, songId) {
         const samplesPerPixel = Math.floor(rawData.length / targetWidth);
         const waveformData = new Array(targetWidth);
         
-        // Process with huge chunks and subsampling
         const chunkSize = Math.max(1, Math.floor(targetWidth / 10));
         for (let i = 0; i < targetWidth; i += chunkSize) {
-            await new Promise(resolve => setTimeout(resolve, 50)); // Longer yield
+            await new Promise(resolve => setTimeout(resolve, 50));
             
             const endChunk = Math.min(i + chunkSize, targetWidth);
             for (let j = i; j < endChunk; j++) {
                 const start = j * samplesPerPixel;
                 const end = Math.min(start + samplesPerPixel, rawData.length);
                 
-                // Aggressive subsampling for large files
                 const sampleStep = samplesPerPixel > 50000 ? Math.floor(samplesPerPixel / 500) : Math.max(1, Math.floor(samplesPerPixel / 5000));
                 
                 let sum = 0;
@@ -829,8 +814,7 @@ async function generateWaveformActual(audio, canvas, songId) {
             }
         }
 
-        // Normalize
-        let maxPeak = 0.001; // Prevent division by zero
+        let maxPeak = 0.001;
         let maxAverage = 0.001;
         waveformData.forEach(point => {
             maxPeak = Math.max(maxPeak, point.peak);

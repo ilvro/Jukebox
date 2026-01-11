@@ -6,28 +6,33 @@ export class FilterEffect extends AudioEffect {
         super(`${type.charAt(0).toUpperCase() + type.slice(1)} Filter`);
         this.filterType = type;
         this.options = {
-            frequency: type === 'highpass' ? 500 : 2000,
-            Q: 0.7,
+            frequency: type === 'highpass' ? 400 : 2000,
+            Q: 1.0,
             ...options
         };
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
-        const filter = audioContext.createBiquadFilter();
-        filter.type = this.filterType;
-        filter.frequency.value = this.options.frequency;
-        filter.Q.value = this.options.Q;
+        const filter1 = audioContext.createBiquadFilter();
+        const filter2 = audioContext.createBiquadFilter();
+
+        [filter1, filter2].forEach(f => {
+            f.type = this.filterType;
+            f.frequency.value = this.options.frequency;
+            f.Q.value = this.options.Q;
+
+            if (audioContext.sampleRate >= 96000) {
+                f.oversample = '4x';
+            } else if (audioContext.sampleRate >= 48000) {
+                f.oversample = '2x';
+            }
+        });
     
-        if (audioContext.sampleRate >= 96000) {
-            filter.oversample = '4x';
-        } else if (audioContext.sampleRate >= 48000) {
-            filter.oversample = '2x';
-        }
+        wetGainNode.connect(filter1);
+        filter1.connect(filter2);
+        filter2.connect(mainGainNode);
     
-        wetGainNode.connect(filter);
-        filter.connect(mainGainNode);
-    
-        this.nodes = { filter };
+        this.nodes = { filter1, filter2 };
     }
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
@@ -38,10 +43,13 @@ export class FilterEffect extends AudioEffect {
         audio.addEventListener('timeupdate', handleTimeUpdate);
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
-            if (this.nodes?.filter) {
-                wetGainNode.disconnect(this.nodes.filter);
-                this.nodes.filter.disconnect();
+            
+            if (this.nodes?.filter1 && this.nodes?.filter2) {
+                wetGainNode.disconnect(this.nodes.filter1);
+                this.nodes.filter1.disconnect();
+                this.nodes.filter2.disconnect();
             }
+            
             // reset the gain values to restore normal audio
             dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
             wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
@@ -49,14 +57,18 @@ export class FilterEffect extends AudioEffect {
     }
 
     setFrequency(value) {
-        if (this.nodes?.filter && this.audioContextData?.audioContext) {
-            this.nodes.filter.frequency.setValueAtTime(value, this.audioContextData.audioContext.currentTime);
+        if (this.nodes?.filter1 && this.nodes?.filter2 && this.audioContextData?.audioContext) {
+            const time = this.audioContextData.audioContext.currentTime;
+            this.nodes.filter1.frequency.setValueAtTime(value, time);
+            this.nodes.filter2.frequency.setValueAtTime(value, time);
         }
     }
     
     setQ(value) {
-        if (this.nodes?.filter && this.audioContextData?.audioContext) {
-            this.nodes.filter.Q.setValueAtTime(value, this.audioContextData.audioContext.currentTime);
+        if (this.nodes?.filter1 && this.nodes?.filter2 && this.audioContextData?.audioContext) {
+            const time = this.audioContextData.audioContext.currentTime;
+            this.nodes.filter1.Q.setValueAtTime(value, time);
+            this.nodes.filter2.Q.setValueAtTime(value, time);
         }
     }
 }
