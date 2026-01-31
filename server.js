@@ -2,8 +2,10 @@ const express = require('express');
 const cors = require('cors');
 const ytdlp = require('yt-dlp-exec');
 const https = require('https');
+const { execSync } = require('child_process'); 
 const app = express();
 const port = 3000;
+const ytdlpPath = execSync('which yt-dlp').toString().trim(); // force latest ytdlp version
 
 const allowedOrigins = [
     'https://jukebox-wza8.onrender.com',
@@ -53,6 +55,25 @@ app.get('/', (req, res) => {
     res.json({ status: 'Server is running' });
 });
 
+app.get('/test-ytdlp', async (req, res) => {
+    try {
+        const result = await ytdlp('https://www.youtube.com/watch?v=-xwZwEcO9R0', {
+            dumpSingleJson: true,
+            printToStdout: false
+        });
+        res.json({ 
+            success: true, 
+            title: result.title,
+            formats: result.formats?.length 
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message,
+            stack: error.stack 
+        });
+    }
+});
 app.post('/download/youtube/audio', async (req, res) => {
     const url = req.body.message;
 
@@ -65,6 +86,8 @@ app.post('/download/youtube/audio', async (req, res) => {
             dumpSingleJson: true,
             noWarnings: true,
             noCheckCertificates: true
+        }, {
+            youtubeDLPath: ytdlpPath
         });
 
         const videoTitle = sanitizeFilename(info.title || 'audio');
@@ -78,13 +101,15 @@ app.post('/download/youtube/audio', async (req, res) => {
         res.set('Access-Control-Expose-Headers', 'Content-Disposition');
 
         const audioStream = ytdlp.exec(url, {
-            format: 'bestaudio[ext=m4a]/bestaudio',
+            format: 'bestaudio[ext=m4a]/bestaudio/best',
             output: '-',
             quiet: true,
             noWarnings: true,
             noCheckCertificates: true,
             preferFreeFormats: true,
-            youtubeSkipDashManifest: true
+            extractorArgs: 'youtube:player_client=android,web' // bypasses 403
+        }, {
+            youtubeDLPath: ytdlpPath
         });
 
         audioStream.stdout.pipe(res);
@@ -94,7 +119,7 @@ app.post('/download/youtube/audio', async (req, res) => {
         });
 
         audioStream.on('error', (error) => {
-            console.error('yt-dlp erro:', error.message);
+            console.error('yt-dlp error:', error.message);
             if (!res.headersSent) {
                 res.status(500).json({ 
                     success: false, 
@@ -132,6 +157,8 @@ app.post('/download/youtube/thumbnail', async (req, res) => {
             dumpSingleJson: true,
             noWarnings: true,
             noCheckCertificates: true
+        }, {
+            youtubeDLPath: ytdlpPath 
         });
 
         const thumbnails = info.thumbnails || [];
