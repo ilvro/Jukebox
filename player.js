@@ -1,5 +1,8 @@
 import { setupAudioEffects } from './mixing/index.js';
 let activeAudios = {};
+let allAudios = {}; // Store all created audio elements by songId
+let audioVolumes = {}; // Store individual volume for each song
+let audioTimes = {}; // Store playback position for each song
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
@@ -21,6 +24,21 @@ const SMOOTH_SKIP_DURATION = 2.5;
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
     audio.preload = 'metadata';
+    audio.volume = 0; // Start with volume at 0 to prevent any spikes
+    
+    // Add event listeners that update UI when audio state changes
+    audio.addEventListener('pause', () => {
+        updatePlayerUI();
+    });
+    
+    audio.addEventListener('ended', () => {
+        updatePlayerUI();
+    });
+    
+    audio.addEventListener('play', () => {
+        updatePlayerUI();
+    });
+    
     return audio;
 }
 
@@ -28,10 +46,21 @@ function toggleAudio(audioElement, songItem) {
     const songId = songItem.dataset.songId;
 
     if (audioElement.paused) {
+        // Restore saved time when resuming
+        if (audioTimes[songId] !== undefined) {
+            audioElement.currentTime = audioTimes[songId];
+        }
+        // Restore saved volume
+        if (audioVolumes[songId] !== undefined) {
+            audioElement.volume = audioVolumes[songId];
+        }
         audioElement.play();
         songItem.classList.add('playing');
         activeAudios[songId] = audioElement;
     } else {
+        // Save time and volume when pausing
+        audioTimes[songId] = audioElement.currentTime;
+        audioVolumes[songId] = audioElement.volume;
         audioElement.pause();
         songItem.classList.remove('playing');
         delete activeAudios[songId];
@@ -60,6 +89,9 @@ function addSongToPlayer(songElement, audioFile) {
     }
     
     const audio = createAudioElement(audioUrl);
+    allAudios[songId] = audio; // Store audio reference
+    audioVolumes[songId] = 1; // Initialize with full volume
+    audioTimes[songId] = 0; // Initialize at start
     addClickListenerToSongItem(songElement, audio);
 
     updatePlayerUI();
@@ -294,6 +326,11 @@ function updatePlayerUI() {
     playerContainer.innerHTML = '';
 
     Object.entries(activeAudios).forEach(([songId, audio]) => {
+        // Only show audios that are actually playing (not paused)
+        if (audio.paused) {
+            return;
+        }
+        
         const getExactTime = (event, element) => {
             const rect = element.getBoundingClientRect();
             const mouseX = event.clientX - rect.left;
@@ -359,9 +396,13 @@ function updatePlayerUI() {
         volumeControl.min = 0;
         volumeControl.max = 1;
         volumeControl.step = 0.01;
-        volumeControl.value = audio.volume;
+        volumeControl.value = audioVolumes[songId] || audio.volume; // Use saved volume
         volumeControl.className = 'volume-slider';
         trackDiv.appendChild(volumeControl);
+        
+        // Apply saved volume to audio and update slider visual
+        audio.volume = audioVolumes[songId] || audio.volume;
+        updateVolumeSlider(volumeControl);
 
         const formatTime = (timeInSeconds) => {
             const minutes = Math.floor(timeInSeconds / 60);
@@ -375,6 +416,10 @@ function updatePlayerUI() {
 
         volumeControl.addEventListener('input', () => {
             audio.volume = volumeControl.value;
+            const songId = trackDiv.dataset.songId;
+            if (songId) {
+                audioVolumes[songId] = parseFloat(volumeControl.value); // Save volume preference
+            }
             updateVolumeSlider(volumeControl);
         });
 
@@ -965,4 +1010,187 @@ function updateVolumeSlider(slider) {
         rgb(43, 219, 160) ${percentage}%, 
         rgba(255, 255, 255, 0.2) ${percentage}%, 
         rgba(255, 255, 255, 0.2) 100%)`;
+}
+
+export function fadeTo(targetSongId) {
+    const fadeDuration = 3500; // 3.5 seconds
+    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    
+    if (!targetItem) return;
+
+    const targetAudio = allAudios[targetSongId];
+    if (!targetAudio) {
+        console.error(`No audio found for song ${targetSongId}`);
+        return;
+    }
+
+    const savedVolume = audioVolumes[targetSongId] || 1;
+    const savedTime = audioTimes[targetSongId] || 0;
+
+    // fade out and stop all other active audios
+    Object.keys(activeAudios).forEach(id => {
+        if (id !== targetSongId) {
+            const audio = activeAudios[id];
+            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            
+            audioVolumes[id] = audio.volume;
+            audioTimes[id] = audio.currentTime;
+            let volume = audio.volume;
+            const step = volume / 20;
+            const interval = setInterval(() => {
+                if (volume > step) {
+                    volume -= step;
+                    audio.volume = volume;
+                } else {
+                    clearInterval(interval);
+                    audio.pause();
+                    audio.volume = audioVolumes[id];
+                    item?.classList.remove('playing');
+                    delete activeAudios[id];
+                    updatePlayerUI();
+                }
+            }, fadeDuration / 20);
+        }
+    });
+
+    // if target audio is already playing, just fade volume
+    if (!targetAudio.paused && activeAudios[targetSongId]) {
+        targetAudio.volume = 0;
+        let volume = 0;
+        const step = savedVolume / 20;
+        const interval = setInterval(() => {
+            if (volume < savedVolume) {
+                volume += step;
+                targetAudio.volume = Math.min(volume, savedVolume);
+            } else {
+                clearInterval(interval);
+            }
+        }, fadeDuration / 20);
+        updatePlayerUI();
+        return;
+    }
+
+    if (targetAudio.paused) {
+        targetAudio.muted = true;
+        targetAudio.volume = 0;
+        
+        targetAudio.pause();
+        
+        targetAudio.currentTime = savedTime;
+        
+        (async () => {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            try {
+                await targetAudio.play();
+                activeAudios[targetSongId] = targetAudio;
+                targetItem.classList.add('playing');
+                updatePlayerUI();
+                
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                targetAudio.muted = false;
+                
+                let volume = 0;
+                const step = savedVolume / 20;
+                const interval = setInterval(() => {
+                    if (volume < savedVolume) {
+                        volume += step;
+                        targetAudio.volume = Math.min(volume, savedVolume);
+                    } else {
+                        clearInterval(interval);
+                    }
+                }, fadeDuration / 20);
+                
+            } catch (error) {
+                console.error("Error playing audio:", error);
+                targetAudio.muted = false;
+            }
+        })();
+    }
+}
+
+// instant transition to selected audio
+export function cutTo(targetSongId) {
+    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    
+    if (!targetItem) return;
+
+    const targetAudio = allAudios[targetSongId];
+    if (!targetAudio) {
+        console.error(`No audio found for song ${targetSongId}`);
+        return;
+    }
+    const savedVolume = audioVolumes[targetSongId] || 1;
+    const savedTime = audioTimes[targetSongId] || 0;
+
+    // stop everything else immediately
+    Object.keys(activeAudios).forEach(id => {
+        if (id !== targetSongId) {
+            const audio = activeAudios[id];
+            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            
+            audioVolumes[id] = audio.volume;
+            audioTimes[id] = audio.currentTime;
+            
+            audio.pause();
+            audio.volume = audioVolumes[id];
+            item?.classList.remove('playing');
+            delete activeAudios[id];
+        }
+    });
+
+    // play target immediately
+    if (targetAudio.paused) {
+        targetAudio.currentTime = savedTime;
+        targetAudio.volume = savedVolume;
+        
+        targetAudio.play().then(() => {
+            activeAudios[targetSongId] = targetAudio;
+            targetItem.classList.add('playing');
+            updatePlayerUI();
+        }).catch(error => {
+            console.error("Error playing audio:", error);
+        });
+    } else {
+        updatePlayerUI();
+    }
+}
+
+export function removeSongAudio(songId) {
+    if (allAudios[songId]) {
+        const audio = allAudios[songId];
+        audio.pause();
+        audio.currentTime = 0;
+        delete allAudios[songId];
+    }
+    if (activeAudios[songId]) {
+        delete activeAudios[songId];
+    }
+    if (audioVolumes[songId]) {
+        delete audioVolumes[songId];
+    }
+    if (audioTimes[songId]) {
+        delete audioTimes[songId];
+    }
+}
+
+export function resetSong(songId) {
+    const audio = allAudios[songId];
+    if (!audio) return;
+    
+    const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+
+    if (!audio.paused) {
+        audio.pause();
+        item?.classList.remove('playing');
+        delete activeAudios[songId];
+    }
+
+    audio.currentTime = 0;
+    audio.volume = 1;
+    audioTimes[songId] = 0;
+    audioVolumes[songId] = 1;
+    
+    updatePlayerUI();
 }

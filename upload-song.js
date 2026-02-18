@@ -1,4 +1,4 @@
-import { addSongToPlayer, getMarkers, setMarkers } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers, fadeTo, cutTo, removeSongAudio, resetSong } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -682,69 +682,91 @@ uploadSubmit.addEventListener('click', () => {
 
 // right click functions
 const deletedSongs = [];
-
 document.addEventListener('DOMContentLoaded', () => {
     const songGrid = document.getElementById('song-grid');
     const contextMenu = document.createElement('div');
+    
+    // tracks the song item currently targeted by right-click
+    let currentSongItem = null;
 
     contextMenu.id = 'custom-context-menu';
     contextMenu.style.position = 'absolute';
     contextMenu.style.display = 'none';
-    contextMenu.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+    contextMenu.style.backgroundColor = 'rgba(0, 0, 0, 0.8)'; // darker as requested
     contextMenu.style.color = '#fff';
     contextMenu.style.padding = '10px';
     contextMenu.style.borderRadius = '5px';
-    contextMenu.style.zIndex = '1000';
-
-    const deleteOption = document.createElement('div');
-    deleteOption.innerText = 'Delete';
-    deleteOption.style.cursor = 'pointer';
-
-    const editGenresOption = document.createElement('div');
-    editGenresOption.innerText = 'Edit Genres';
-    editGenresOption.style.cursor = 'pointer';
-
-    contextMenu.appendChild(editGenresOption);
-    contextMenu.appendChild(deleteOption);
-    document.body.appendChild(contextMenu);
-
-    let currentSongItem = null;
+    contextMenu.style.zIndex = '10000'; // high z-index to stay on top
+    contextMenu.style.cursor = 'default';
 
     songGrid.addEventListener('contextmenu', (event) => {
-        event.preventDefault();
-
         const songItem = event.target.closest('.song-item');
         if (!songItem) return;
 
+        event.preventDefault();
+        event.stopPropagation(); // prevent other context menus
         currentSongItem = songItem;
+        
         contextMenu.style.top = `${event.pageY}px`;
         contextMenu.style.left = `${event.pageX}px`;
         contextMenu.style.display = 'block';
     });
 
-    document.addEventListener('click', () => {
-        contextMenu.style.display = 'none';
-    });
+    // helper to create menu options with the visual style you liked
+    const createOption = (text, callback) => {
+        const opt = document.createElement('div');
+        opt.textContent = text;
+        opt.style.padding = '5px 10px';
+        opt.style.cursor = 'pointer';
+        opt.onmouseover = () => opt.style.backgroundColor = '#444';
+        opt.onmouseout = () => opt.style.backgroundColor = 'transparent';
+        
+        // use mousedown to execute BEFORE the global click listener closes the menu
+        opt.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // CRITICAL: stops the click from hitting the song tile
+            if (currentSongItem) {
+                callback(currentSongItem);
+            }
+            contextMenu.style.display = 'none';
+        });
+        return opt;
+    };
 
-    // delete functionality
-    deleteOption.addEventListener('click', async () => {
-        if (currentSongItem) {
-            const title = currentSongItem.querySelector('.title-input').defaultValue;
-            deletedSongs.push(title);
-            currentSongItem.remove();
+    // adding options in order
+    contextMenu.appendChild(createOption('Fade To', (item) => {
+        fadeTo(item.dataset.songId);
+    }));
 
-            document.dispatchEvent(new Event('songsUpdated'));
-            console.log(`queued ${title} for deletion`)
+    contextMenu.appendChild(createOption('Cut To', (item) => {
+        cutTo(item.dataset.songId);
+    }));
+
+    contextMenu.appendChild(createOption('Reset', (item) => {
+        resetSong(item.dataset.songId);
+    }));
+
+    contextMenu.appendChild(createOption('Edit Genres', (item) => {
+        showEditGenresPopup(item);
+    }));
+
+    contextMenu.appendChild(createOption('Delete', (item) => {
+        const titleInput = item.querySelector('.title-input');
+        const title = titleInput ? titleInput.defaultValue : 'Unknown';
+        const songId = item.dataset.songId;
+        deletedSongs.push(title);
+        removeSongAudio(songId); // Clean up audio references
+        item.remove();
+        document.dispatchEvent(new Event('songsUpdated'));
+    }));
+
+    document.body.appendChild(contextMenu);
+
+    // close menu on click outside
+    document.addEventListener('mousedown', (e) => {
+        if (!contextMenu.contains(e.target)) {
+            contextMenu.style.display = 'none';
         }
-
-        contextMenu.style.display = 'none';
-    });
-
-    editGenresOption.addEventListener('click', () => {
-        if (currentSongItem) {
-            showEditGenresPopup(currentSongItem);
-        }
-        contextMenu.style.display = 'none';
     });
 });
 
