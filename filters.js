@@ -24,7 +24,7 @@ function songMatchesActiveFilters(song, filters) {
     const songGenres = song.getAttribute('data-genres').split(',');
     const songTags = song.getAttribute('data-tags').split(',');
     
-    return Array.from(filters).some(filter => {
+    return Array.from(filters).every(filter => {
         return songGenres.includes(filter) || songTags.includes(filter);
     });
 }
