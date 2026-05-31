@@ -224,8 +224,8 @@ async function savePreset() {
             const originalTitle = encodeURIComponent(songItem.querySelector('input').defaultValue);
             const audioUrl = songItem.dataset.audioUrl;
             const imageUrl = songItem.querySelector('img').src;
-            const genres = songItem.getAttribute('data-genres').split(',');
-            const tags = songItem.querySelector('p').textContent.split(' + ');
+            const genres = songItem.getAttribute('data-genres').split(',').filter(g => g.trim());
+            const tags = songItem.getAttribute('data-tags').split(',').filter(t => t.trim());
             
             const songId = songItem.dataset.songId;
             const markers = getMarkers(songId);
@@ -340,7 +340,7 @@ async function loadPreset() {
         for (const songMetadata of presetMetadata) {
             let { currentTitle, genres, tags, markers } = songMetadata;
 
-            genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+            genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
             songMetadata.genres = genres;
 
             let audioFile, thumbnailFile;
@@ -373,7 +373,7 @@ async function loadPreset() {
             songItem.setAttribute('data-tags', tags.join(','));
             songItem.innerHTML = `
                 <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
-                <p>${tags.join(' + ')}</p>
+                <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
                 <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
             `;
 
@@ -420,7 +420,7 @@ async function loadSamplePreset() {
         const songPromises = presetMetadata.map(async (songMetadata) => {
             const { currentTitle, genres, tags, markers } = songMetadata;
             const decodedTitle = decodeURIComponent(currentTitle);
-            const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+            const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
             const fixedTitle = currentTitle.replace(/%/g, '%25');
             
             const audioPath = `${sampleFolderPath}${fixedTitle}.mp3`;
@@ -472,7 +472,7 @@ async function loadSamplePreset() {
                 songItem.setAttribute('data-tags', song.tags.join(','));
                 songItem.innerHTML = `
                     <input spellcheck='false' class='title-input' value="${song.decodedTitle}"></input>
-                    <p>${song.tags.join(' + ')}</p>
+                    <p>${song.tags.join(' + ')}${song.updatedGenres.length > 0 ? ' | ' + song.updatedGenres.join(' + ') : ''}</p>
                     <img src="${URL.createObjectURL(song.thumbnailFile)}" alt="${song.decodedTitle}">
                 `;
                 
@@ -520,7 +520,7 @@ async function handleFilesFallback(files) {
 
     for (const songMetadata of presetMetadata) {
         let { currentTitle, genres, tags, markers } = songMetadata;
-        genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre);
+        genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
 
         const audioFile = fileMap[`${currentTitle}.mp3`];
         const thumbnailFile = fileMap[`${currentTitle}.jpg`];
@@ -534,9 +534,10 @@ async function handleFilesFallback(files) {
         songItem.classList.add('song-item');
         songItem.setAttribute('draggable', 'true');
         songItem.setAttribute('data-genres', genres.join(','));
+        songItem.setAttribute('data-tags', tags.join(','));
         songItem.innerHTML = `
             <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
-            <p>${tags.join(' + ')}</p>
+            <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
             <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
         `;
 
@@ -658,9 +659,10 @@ uploadSubmit.addEventListener('click', () => {
     songItem.classList.add('song-item');
     songItem.setAttribute('draggable', 'true');
     songItem.setAttribute('data-genres', genres.join(','));
+    songItem.setAttribute('data-tags', tags.join(','));
     songItem.innerHTML = `
         <input class="title-input" value="${title}"</input>
-        <p>${tags.join(' + ')}</p>
+        <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
         <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
     `;
     songGrid.appendChild(songItem);
@@ -902,7 +904,7 @@ function showEditGenresPopup(songItem) {
         
         const pTag = songItem.querySelector('p');
         if (pTag) {
-            pTag.textContent = selectedTags.join(' + ');
+            pTag.textContent = selectedTags.join(' + ') + (selectedGenres.length > 0 ? ' | ' + selectedGenres.join(' + ') : '');
         }
 
         popup.style.opacity = '0';
