@@ -1012,6 +1012,42 @@ function updateVolumeSlider(slider) {
         rgba(255, 255, 255, 0.2) 100%)`;
 }
 
+export function fadeOut(targetSongId) {
+    const fadeDuration = 5
+    const audio = activeAudios[targetSongId];
+    if (!audio || audio.paused) return;
+    
+    const startVolume = audio.volume;
+    const startTime = performance.now();
+    
+    const animate = () => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        const progress = Math.min(elapsed / fadeDuration, 1);
+        
+        audio.volume = startVolume * (1 - progress);
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        } else {
+            audio.pause();
+            audio.volume = startVolume;
+            
+            // remove from activeAudios
+            delete activeAudios[targetSongId];
+            
+            // remove playing class from grid (to remove the green color)
+            const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+            if (songElement) {
+                songElement.classList.remove('playing');
+            }
+            
+            updatePlayerUI();
+        }
+    };
+    
+    requestAnimationFrame(animate);
+}
+
 export function fadeTo(targetSongId) {
     const fadeDuration = 3500; // 3.5 seconds
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);

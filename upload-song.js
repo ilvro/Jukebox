@@ -1,4 +1,4 @@
-import { addSongToPlayer, getMarkers, setMarkers, fadeTo, cutTo, removeSongAudio, resetSong } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers, fadeTo, cutTo, fadeOut, removeSongAudio, resetSong } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -742,6 +742,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     contextMenu.appendChild(createOption('Cut To', (item) => {
         cutTo(item.dataset.songId);
+    }));
+
+    contextMenu.appendChild(createOption('Fade Out', (item) => {
+        fadeOut(item.dataset.songId);
     }));
 
     contextMenu.appendChild(createOption('Reset', (item) => {
