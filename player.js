@@ -1,8 +1,8 @@
 import { setupAudioEffects } from './mixing/index.js';
 let activeAudios = {};
-let allAudios = {}; // Store all created audio elements by songId
-let audioVolumes = {}; // Store individual volume for each song
-let audioTimes = {}; // Store playback position for each song
+let allAudios = {};
+let audioVolumes = {};
+let audioTimes = {};
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
@@ -24,9 +24,8 @@ const SMOOTH_SKIP_DURATION = 2.5;
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
     audio.preload = 'metadata';
-    audio.volume = 0; // Start with volume at 0 to prevent any spikes
+    audio.volume = 0;
     
-    // Add event listeners that update UI when audio state changes
     audio.addEventListener('pause', () => {
         updatePlayerUI();
     });
@@ -46,11 +45,11 @@ function toggleAudio(audioElement, songItem) {
     const songId = songItem.dataset.songId;
 
     if (audioElement.paused) {
-        // Restore saved time when resuming
+        // restore saved time when resuming
         if (audioTimes[songId] !== undefined) {
             audioElement.currentTime = audioTimes[songId];
         }
-        // Restore saved volume
+        // restore saved volume
         if (audioVolumes[songId] !== undefined) {
             audioElement.volume = audioVolumes[songId];
         }
@@ -58,7 +57,7 @@ function toggleAudio(audioElement, songItem) {
         songItem.classList.add('playing');
         activeAudios[songId] = audioElement;
     } else {
-        // Save time and volume when pausing
+        // save time and volume when pausing
         audioTimes[songId] = audioElement.currentTime;
         audioVolumes[songId] = audioElement.volume;
         audioElement.pause();
@@ -89,9 +88,9 @@ function addSongToPlayer(songElement, audioFile) {
     }
     
     const audio = createAudioElement(audioUrl);
-    allAudios[songId] = audio; // Store audio reference
-    audioVolumes[songId] = 1; // Initialize with full volume
-    audioTimes[songId] = 0; // Initialize at start
+    allAudios[songId] = audio;
+    audioVolumes[songId] = 1;
+    audioTimes[songId] = 0;
     addClickListenerToSongItem(songElement, audio);
 
     updatePlayerUI();
@@ -252,6 +251,38 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio) {
     });
     
     menu.appendChild(smoothSkipItem);
+
+    const cutToItem = document.createElement('div');
+    cutToItem.className = 'context-menu-item';
+    cutToItem.textContent = 'Cut To';
+    Object.assign(cutToItem.style, {
+        cursor: 'default',
+        padding: '5px 5px 5px 15px',
+        transition: 'all 0.3s ease',
+        borderLeft: '2px solid transparent',
+        color: '#fff'
+    });
+    
+    cutToItem.addEventListener('mouseover', () => {
+        cutToItem.style.borderLeft = '2px solid #2bdba0';
+        cutToItem.style.backgroundColor = 'rgba(43, 219, 160, 0.1)';
+    });
+    
+    cutToItem.addEventListener('mouseout', () => {
+        cutToItem.style.borderLeft = '2px solid transparent';
+        cutToItem.style.backgroundColor = 'transparent';
+    });
+    
+    cutToItem.addEventListener('click', () => {
+        audio.currentTime = markerTime;
+        audio.volume = 1.0;
+        menu.style.opacity = '0';
+        menu.style.transform = 'translateY(-10px)';
+        menu.style.visibility = 'hidden';
+        setTimeout(() => menu.remove(), 300);
+    });
+    
+    menu.appendChild(cutToItem);
     
     document.body.appendChild(menu);
     
@@ -326,7 +357,7 @@ function updatePlayerUI() {
     playerContainer.innerHTML = '';
 
     Object.entries(activeAudios).forEach(([songId, audio]) => {
-        // Only show audios that are actually playing (not paused)
+        // only show audios that are actually playing (not paused)
         if (audio.paused) {
             return;
         }
@@ -396,11 +427,10 @@ function updatePlayerUI() {
         volumeControl.min = 0;
         volumeControl.max = 1;
         volumeControl.step = 0.01;
-        volumeControl.value = audioVolumes[songId] || audio.volume; // Use saved volume
+        volumeControl.value = audioVolumes[songId] || audio.volume; 
         volumeControl.className = 'volume-slider';
         trackDiv.appendChild(volumeControl);
         
-        // Apply saved volume to audio and update slider visual
         audio.volume = audioVolumes[songId] || audio.volume;
         updateVolumeSlider(volumeControl);
 
@@ -418,7 +448,7 @@ function updatePlayerUI() {
             audio.volume = volumeControl.value;
             const songId = trackDiv.dataset.songId;
             if (songId) {
-                audioVolumes[songId] = parseFloat(volumeControl.value); // Save volume preference
+                audioVolumes[songId] = parseFloat(volumeControl.value);
             }
             updateVolumeSlider(volumeControl);
         });
