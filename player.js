@@ -352,352 +352,399 @@ playerContainer.addEventListener('contextmenu', (event) => {
     event.preventDefault();
 })
 
+const renderedTracks = new Map(); // songId -> { trackDiv, refresh, cleanup }
+
 function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
-    playerContainer.innerHTML = '';
 
+    const currentActiveIds = new Set();
     Object.entries(activeAudios).forEach(([songId, audio]) => {
-        // only show audios that are actually playing (not paused)
-        if (audio.paused) {
-            return;
+        if (!audio.paused) {
+            currentActiveIds.add(songId);
         }
-        
-        const getExactTime = (event, element) => {
-            const rect = element.getBoundingClientRect();
-            const mouseX = event.clientX - rect.left;
-            return (mouseX / rect.width) * audio.duration;
-        };
+    });
 
-        const trackDiv = document.createElement('div');
-        trackDiv.className = 'track-item';
-        trackDiv.dataset.songId = songId;
+    // tear down tracks that are no longer playing: remove the listener we
+    // attached to the (long-lived) audio element and deactivate its effects,
+    // otherwise both keep piling up in memory every time this runs
+    renderedTracks.forEach((track, songId) => {
+        if (!currentActiveIds.has(songId)) {
+            track.cleanup();
+            renderedTracks.delete(songId);
+        }
+    });
 
-        const songElement = document.querySelector(`[data-song-id="${songId}"]`);
-        
-        const titleContainer = document.createElement('div');
-        titleContainer.style.display = 'flex';
-        titleContainer.style.flexDirection = 'column';
-        titleContainer.style.gap = '2px';
-        
-        const titleSpan = document.createElement('span');
+    // create tracks that just started playing, lightly refresh ones already rendered
+    currentActiveIds.forEach(songId => {
+        const audio = activeAudios[songId];
+        if (renderedTracks.has(songId)) {
+            renderedTracks.get(songId).refresh();
+        } else {
+            const track = createTrackUI(songId, audio, playerContainer);
+            renderedTracks.set(songId, track);
+        }
+    });
+}
+
+function createTrackUI(songId, audio, playerContainer) {
+    const getExactTime = (event, element) => {
+        const rect = element.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left;
+        return (mouseX / rect.width) * audio.duration;
+    };
+
+    const trackDiv = document.createElement('div');
+    trackDiv.className = 'track-item';
+    trackDiv.dataset.songId = songId;
+
+    const songElement = document.querySelector(`[data-song-id="${songId}"]`);
+    
+    const titleContainer = document.createElement('div');
+    titleContainer.style.display = 'flex';
+    titleContainer.style.flexDirection = 'column';
+    titleContainer.style.gap = '2px';
+    
+    const getSongTitle = () => {
         let songTitle = songElement.querySelector('input').value;
         if (songTitle.length > 15) {
             songTitle = songTitle.substring(0, 15) + "...";
         }
-        titleSpan.textContent = songTitle;
-        titleContainer.appendChild(titleSpan);
+        return songTitle;
+    };
+
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = getSongTitle();
+    titleContainer.appendChild(titleSpan);
+    
+    const tags = songElement.getAttribute('data-tags');
+    if (tags && tags.trim() !== '') {
+        const tagsSpan = document.createElement('span');
+        tagsSpan.textContent = tags.split(',').join(' + ');
+        tagsSpan.style.fontSize = '0.7em';
+        tagsSpan.style.color = '#888';
+        titleContainer.appendChild(tagsSpan);
+    }
+    
+    trackDiv.appendChild(titleContainer);
+
+    const progressContainer = document.createElement('div');
+    progressContainer.className = 'progress-container';
+
+    const timeTooltip = document.createElement('div');
+    timeTooltip.className = 'time-tooltip';
+    timeTooltip.style.display = 'none';
+    progressContainer.appendChild(timeTooltip);
+
+    const waveformCanvas = document.createElement('canvas');
+    waveformCanvas.className = 'waveform-canvas';
+    waveformCanvas.width = MAX_WAVEFORM_WIDTH;
+    waveformCanvas.height = 30;
+    progressContainer.appendChild(waveformCanvas);
+
+    const progressBar = document.createElement('input');
+    progressBar.type = 'range';
+    progressBar.min = 0;
+    progressBar.max = audio.duration || 100;
+    progressBar.value = audio.currentTime;
+    progressBar.className = 'progress-bar';
+    progressContainer.appendChild(progressBar);
+
+    trackDiv.appendChild(progressContainer);
+
+    const volumeControl = document.createElement('input');
+    volumeControl.type = 'range';
+    volumeControl.min = 0;
+    volumeControl.max = 1;
+    volumeControl.step = 0.01;
+    volumeControl.value = audio.volume;
+    volumeControl.className = 'volume-slider';
+    trackDiv.appendChild(volumeControl);
+    
+    updateVolumeSlider(volumeControl);
+
+    const formatTime = (timeInSeconds) => {
+        const minutes = Math.floor(timeInSeconds / 60);
+        const seconds = Math.floor(timeInSeconds % 60);
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    };
+
+    progressBar.addEventListener('input', () => {
+        audio.currentTime = progressBar.value;
+    });
+
+    volumeControl.addEventListener('input', () => {
+        audio.volume = volumeControl.value;
+        if (songId) {
+            audioVolumes[songId] = parseFloat(volumeControl.value);
+        }
+        updateVolumeSlider(volumeControl);
+    });
+
+    let hoveredBar = -1;
+    let hoveredTime = -1;
+    let hoveredMarker = -1;
+    let lastMoveTime = 0;
+    const moveThrottle = 16;
+    
+    progressContainer.addEventListener('mousemove', (event) => {
+        const currentTime = Date.now();
+        if (currentTime - lastMoveTime < moveThrottle) return;
+        lastMoveTime = currentTime;
+
+        const rect = waveformCanvas.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left;
+        hoveredTime = (mouseX / rect.width) * audio.duration;
+        timeTooltip.textContent = formatTime(hoveredTime);
+
+        const tooltipWidth = timeTooltip.offsetWidth;
+        let tooltipLeft = mouseX - (tooltipWidth / 2);
+        const containerWidth = progressContainer.offsetWidth;
+        if (tooltipLeft < 0) {
+            tooltipLeft = 0;
+        } else if (tooltipLeft + tooltipWidth > containerWidth) {
+            tooltipLeft = containerWidth - tooltipWidth;
+        }
+
+        timeTooltip.style.display = 'block';
+        timeTooltip.style.left = `${tooltipLeft}px`;
+        timeTooltip.style.bottom = '100%';
         
-        const tags = songElement.getAttribute('data-tags');
-        if (tags && tags.trim() !== '') {
-            const tagsSpan = document.createElement('span');
-            tagsSpan.textContent = tags.split(',').join(' + ');
-            tagsSpan.style.fontSize = '0.7em';
-            tagsSpan.style.color = '#888';
-            titleContainer.appendChild(tagsSpan);
+        const canvasX = (mouseX / rect.width) * waveformCanvas.width;
+        const barWidth = 2;
+        const gap = 1;
+        const totalBarWidth = barWidth + gap;
+        const newHoveredBar = Math.floor(canvasX / totalBarWidth);
+        
+        const markers = songMarkers[songId] || [];
+        let newHoveredMarker = -1;
+        for (let i = 0; i < markers.length; i++) {
+            if (Math.abs(hoveredTime - markers[i]) < MARKER_SNAP_TOLERANCE) {
+                newHoveredMarker = i;
+                break;
+            }
         }
         
-        trackDiv.appendChild(titleContainer);
-
-        const progressContainer = document.createElement('div');
-        progressContainer.className = 'progress-container';
-
-        const timeTooltip = document.createElement('div');
-        timeTooltip.className = 'time-tooltip';
-        timeTooltip.style.display = 'none';
-        progressContainer.appendChild(timeTooltip);
-
-        const waveformCanvas = document.createElement('canvas');
-        waveformCanvas.className = 'waveform-canvas';
-        waveformCanvas.width = MAX_WAVEFORM_WIDTH;
-        waveformCanvas.height = 30;
-        progressContainer.appendChild(waveformCanvas);
-
-        const progressBar = document.createElement('input');
-        progressBar.type = 'range';
-        progressBar.min = 0;
-        progressBar.max = audio.duration || 100;
-        progressBar.value = audio.currentTime;
-        progressBar.className = 'progress-bar';
-        progressContainer.appendChild(progressBar);
-
-        trackDiv.appendChild(progressContainer);
-
-        const volumeControl = document.createElement('input');
-        volumeControl.type = 'range';
-        volumeControl.min = 0;
-        volumeControl.max = 1;
-        volumeControl.step = 0.01;
-        volumeControl.value = audioVolumes[songId] || audio.volume; 
-        volumeControl.className = 'volume-slider';
-        trackDiv.appendChild(volumeControl);
-        
-        audio.volume = audioVolumes[songId] || audio.volume;
-        updateVolumeSlider(volumeControl);
-
-        const formatTime = (timeInSeconds) => {
-            const minutes = Math.floor(timeInSeconds / 60);
-            const seconds = Math.floor(timeInSeconds % 60);
-            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-        };
-
-        progressBar.addEventListener('input', () => {
-            audio.currentTime = progressBar.value;
-        });
-
-        volumeControl.addEventListener('input', () => {
-            audio.volume = volumeControl.value;
-            const songId = trackDiv.dataset.songId;
-            if (songId) {
-                audioVolumes[songId] = parseFloat(volumeControl.value);
+        if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
+            if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
+                hoveredBar = newHoveredBar;
             }
-            updateVolumeSlider(volumeControl);
-        });
-
-        let hoveredBar = -1;
-        let hoveredTime = -1;
-        let hoveredMarker = -1;
-        let lastMoveTime = 0;
-        const moveThrottle = 16;
-        
-        progressContainer.addEventListener('mousemove', (event) => {
-            const currentTime = Date.now();
-            if (currentTime - lastMoveTime < moveThrottle) return;
-            lastMoveTime = currentTime;
-
-            const rect = waveformCanvas.getBoundingClientRect();
-            const mouseX = event.clientX - rect.left;
-            hoveredTime = (mouseX / rect.width) * audio.duration;
-            timeTooltip.textContent = formatTime(hoveredTime);
-
-            const tooltipWidth = timeTooltip.offsetWidth;
-            let tooltipLeft = mouseX - (tooltipWidth / 2);
-            const containerWidth = progressContainer.offsetWidth;
-            if (tooltipLeft < 0) {
-                tooltipLeft = 0;
-            } else if (tooltipLeft + tooltipWidth > containerWidth) {
-                tooltipLeft = containerWidth - tooltipWidth;
-            }
-
-            timeTooltip.style.display = 'block';
-            timeTooltip.style.left = `${tooltipLeft}px`;
-            timeTooltip.style.bottom = '100%';
-            
-            const canvasX = (mouseX / rect.width) * waveformCanvas.width;
-            const barWidth = 2;
-            const gap = 1;
-            const totalBarWidth = barWidth + gap;
-            const newHoveredBar = Math.floor(canvasX / totalBarWidth);
-            
-            const markers = songMarkers[songId] || [];
-            let newHoveredMarker = -1;
-            for (let i = 0; i < markers.length; i++) {
-                if (Math.abs(hoveredTime - markers[i]) < MARKER_SNAP_TOLERANCE) {
-                    newHoveredMarker = i;
-                    break;
-                }
-            }
-            
-            if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
-                if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
-                    hoveredBar = newHoveredBar;
-                }
-                hoveredMarker = newHoveredMarker;
-                requestAnimationFrame(() => {
-                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
-                });
-            }
-        });
-
-        progressContainer.addEventListener('click', (event) => {
-            let clickTime = hoveredTime;
-            if (clickTime >= 0 && clickTime <= audio.duration) {
-                clickTime = snapToMarker(songId, clickTime);
-                audio.currentTime = clickTime;
-                progressBar.value = clickTime;
-            }
-        });
-
-        progressContainer.addEventListener('mousedown', (event) => {
-            if (event.button === 1) {
-                event.preventDefault();
-                let clickTime = getExactTime(event, waveformCanvas);
-                
-                const snappedTime = snapToMarker(songId, clickTime);
-                
-                const removed = removeMarker(songId, snappedTime);
-                if (!removed) {
-                    const added = addMarker(songId, snappedTime);
-                    if (added) {
-                        console.log(`Marker added at ${formatTime(snappedTime)}`);
-                    }
-                } else {
-                    console.log(`Marker removed from ${formatTime(snappedTime)}`);
-                }
-                
-                requestAnimationFrame(() => {
-                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                });
-            }
-        });
-
-        progressContainer.addEventListener('mouseleave', () => {
-            hoveredBar = -1;
-            hoveredTime = -1;
-            hoveredMarker = -1;
-            timeTooltip.style.display = 'none';
+            hoveredMarker = newHoveredMarker;
             requestAnimationFrame(() => {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
             });
-        });
-        
-        const isLongTrack = audio.duration > 1200;
-        if (isLongTrack) {
-            generateWaveformLazy(audio, waveformCanvas, songId);
-        } else {
-            generateWaveformDirect(audio, waveformCanvas, songId);
         }
-        
-        audio.addEventListener('timeupdate', () => {
-            progressBar.value = audio.currentTime;
+    });
+
+    progressContainer.addEventListener('click', (event) => {
+        let clickTime = hoveredTime;
+        if (clickTime >= 0 && clickTime <= audio.duration) {
+            clickTime = snapToMarker(songId, clickTime);
+            audio.currentTime = clickTime;
+            progressBar.value = clickTime;
+        }
+    });
+
+    progressContainer.addEventListener('mousedown', (event) => {
+        if (event.button === 1) {
+            event.preventDefault();
+            let clickTime = getExactTime(event, waveformCanvas);
+            
+            const snappedTime = snapToMarker(songId, clickTime);
+            
+            const removed = removeMarker(songId, snappedTime);
+            if (!removed) {
+                const added = addMarker(songId, snappedTime);
+                if (added) {
+                    console.log(`Marker added at ${formatTime(snappedTime)}`);
+                }
+            } else {
+                console.log(`Marker removed from ${formatTime(snappedTime)}`);
+            }
+            
             requestAnimationFrame(() => {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
             });
-        });
+        }
+    });
 
-        progressBar.addEventListener('contextmenu', (event) => {
+    progressContainer.addEventListener('mouseleave', () => {
+        hoveredBar = -1;
+        hoveredTime = -1;
+        hoveredMarker = -1;
+        timeTooltip.style.display = 'none';
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+        });
+    });
+    
+    const isLongTrack = audio.duration > 1200;
+    if (isLongTrack) {
+        generateWaveformLazy(audio, waveformCanvas, songId);
+    } else {
+        generateWaveformDirect(audio, waveformCanvas, songId);
+    }
+    
+    // stored so we can remove it in cleanup() instead of stacking a new one every render
+    const handleTimeUpdate = () => {
+        progressBar.value = audio.currentTime;
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+        });
+    };
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+
+    progressBar.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
+    
+    // only set up once per playing session now, instead of on every UI refresh
+    const audioEffects = setupAudioEffects(audio, progressBar);
+    
+    let rightClickStartPos = null;
+    let hasMovedMouse = false;
+    
+    progressBar.addEventListener('mousedown', (event) => {
+        if (event.button === 2) {
             event.preventDefault();
-        });
-        
-        const audioEffects = setupAudioEffects(audio, progressBar);
-        
-        let rightClickStartPos = null;
-        let hasMovedMouse = false;
-        
-        progressBar.addEventListener('mousedown', (event) => {
-            if (event.button === 2) {
-                event.preventDefault();
-                let selectedTime = getExactTime(event, waveformCanvas);
-        
-                if (isDragging) {
-                    return;
-                }
-                
-                rightClickStartPos = { x: event.clientX, y: event.clientY, time: selectedTime };
-                hasMovedMouse = false;
-        
-                const currentTime = Date.now();
-                const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
-                lastRightClickTime = currentTime;
+            let selectedTime = getExactTime(event, waveformCanvas);
+    
+            if (isDragging) {
+                return;
+            }
+            
+            rightClickStartPos = { x: event.clientX, y: event.clientY, time: selectedTime };
+            hasMovedMouse = false;
+    
+            const currentTime = Date.now();
+            const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
+            lastRightClickTime = currentTime;
 
-                const markers = songMarkers[songId] || [];
-                let isOverMarker = false;
-                for (let marker of markers) {
-                    if (Math.abs(selectedTime - marker) < MARKER_SNAP_TOLERANCE) {
-                        isOverMarker = true;
-                        break;
-                    }
+            const markers = songMarkers[songId] || [];
+            let isOverMarker = false;
+            for (let marker of markers) {
+                if (Math.abs(selectedTime - marker) < MARKER_SNAP_TOLERANCE) {
+                    isOverMarker = true;
+                    break;
                 }
-                if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
-                    audioEffects.createContextMenu(
-                        event.pageX, 
-                        event.pageY,
-                        (progressBar, audio) => {
-                            updateProgressBarGradient(progressBar, audio);
-                        },
-                        () => {
-                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                        }
-                    );
-                } else if (isDoubleClick) {
-                    audioEffects.cleanup();
-                    setTimeout(() => {
-                        progressBar.selectedStartTime = undefined;
-                        progressBar.selectedEndTime = undefined;
-                        progressBar.style.background = '#333';
-                        const existingMenu = document.querySelector('.waveform-context-menu');
-                        if (existingMenu) {
-                            existingMenu.remove();
-                        }
-                        requestAnimationFrame(() => {
-                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                        });
-                    }, 50);
-                } else if ((!progressBar.selectedStartTime || !progressBar.selectedEndTime) || isOverMarker) {
-                    isDragging = true;
-                    progressBar.selectedStartTime = selectedTime;
-                    
-                    const onMouseMove = (moveEvent) => {
-                        if (!isDragging) return;
-                        
-                        const moveDistance = Math.sqrt(
-                            Math.pow(moveEvent.clientX - rightClickStartPos.x, 2) + 
-                            Math.pow(moveEvent.clientY - rightClickStartPos.y, 2)
-                        );
-                        
-                        if (moveDistance > 5) {
-                            hasMovedMouse = true;
-                        }
-                        
-                        let movedTime = getExactTime(moveEvent, waveformCanvas);
-                        movedTime = snapToMarker(songId, movedTime);
-                        progressBar.selectedEndTime = movedTime;
-        
-                        if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
-                            [progressBar.selectedStartTime, progressBar.selectedEndTime] = [
-                                progressBar.selectedEndTime,
-                                progressBar.selectedStartTime,
-                            ];
-                        }
-        
+            }
+            if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
+                audioEffects.createContextMenu(
+                    event.pageX, 
+                    event.pageY,
+                    (progressBar, audio) => {
                         updateProgressBarGradient(progressBar, audio);
-                        requestAnimationFrame(() => {
-                            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
-                        });
-                    };
-        
-                    const onMouseUp = (upEvent) => {
-                        isDragging = false;
-                        document.removeEventListener('mousemove', onMouseMove);
-                        document.removeEventListener('mouseup', onMouseUp);
-                        
-                        if (!hasMovedMouse && rightClickStartPos) {
-                            const markers = songMarkers[songId] || [];
-                            let clickedMarker = null;
-                            for (let marker of markers) {
-                                if (Math.abs(rightClickStartPos.time - marker) < MARKER_SNAP_TOLERANCE) {
-                                    clickedMarker = marker;
-                                    break;
-                                }
-                            }
-                            
-                            if (clickedMarker !== null) {
-                                createMarkerContextMenu(
-                                    upEvent.pageX,
-                                    upEvent.pageY,
-                                    songId,
-                                    clickedMarker,
-                                    audio
-                                );
-                            }
-                        }
-                        
-                        rightClickStartPos = null;
-                        hasMovedMouse = false;
-                    };
-        
-                    document.addEventListener('mousemove', onMouseMove);
-                    document.addEventListener('mouseup', onMouseUp);
-                } else {
+                    },
+                    () => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                    }
+                );
+            } else if (isDoubleClick) {
+                audioEffects.cleanup();
+                setTimeout(() => {
+                    progressBar.selectedStartTime = undefined;
+                    progressBar.selectedEndTime = undefined;
+                    progressBar.style.background = '#333';
                     const existingMenu = document.querySelector('.waveform-context-menu');
                     if (existingMenu) {
                         existingMenu.remove();
                     }
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+                    });
+                }, 50);
+            } else if ((!progressBar.selectedStartTime || !progressBar.selectedEndTime) || isOverMarker) {
+                isDragging = true;
+                progressBar.selectedStartTime = selectedTime;
+                
+                const onMouseMove = (moveEvent) => {
+                    if (!isDragging) return;
+                    
+                    const moveDistance = Math.sqrt(
+                        Math.pow(moveEvent.clientX - rightClickStartPos.x, 2) + 
+                        Math.pow(moveEvent.clientY - rightClickStartPos.y, 2)
+                    );
+                    
+                    if (moveDistance > 5) {
+                        hasMovedMouse = true;
+                    }
+                    
+                    let movedTime = getExactTime(moveEvent, waveformCanvas);
+                    movedTime = snapToMarker(songId, movedTime);
+                    progressBar.selectedEndTime = movedTime;
+    
+                    if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
+                        [progressBar.selectedStartTime, progressBar.selectedEndTime] = [
+                            progressBar.selectedEndTime,
+                            progressBar.selectedStartTime,
+                        ];
+                    }
+    
+                    updateProgressBarGradient(progressBar, audio);
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+                    });
+                };
+    
+                const onMouseUp = (upEvent) => {
+                    isDragging = false;
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    
+                    if (!hasMovedMouse && rightClickStartPos) {
+                        const markers = songMarkers[songId] || [];
+                        let clickedMarker = null;
+                        for (let marker of markers) {
+                            if (Math.abs(rightClickStartPos.time - marker) < MARKER_SNAP_TOLERANCE) {
+                                clickedMarker = marker;
+                                break;
+                            }
+                        }
+                        
+                        if (clickedMarker !== null) {
+                            createMarkerContextMenu(
+                                upEvent.pageX,
+                                upEvent.pageY,
+                                songId,
+                                clickedMarker,
+                                audio
+                            );
+                        }
+                    }
+                    
+                    rightClickStartPos = null;
+                    hasMovedMouse = false;
+                };
+    
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            } else {
+                const existingMenu = document.querySelector('.waveform-context-menu');
+                if (existingMenu) {
+                    existingMenu.remove();
                 }
             }
-        });
-
-        playerContainer.appendChild(trackDiv);
+        }
     });
+
+    playerContainer.appendChild(trackDiv);
+
+    return {
+        trackDiv,
+        // called on every updatePlayerUI() while the track keeps playing;
+        // deliberately does NOT touch listeners, effects, or the waveform
+        refresh() {
+            volumeControl.value = audio.volume;
+            updateVolumeSlider(volumeControl);
+            progressBar.max = audio.duration || 100;
+            titleSpan.textContent = getSongTitle();
+        },
+        // called once, when the track actually stops playing
+        cleanup() {
+            audio.removeEventListener('timeupdate', handleTimeUpdate);
+            audioEffects.cleanup();
+            trackDiv.remove();
+        }
+    };
 }
 
 function updateProgressBarGradient(progressBar, audio) {
@@ -1042,44 +1089,62 @@ function updateVolumeSlider(slider) {
         rgba(255, 255, 255, 0.2) 100%)`;
 }
 
+// smoothly animates volume using a curve that matches how we perceive loudness
+// (loudness is logarithmic, not linear) instead of stepping volume in fixed linear increments.
+// fading in eases in (starts slow, speeds up near the end) and fading out eases out
+// (drops quickly at first, tapers off gently near silence) - this avoids the "sudden jump"
+// feeling you get with a plain linear ramp.
+function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
+    const startTime = performance.now();
+    const isFadingIn = endVolume > startVolume;
+
+    const step = () => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        const eased = isFadingIn
+            ? progress * progress
+            : 1 - Math.pow(1 - progress, 2);
+
+        audio.volume = startVolume + (endVolume - startVolume) * eased;
+
+        if (progress < 1) {
+            requestAnimationFrame(step);
+        } else {
+            audio.volume = endVolume;
+            if (onComplete) onComplete();
+        }
+    };
+
+    requestAnimationFrame(step);
+}
+
 export function fadeOut(targetSongId) {
     const fadeDuration = 5
     const audio = activeAudios[targetSongId];
     if (!audio || audio.paused) return;
     
     const startVolume = audio.volume;
-    const startTime = performance.now();
-    
-    const animate = () => {
-        const elapsed = (performance.now() - startTime) / 1000;
-        const progress = Math.min(elapsed / fadeDuration, 1);
-        
-        audio.volume = startVolume * (1 - progress);
-        
-        if (progress < 1) {
-            requestAnimationFrame(animate);
-        } else {
-            audio.pause();
-            audio.volume = startVolume;
-            
-            // remove from activeAudios
-            delete activeAudios[targetSongId];
-            
-            // remove playing class from grid (to remove the green color)
-            const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
-            if (songElement) {
-                songElement.classList.remove('playing');
-            }
-            
-            updatePlayerUI();
+
+    animateVolume(audio, startVolume, 0, fadeDuration * 1000, () => {
+        audio.pause();
+        audio.volume = startVolume;
+
+        // remove from activeAudios
+        delete activeAudios[targetSongId];
+
+        // remove playing class from grid (to remove the green color)
+        const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+        if (songElement) {
+            songElement.classList.remove('playing');
         }
-    };
-    
-    requestAnimationFrame(animate);
+
+        updatePlayerUI();
+    });
 }
 
 export function fadeTo(targetSongId) {
-    const fadeDuration = 3500; // 3.5 seconds
+    const fadeDuration = 6500; // 3.5 seconds
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     
     if (!targetItem) return;
@@ -1101,37 +1166,21 @@ export function fadeTo(targetSongId) {
             
             audioVolumes[id] = audio.volume;
             audioTimes[id] = audio.currentTime;
-            let volume = audio.volume;
-            const step = volume / 20;
-            const interval = setInterval(() => {
-                if (volume > step) {
-                    volume -= step;
-                    audio.volume = volume;
-                } else {
-                    clearInterval(interval);
-                    audio.pause();
-                    audio.volume = audioVolumes[id];
-                    item?.classList.remove('playing');
-                    delete activeAudios[id];
-                    updatePlayerUI();
-                }
-            }, fadeDuration / 20);
+            const startVol = audio.volume;
+            animateVolume(audio, startVol, 0, fadeDuration, () => {
+                audio.pause();
+                audio.volume = audioVolumes[id];
+                item?.classList.remove('playing');
+                delete activeAudios[id];
+                updatePlayerUI();
+            });
         }
     });
 
     // if target audio is already playing, just fade volume
     if (!targetAudio.paused && activeAudios[targetSongId]) {
         targetAudio.volume = 0;
-        let volume = 0;
-        const step = savedVolume / 20;
-        const interval = setInterval(() => {
-            if (volume < savedVolume) {
-                volume += step;
-                targetAudio.volume = Math.min(volume, savedVolume);
-            } else {
-                clearInterval(interval);
-            }
-        }, fadeDuration / 20);
+        animateVolume(targetAudio, 0, savedVolume, fadeDuration);
         updatePlayerUI();
         return;
     }
@@ -1156,17 +1205,7 @@ export function fadeTo(targetSongId) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 
                 targetAudio.muted = false;
-                
-                let volume = 0;
-                const step = savedVolume / 20;
-                const interval = setInterval(() => {
-                    if (volume < savedVolume) {
-                        volume += step;
-                        targetAudio.volume = Math.min(volume, savedVolume);
-                    } else {
-                        clearInterval(interval);
-                    }
-                }, fadeDuration / 20);
+                animateVolume(targetAudio, 0, savedVolume, fadeDuration);
                 
             } catch (error) {
                 console.error("Error playing audio:", error);
