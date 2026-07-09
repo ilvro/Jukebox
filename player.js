@@ -1144,7 +1144,7 @@ export function fadeOut(targetSongId) {
 }
 
 export function fadeTo(targetSongId) {
-    const fadeDuration = 3500; // 3.5 seconds
+    const fadeDuration = 6500; // 6.5 seconds
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     
     if (!targetItem) return;
