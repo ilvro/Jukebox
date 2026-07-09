@@ -761,6 +761,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const title = titleInput ? titleInput.defaultValue : 'Unknown';
         const songId = item.dataset.songId;
         deletedSongs.push(title);
+
+        // release the thumbnail's blob URL too, not just the audio's
+        const thumbnailImg = item.querySelector('img');
+        if (thumbnailImg && thumbnailImg.src.startsWith('blob:')) {
+            URL.revokeObjectURL(thumbnailImg.src);
+        }
+
         removeSongAudio(songId); // Clean up audio references
         item.remove();
         document.dispatchEvent(new Event('songsUpdated'));

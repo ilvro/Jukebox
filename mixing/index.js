@@ -22,7 +22,7 @@ export function setupAudioEffects(audio, progressBar) {
         const currentVolume = audio ? audio.volume : 1;
 
         effectsRegistry.deactivateAllEffects();
-        disconnectAudioContext();
+        disconnectAudioContext(audio);
         
         // reset audio element properties
         if (audio) {

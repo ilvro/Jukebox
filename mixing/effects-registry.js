@@ -74,7 +74,7 @@ export class EffectsRegistry {
             return false;
         }
         
-        const context = getAudioContext();
+        const context = getAudioContext(this.audio);
         
         // check all required nodes
         if (!context.audioContext || !context.sourceNode || 

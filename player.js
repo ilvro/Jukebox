@@ -1144,7 +1144,7 @@ export function fadeOut(targetSongId) {
 }
 
 export function fadeTo(targetSongId) {
-    const fadeDuration = 6500; // 3.5 seconds
+    const fadeDuration = 3500; // 3.5 seconds
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     
     if (!targetItem) return;
@@ -1267,6 +1267,9 @@ export function removeSongAudio(songId) {
         const audio = allAudios[songId];
         audio.pause();
         audio.currentTime = 0;
+        // release the blob URL created on upload, otherwise it stays in
+        // memory for the rest of the page's life even after the song is gone
+        URL.revokeObjectURL(audio.src);
         delete allAudios[songId];
     }
     if (activeAudios[songId]) {
@@ -1278,6 +1281,12 @@ export function removeSongAudio(songId) {
     if (audioTimes[songId]) {
         delete audioTimes[songId];
     }
+    delete songMarkers[songId];
+    waveformCache.delete(songId);
+
+    // in case the song was actively playing, make sure its track panel
+    // (and the listener/effects tied to it) gets torn down right away
+    updatePlayerUI();
 }
 
 export function resetSong(songId) {
