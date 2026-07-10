@@ -1,5 +1,6 @@
 import { setupAudioEffects } from './mixing/index.js';
 import { setMasterVolume } from './mixing/audio-context.js';
+import { getFadeDuration } from './settings.js';
 let activeAudios = {};
 let allAudios = {};
 let audioVolumes = {};
@@ -14,6 +15,8 @@ let lastRightClickTime = 0;
 let isDragging = false;
 
 const songMarkers = {};
+const songRegions = {}; // songId -> { start, end }, survives pause/resume so effects don't get silently lost
+const songActiveEffects = {}; // songId -> [effectKey, ...]
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
 const MAX_WAVEFORM_WIDTH = 500;
@@ -165,45 +168,15 @@ function setMarkers(songId, markers) {
 
 function smoothSkipToMarker(audio, targetTime) {
     const originalVolume = audio.volume;
-    
-    const crossfadeAudio = new Audio(audio.src);
-    crossfadeAudio.currentTime = targetTime;
-    crossfadeAudio.playbackRate = audio.playbackRate;
-    crossfadeAudio.preservesPitch = audio.preservesPitch;
-    crossfadeAudio.volume = 0;
-    
-    crossfadeAudio.load();
-    
-    let animationFrameId;
-    const startTime = performance.now();
-    
-    const animate = () => {
-        const elapsed = (performance.now() - startTime) / 1000;
-        const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
-        
-        const fadeOutCurve = Math.cos(progress * Math.PI * 0.5);
-        const fadeInCurve = Math.sin(progress * Math.PI * 0.5);
-        
-        audio.volume = originalVolume * fadeOutCurve;
-        crossfadeAudio.volume = originalVolume * fadeInCurve;
-        
-        if (progress < 1) {
-            animationFrameId = requestAnimationFrame(animate);
-        } else {
-            audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
-            audio.volume = originalVolume;
-            crossfadeAudio.pause();
-        }
-    };
-    
-    crossfadeAudio.play().then(() => {
-        animationFrameId = requestAnimationFrame(animate);
-    }).catch(error => {
-        console.error("Error playing crossfade audio:", error);
-        audio.volume = originalVolume;
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-        }
+    const halfDuration = (SMOOTH_SKIP_DURATION / 2) * 1000; // ms
+
+    // fades the SAME audio element down, jumps while silent, then fades back
+    // up — a separate raw audio element was used before for the crossfade,
+    // but it was never routed through the Web Audio effect graph, so region
+    // effects (speed, pitch, filters...) were silently absent during it
+    animateVolume(audio, originalVolume, 0, halfDuration, () => {
+        audio.currentTime = targetTime;
+        animateVolume(audio, 0, originalVolume, halfDuration);
     });
 }
 
@@ -473,6 +446,14 @@ function createTrackUI(songId, audio, playerContainer) {
     progressBar.className = 'progress-bar';
     progressContainer.appendChild(progressBar);
 
+    // restore a previously selected region, otherwise a paused/resumed song
+    // silently loses its effect region every time it starts playing again
+    const savedRegion = songRegions[songId];
+    if (savedRegion) {
+        progressBar.selectedStartTime = savedRegion.start;
+        progressBar.selectedEndTime = savedRegion.end;
+    }
+
     trackDiv.appendChild(progressContainer);
 
     const volumeControl = document.createElement('input');
@@ -630,6 +611,16 @@ function createTrackUI(songId, audio, playerContainer) {
     
     // only set up once per playing session now, instead of on every UI refresh
     const audioEffects = setupAudioEffects(audio, progressBar);
+
+    if (savedRegion) {
+        updateProgressBarGradient(progressBar, audio);
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+        });
+
+        const savedEffectKeys = songActiveEffects[songId] || [];
+        savedEffectKeys.forEach(key => audioEffects.activateEffect(key));
+    }
     
     let rightClickStartPos = null;
     let hasMovedMouse = false;
@@ -671,6 +662,8 @@ function createTrackUI(songId, audio, playerContainer) {
                 );
             } else if (isDoubleClick) {
                 audioEffects.cleanup();
+                delete songRegions[songId];
+                delete songActiveEffects[songId];
                 setTimeout(() => {
                     progressBar.selectedStartTime = undefined;
                     progressBar.selectedEndTime = undefined;
@@ -782,6 +775,19 @@ function createTrackUI(songId, audio, playerContainer) {
         },
         // called once, when the track actually stops playing
         cleanup() {
+            // remember the region and active effects so they come back if
+            // this song starts playing again later, instead of resetting
+            if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
+                songRegions[songId] = {
+                    start: progressBar.selectedStartTime,
+                    end: progressBar.selectedEndTime
+                };
+                songActiveEffects[songId] = audioEffects.getActiveEffectKeys();
+            } else {
+                delete songRegions[songId];
+                delete songActiveEffects[songId];
+            }
+
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audioEffects.cleanup();
             trackDiv.remove();
@@ -1185,7 +1191,7 @@ function redirectFadeTarget(audio, newVolume) {
 }
 
 export function fadeOut(targetSongId) {
-    const fadeDuration = 5
+    const fadeDuration = getFadeDuration();
     const audio = activeAudios[targetSongId];
     if (!audio || audio.paused) return;
     
@@ -1231,7 +1237,7 @@ export function stopSong(targetSongId) {
 }
 
 export function fadeTo(targetSongId) {
-    const fadeDuration = 3500; // 3.5 seconds
+    const fadeDuration = getFadeDuration() * 1000; // ms
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     
     if (!targetItem) return;
@@ -1374,6 +1380,11 @@ export function removeSongAudio(songId) {
     // in case the song was actively playing, make sure its track panel
     // (and the listener/effects tied to it) gets torn down right away
     updatePlayerUI();
+
+    // done after updatePlayerUI(), otherwise the track's own cleanup would
+    // just re-persist the region/effects we're trying to delete
+    delete songRegions[songId];
+    delete songActiveEffects[songId];
 }
 
 export function resetSong(songId) {
@@ -1394,4 +1405,9 @@ export function resetSong(songId) {
     audioVolumes[songId] = 1;
     
     updatePlayerUI();
+
+    // updatePlayerUI() may have just re-persisted the old region/effects via
+    // the track's own cleanup, so clear them after, not before
+    delete songRegions[songId];
+    delete songActiveEffects[songId];
 }

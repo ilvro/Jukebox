@@ -34,6 +34,8 @@ export function setupAudioEffects(audio, progressBar) {
     return {
         createContextMenu: handleContextMenu,
         cleanup,
-        isLooping: () => effectsRegistry.isLooping()
+        isLooping: () => effectsRegistry.isLooping(),
+        activateEffect: (key) => effectsRegistry.activateEffect(key),
+        getActiveEffectKeys: () => effectsRegistry.getActiveEffectKeys()
     };
 }

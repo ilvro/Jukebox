@@ -114,4 +114,10 @@ export class EffectsRegistry {
     isLooping() {
         return this.effects.loop?.active || this.effects.smoothLoop?.active;
     }
+
+    getActiveEffectKeys() {
+        return Object.entries(this.effects)
+            .filter(([, effect]) => effect.active)
+            .map(([key]) => key);
+    }
 }
