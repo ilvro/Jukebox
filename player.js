@@ -1192,6 +1192,9 @@ export function fadeOut(targetSongId) {
     const startVolume = audio.volume;
 
     animateVolume(audio, startVolume, 0, fadeDuration * 1000, () => {
+        // remember where playback stopped, so fadeTo/cutTo resume here later
+        audioTimes[targetSongId] = audio.currentTime;
+
         audio.pause();
         audio.volume = startVolume;
 
@@ -1212,6 +1215,9 @@ export function fadeOut(targetSongId) {
 export function stopSong(targetSongId) {
     const audio = activeAudios[targetSongId];
     if (!audio) return;
+
+    // remember where playback stopped, so fadeTo/cutTo resume here later
+    audioTimes[targetSongId] = audio.currentTime;
 
     audio.pause();
     delete activeAudios[targetSongId];
