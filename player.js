@@ -166,21 +166,59 @@ function setMarkers(songId, markers) {
     songMarkers[songId] = markers || [];
 }
 
-function smoothSkipToMarker(audio, targetTime) {
+function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
     const originalVolume = audio.volume;
-    const halfDuration = (SMOOTH_SKIP_DURATION / 2) * 1000; // ms
 
-    // fades the SAME audio element down, jumps while silent, then fades back
-    // up — a separate raw audio element was used before for the crossfade,
-    // but it was never routed through the Web Audio effect graph, so region
-    // effects (speed, pitch, filters...) were silently absent during it
-    animateVolume(audio, originalVolume, 0, halfDuration, () => {
-        audio.currentTime = targetTime;
-        animateVolume(audio, 0, originalVolume, halfDuration);
+    const crossfadeAudio = new Audio(audio.src);
+    crossfadeAudio.currentTime = targetTime;
+    crossfadeAudio.volume = 0;
+    crossfadeAudio.load();
+
+    // mirror whichever effects are currently active onto the crossfade
+    // audio too, tied to the same selected region — it's the one actually
+    // audible during most of the transition, so it needs the same
+    // speed/pitch/filters/etc. as the main audio, evaluated dynamically at
+    // its own position rather than copied once as a static snapshot
+    const activeKeys = audioEffects ? audioEffects.getActiveEffectKeys() : [];
+    const tempEffects = setupAudioEffects(crossfadeAudio, progressBar);
+    activeKeys.forEach(key => tempEffects.activateEffect(key));
+
+    let animationFrameId;
+    const startTime = performance.now();
+
+    const animate = () => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
+
+        const fadeOutCurve = Math.cos(progress * Math.PI * 0.5);
+        const fadeInCurve = Math.sin(progress * Math.PI * 0.5);
+
+        audio.volume = originalVolume * fadeOutCurve;
+        crossfadeAudio.volume = originalVolume * fadeInCurve;
+
+        if (progress < 1) {
+            animationFrameId = requestAnimationFrame(animate);
+        } else {
+            audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
+            audio.volume = originalVolume;
+            crossfadeAudio.pause();
+            tempEffects.cleanup();
+        }
+    };
+
+    crossfadeAudio.play().then(() => {
+        animationFrameId = requestAnimationFrame(animate);
+    }).catch(error => {
+        console.error("Error playing crossfade audio:", error);
+        audio.volume = originalVolume;
+        tempEffects.cleanup();
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
     });
 }
 
-function createMarkerContextMenu(x, y, songId, markerTime, audio) {
+function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, audioEffects) {
     const existingMenu = document.querySelector('.marker-context-menu');
     if (existingMenu) {
         existingMenu.remove();
@@ -240,7 +278,7 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio) {
     });
     
     smoothSkipItem.addEventListener('click', () => {
-        smoothSkipToMarker(audio, markerTime);
+        smoothSkipToMarker(audio, markerTime, progressBar, audioEffects);
         menu.style.opacity = '0';
         menu.style.transform = 'translateY(-10px)';
         menu.style.visibility = 'hidden';
@@ -741,7 +779,9 @@ function createTrackUI(songId, audio, playerContainer) {
                                 upEvent.pageY,
                                 songId,
                                 clickedMarker,
-                                audio
+                                audio,
+                                progressBar,
+                                audioEffects
                             );
                         }
                     }
