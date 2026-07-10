@@ -209,8 +209,8 @@ button {
 }
 /*
 
-/* ---------- upload popup from the dropdown menu ---------- */
-#upload-popup {
+/* ---------- shared popup styling (upload, settings, ...) ---------- */
+.popup {
     border-radius: 4px;
     background-color: rgba(36, 34, 34, 0.281);
     left: 50%;
@@ -355,7 +355,77 @@ button {
     text-overflow: ellipsis;
 }
 
-/* ------ player header: master volume, hotkey mode, stop all ------ */
+/* ------ hotkey panel (toggled like the player) ------ */
+.hotkey-panel {
+    position: fixed;
+    top: 100px;
+    right: 20px;
+    background: rgba(0, 0, 0, 0.15);
+    color: white;
+    padding: 15px;
+    width: 220px;
+    border-radius: 5px;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.hotkey-panel.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.hotkey-panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.hotkey-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+}
+
+.hotkey-panel-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
+    border-radius: 50%;
+    background: rgba(43, 219, 160, 0.9);
+    color: black;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.hotkey-panel-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hotkey-panel-clear {
+    margin-left: auto;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+}
+
+.hotkey-panel-clear:hover {
+    opacity: 1;
+    color: rgb(238, 66, 14);
+}
+
+.hotkey-panel-empty {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 8px;
+}
 .player-header {
     display: flex;
     align-items: center;

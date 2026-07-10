@@ -35,6 +35,10 @@
                 </div>
                 <label> | </label>
                 <button class="show-player-button" id="show-player-button" onclick="showPlayer()">Show Player</button>
+                <label> | </label>
+                <button class="show-player-button" id="show-hotkeys-button" onclick="toggleHotkeyPanel()">Show Hotkeys</button>
+                <label> | </label>
+                <button class="show-player-button" id="settings-button">Settings</button>
             </nav>
         </header>
 
@@ -51,6 +55,11 @@
                 </div>
             </div>
             <div class="track-list" id="track-list"></div>
+        </div>
+
+        <div class="hotkey-panel" id="hotkey-panel">
+            <h1>HOTKEYS</h1>
+            <div class="hotkey-panel-list" id="hotkey-panel-list"></div>
         </div>
 
         <div class="genre-filters">
@@ -157,8 +166,36 @@
             </div>
         </div>
 
+        <div id="settings-popup" class="popup">
+            <header class="popup-header">
+                <div class="upload-end-btns">
+                    <button id="settings-cancel" class="red-button">X</button>
+                </div>
+            </header>
+            <div class="popup-content">
+                <br><br>
+                <div class="upload-step">
+                    <label>Fade duration (seconds):</label>
+                    <div class="input-box">
+                        <input type="number" id="fade-duration-input" min="0.5" max="15" step="0.5">
+                    </div>
+                </div>
+
+                <br>
+                <div class="upload-step">
+                    <label>Background image:</label>
+                    <div class="input-box">
+                        <input type="file" id="background-image-input" accept="image/*">
+                        <label id="or">or</label>
+                        <button id="reset-background-btn" class="red-button">Reset to default</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <script src="filters.js"></script>
         <script type="module" src="player.js"></script>
         <script type="module" src="upload-song.js"></script>
+        <script type="module" src="settings.js"></script>
     </body>
 </html>

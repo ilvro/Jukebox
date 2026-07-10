@@ -23,6 +23,9 @@ const songHotkeys = new Map(); // '1'..'9' -> songId
 let hotkeyMode = 'fade'; // 'fade' | 'cut'
 
 const hotkeyModeBtn = document.getElementById('hotkey-mode-button');
+const hotkeyPanel = document.getElementById('hotkey-panel');
+const hotkeyPanelList = document.getElementById('hotkey-panel-list');
+const showHotkeysBtn = document.getElementById('show-hotkeys-button');
 
 function updateHotkeyModeLabel() {
     if (hotkeyModeBtn) {
@@ -37,6 +40,70 @@ if (hotkeyModeBtn) {
     });
     updateHotkeyModeLabel();
 }
+
+function renderHotkeyPanel() {
+    if (!hotkeyPanelList) return;
+
+    hotkeyPanelList.innerHTML = '';
+
+    const sortedKeys = [...songHotkeys.keys()].sort();
+
+    if (sortedKeys.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'hotkey-panel-empty';
+        empty.textContent = 'No hotkeys assigned yet. Right-click a song to set one.';
+        hotkeyPanelList.appendChild(empty);
+        return;
+    }
+
+    sortedKeys.forEach(key => {
+        const songId = songHotkeys.get(key);
+        const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+        if (!songItem) {
+            songHotkeys.delete(key); // song no longer exists, drop the stale entry
+            return;
+        }
+
+        const row = document.createElement('div');
+        row.className = 'hotkey-panel-row';
+
+        const badge = document.createElement('span');
+        badge.className = 'hotkey-panel-key';
+        badge.textContent = key;
+
+        const label = document.createElement('span');
+        label.className = 'hotkey-panel-title';
+        label.textContent = songItem.querySelector('.title-input')?.value || 'Unknown';
+
+        const clearBtn = document.createElement('span');
+        clearBtn.className = 'hotkey-panel-clear';
+        clearBtn.textContent = '×';
+        clearBtn.title = 'Clear hotkey';
+        clearBtn.addEventListener('click', () => clearHotkey(songId));
+
+        row.appendChild(badge);
+        row.appendChild(label);
+        row.appendChild(clearBtn);
+        hotkeyPanelList.appendChild(row);
+    });
+}
+
+function toggleHotkeyPanel() {
+    if (!hotkeyPanel) return;
+    hotkeyPanel.classList.toggle('active');
+    if (showHotkeysBtn) {
+        showHotkeysBtn.textContent = showHotkeysBtn.textContent === 'Show Hotkeys' ? 'Hide Hotkeys' : 'Show Hotkeys';
+    }
+    renderHotkeyPanel();
+}
+window.toggleHotkeyPanel = toggleHotkeyPanel;
+
+// keep the panel's titles fresh if it's open while someone renames a song
+document.addEventListener('input', (event) => {
+    if (hotkeyPanel?.classList.contains('active') && event.target.classList.contains('title-input')) {
+        renderHotkeyPanel();
+    }
+});
 
 function renderHotkeyBadge(songItem, key) {
     let badge = songItem.querySelector('.hotkey-badge');
@@ -62,6 +129,7 @@ function clearHotkey(songId) {
             break;
         }
     }
+    renderHotkeyPanel();
 }
 
 // assigns a hotkey to a song, taking it away from whoever had it before —
@@ -78,6 +146,7 @@ function assignHotkey(key, songItem) {
 
     songHotkeys.set(key, songId);
     renderHotkeyBadge(songItem, key);
+    renderHotkeyPanel();
 }
 
 function startHotkeyAssignment(songItem) {
