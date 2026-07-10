@@ -1,4 +1,4 @@
-import { addSongToPlayer, getMarkers, setMarkers, fadeTo, cutTo, fadeOut, removeSongAudio, resetSong } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers, fadeTo, cutTo, fadeOut, stopSong, removeSongAudio, resetSong } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -17,6 +17,123 @@ const supportsFileSystemAccess = 'showDirectoryPicker' in window;
 
 const dimmer = document.getElementById('dimmer');
 const songGrid = document.getElementById('song-grid');
+
+// ---------------- song hotkeys (1-9) ----------------
+const songHotkeys = new Map(); // '1'..'9' -> songId
+let hotkeyMode = 'fade'; // 'fade' | 'cut'
+
+const hotkeyModeBtn = document.getElementById('hotkey-mode-button');
+
+function updateHotkeyModeLabel() {
+    if (hotkeyModeBtn) {
+        hotkeyModeBtn.textContent = hotkeyMode === 'fade' ? 'Hotkeys: Fade' : 'Hotkeys: Cut';
+    }
+}
+
+if (hotkeyModeBtn) {
+    hotkeyModeBtn.addEventListener('click', () => {
+        hotkeyMode = hotkeyMode === 'fade' ? 'cut' : 'fade';
+        updateHotkeyModeLabel();
+    });
+    updateHotkeyModeLabel();
+}
+
+function renderHotkeyBadge(songItem, key) {
+    let badge = songItem.querySelector('.hotkey-badge');
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.className = 'hotkey-badge';
+        songItem.appendChild(badge);
+    }
+    badge.textContent = key;
+}
+
+function removeHotkeyBadge(songItem) {
+    const badge = songItem.querySelector('.hotkey-badge');
+    if (badge) badge.remove();
+}
+
+function clearHotkey(songId) {
+    for (const [key, id] of songHotkeys) {
+        if (id === songId) {
+            songHotkeys.delete(key);
+            const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+            if (item) removeHotkeyBadge(item);
+            break;
+        }
+    }
+}
+
+// assigns a hotkey to a song, taking it away from whoever had it before —
+// shared by manual assignment and preset loading
+function assignHotkey(key, songItem) {
+    const songId = songItem.dataset.songId;
+
+    const previousSongId = songHotkeys.get(key);
+    if (previousSongId && previousSongId !== songId) {
+        const previousItem = document.querySelector(`.song-item[data-song-id="${previousSongId}"]`);
+        if (previousItem) removeHotkeyBadge(previousItem);
+    }
+    clearHotkey(songId);
+
+    songHotkeys.set(key, songId);
+    renderHotkeyBadge(songItem, key);
+}
+
+function startHotkeyAssignment(songItem) {
+    const hint = document.createElement('div');
+    hint.className = 'hotkey-assign-hint';
+    hint.textContent = 'Press 1-9 to assign a hotkey (Esc to cancel)';
+    document.body.appendChild(hint);
+
+    const cleanup = () => {
+        document.removeEventListener('keydown', onKeyDown);
+        hint.remove();
+    };
+
+    const onKeyDown = (event) => {
+        if (event.key === 'Escape') {
+            cleanup();
+            return;
+        }
+        if (/^[1-9]$/.test(event.key)) {
+            event.preventDefault();
+            assignHotkey(event.key, songItem);
+            cleanup();
+        }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+}
+
+// pressing 1-9 anywhere (outside of text inputs) triggers that song's hotkey.
+// if the song is already playing, the same key stops it instead of
+// restarting it — using fade or an instant cut, depending on hotkeyMode
+document.addEventListener('keydown', (event) => {
+    const activeTag = document.activeElement?.tagName;
+    if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+    if (!/^[1-9]$/.test(event.key)) return;
+
+    const songId = songHotkeys.get(event.key);
+    if (!songId) return;
+
+    const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    const isPlaying = songItem?.classList.contains('playing');
+
+    if (isPlaying) {
+        if (hotkeyMode === 'fade') {
+            fadeOut(songId);
+        } else {
+            stopSong(songId);
+        }
+    } else {
+        if (hotkeyMode === 'fade') {
+            fadeTo(songId);
+        } else {
+            cutTo(songId);
+        }
+    }
+});
 
 function createLoadingIndicator() {
     const loadingDiv = document.createElement('div');
@@ -229,6 +346,8 @@ async function savePreset() {
             
             const songId = songItem.dataset.songId;
             const markers = getMarkers(songId);
+            const hotkeyEntry = [...songHotkeys].find(([key, id]) => id === songId);
+            const hotkey = hotkeyEntry ? hotkeyEntry[0] : null;
 
             // check for title changes
             const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
@@ -238,7 +357,8 @@ async function savePreset() {
                     currentTitle,
                     genres,
                     tags,
-                    markers
+                    markers,
+                    hotkey
                 };
 
                 presetData[existingIndex] = updatedSong;
@@ -273,7 +393,7 @@ async function savePreset() {
                 updatedData.push(updatedSong);
             } else {
                 console.log(`adding new song: ${decodeURIComponent(currentTitle)}`);
-                const newSong = { currentTitle, genres, tags, markers };
+                const newSong = { currentTitle, genres, tags, markers, hotkey };
                 presetData.push(newSong);
                 updatedData.push(newSong);
             }
@@ -338,7 +458,7 @@ async function loadPreset() {
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
         for (const songMetadata of presetMetadata) {
-            let { currentTitle, genres, tags, markers } = songMetadata;
+            let { currentTitle, genres, tags, markers, hotkey } = songMetadata;
 
             genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
             songMetadata.genres = genres;
@@ -393,6 +513,11 @@ async function loadPreset() {
             // load markers
             if (markers && markers.length > 0) {
                 setMarkers(songItem.dataset.songId, markers);
+            }
+
+            // load hotkey
+            if (hotkey) {
+                assignHotkey(hotkey, songItem);
             }
         }
         console.log('loaded preset');
@@ -768,9 +893,18 @@ document.addEventListener('DOMContentLoaded', () => {
             URL.revokeObjectURL(thumbnailImg.src);
         }
 
+        clearHotkey(songId);
         removeSongAudio(songId); // Clean up audio references
         item.remove();
         document.dispatchEvent(new Event('songsUpdated'));
+    }));
+
+    contextMenu.appendChild(createOption('Set Hotkey (1-9)', (item) => {
+        startHotkeyAssignment(item);
+    }));
+
+    contextMenu.appendChild(createOption('Clear Hotkey', (item) => {
+        clearHotkey(item.dataset.songId);
     }));
 
     document.body.appendChild(contextMenu);

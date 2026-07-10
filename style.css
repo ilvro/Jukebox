@@ -355,6 +355,73 @@ button {
     text-overflow: ellipsis;
 }
 
+/* ------ player header: master volume, hotkey mode, stop all ------ */
+.player-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.player-controls {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.master-volume-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.master-volume-control label {
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+#hotkey-mode-button,
+#stop-all-button {
+    font-size: 14px;
+    padding: 4px 2px;
+    white-space: nowrap;
+}
+
+/* ------ song hotkey badge ------ */
+.hotkey-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(43, 219, 160, 0.9);
+    color: black;
+    font-family: 'Times New Roman', Times, serif;
+    font-weight: bold;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.hotkey-assign-hint {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    color: rgb(43, 219, 160);
+    padding: 8px 16px;
+    border-radius: 5px;
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 15px;
+    z-index: 10001;
+}
+
 .progress-container {
     position: relative;
     height: 30px;

@@ -39,7 +39,17 @@
         </header>
 
         <div class="player-container" id="player-container">
-            <h1>NOW PLAYING</h1>
+            <div class="player-header">
+                <h1>NOW PLAYING</h1>
+                <div class="player-controls">
+                    <div class="master-volume-control">
+                        <label for="master-volume-slider">Master</label>
+                        <input type="range" id="master-volume-slider" class="volume-slider" min="0" max="1" step="0.01" value="1">
+                    </div>
+                    <button id="hotkey-mode-button" class="button">Hotkeys: Fade</button>
+                    <button id="stop-all-button" class="red-button">Stop All</button>
+                </div>
+            </div>
             <div class="track-list" id="track-list"></div>
         </div>
 

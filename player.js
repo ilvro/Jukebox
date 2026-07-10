@@ -1,4 +1,5 @@
 import { setupAudioEffects } from './mixing/index.js';
+import { setMasterVolume } from './mixing/audio-context.js';
 let activeAudios = {};
 let allAudios = {};
 let audioVolumes = {};
@@ -6,6 +7,8 @@ let audioTimes = {};
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const showPlayerBtn = document.getElementById('show-player-button');
+const masterVolumeSlider = document.getElementById('master-volume-slider');
+const stopAllBtn = document.getElementById('stop-all-button');
 const doubleClickDelay = 300;
 let lastRightClickTime = 0;
 let isDragging = false;
@@ -20,6 +23,27 @@ let currentGenerations = 0;
 
 const MARKER_SNAP_TOLERANCE = 2.5;
 const SMOOTH_SKIP_DURATION = 2.5;
+
+if (masterVolumeSlider) {
+    masterVolumeSlider.addEventListener('input', () => {
+        setMasterVolume(parseFloat(masterVolumeSlider.value));
+    });
+}
+
+if (stopAllBtn) {
+    // an instant, full stop for every playing song at once — separate from
+    // the per-song "Fade Out", meant for when you need silence immediately
+    stopAllBtn.addEventListener('click', () => {
+        Object.keys(activeAudios).forEach(id => {
+            const audio = activeAudios[id];
+            audio.pause();
+            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            item?.classList.remove('playing');
+            delete activeAudios[id];
+        });
+        updatePlayerUI();
+    });
+}
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
@@ -473,9 +497,16 @@ function createTrackUI(songId, audio, playerContainer) {
     });
 
     volumeControl.addEventListener('input', () => {
-        audio.volume = volumeControl.value;
+        const newVolume = parseFloat(volumeControl.value);
+        // if a fade is running on this audio, aim it at the new value instead
+        // of setting volume directly, otherwise the fade overwrites this on
+        // its very next animation frame
+        const redirected = redirectFadeTarget(audio, newVolume);
+        if (!redirected) {
+            audio.volume = newVolume;
+        }
         if (songId) {
-            audioVolumes[songId] = parseFloat(volumeControl.value);
+            audioVolumes[songId] = newVolume;
         }
         updateVolumeSlider(volumeControl);
     });
@@ -653,12 +684,15 @@ function createTrackUI(songId, audio, playerContainer) {
                     });
                 }, 50);
             } else if ((!progressBar.selectedStartTime || !progressBar.selectedEndTime) || isOverMarker) {
-                isDragging = true;
-                progressBar.selectedStartTime = selectedTime;
+                // don't commit to a new selection on mousedown alone — a plain
+                // right-click on a marker (no movement) should only open the
+                // marker menu and must NOT wipe out the existing region.
+                // the previous selection is only overwritten once real
+                // dragging is detected below.
+                const pendingStartTime = selectedTime;
+                let dragCommitted = false;
                 
                 const onMouseMove = (moveEvent) => {
-                    if (!isDragging) return;
-                    
                     const moveDistance = Math.sqrt(
                         Math.pow(moveEvent.clientX - rightClickStartPos.x, 2) + 
                         Math.pow(moveEvent.clientY - rightClickStartPos.y, 2)
@@ -666,6 +700,14 @@ function createTrackUI(songId, audio, playerContainer) {
                     
                     if (moveDistance > 5) {
                         hasMovedMouse = true;
+                    }
+                    
+                    if (!hasMovedMouse) return;
+                    
+                    if (!dragCommitted) {
+                        dragCommitted = true;
+                        isDragging = true;
+                        progressBar.selectedStartTime = pendingStartTime;
                     }
                     
                     let movedTime = getExactTime(moveEvent, waveformCanvas);
@@ -1094,29 +1136,52 @@ function updateVolumeSlider(slider) {
 // fading in eases in (starts slow, speeds up near the end) and fading out eases out
 // (drops quickly at first, tapers off gently near silence) - this avoids the "sudden jump"
 // feeling you get with a plain linear ramp.
+const activeFadeTargets = new Map(); // audio -> { value: targetVolume }, kept live so a manual volume change mid-fade can redirect it
+
 function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
     const startTime = performance.now();
-    const isFadingIn = endVolume > startVolume;
+    const targetRef = { value: endVolume };
+    activeFadeTargets.set(audio, targetRef);
 
     const step = () => {
+        // if another animateVolume call took over this audio, stop here
+        if (activeFadeTargets.get(audio) !== targetRef) return;
+
         const elapsed = performance.now() - startTime;
         const progress = Math.min(elapsed / duration, 1);
+        const target = targetRef.value; // read live: may have been redirected
+        const isFadingIn = target > startVolume;
 
         const eased = isFadingIn
             ? progress * progress
             : 1 - Math.pow(1 - progress, 2);
 
-        audio.volume = startVolume + (endVolume - startVolume) * eased;
+        audio.volume = startVolume + (target - startVolume) * eased;
 
         if (progress < 1) {
             requestAnimationFrame(step);
         } else {
-            audio.volume = endVolume;
+            audio.volume = target;
+            if (activeFadeTargets.get(audio) === targetRef) {
+                activeFadeTargets.delete(audio);
+            }
             if (onComplete) onComplete();
         }
     };
 
     requestAnimationFrame(step);
+}
+
+// called from the volume slider: if a fade is currently running on this
+// audio, redirect its target instead of letting the fade silently
+// overwrite the manual adjustment on the next animation frame
+function redirectFadeTarget(audio, newVolume) {
+    const targetRef = activeFadeTargets.get(audio);
+    if (targetRef) {
+        targetRef.value = newVolume;
+        return true;
+    }
+    return false;
 }
 
 export function fadeOut(targetSongId) {
@@ -1143,8 +1208,24 @@ export function fadeOut(targetSongId) {
     });
 }
 
+// instant stop for a single song, no fade — the "cut" counterpart to fadeOut
+export function stopSong(targetSongId) {
+    const audio = activeAudios[targetSongId];
+    if (!audio) return;
+
+    audio.pause();
+    delete activeAudios[targetSongId];
+
+    const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    if (songElement) {
+        songElement.classList.remove('playing');
+    }
+
+    updatePlayerUI();
+}
+
 export function fadeTo(targetSongId) {
-    const fadeDuration = 6500; // 6.5 seconds
+    const fadeDuration = 3500; // 3.5 seconds
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     
     if (!targetItem) return;

@@ -4,6 +4,7 @@
 // correctly on every song, not just whichever one happened to play first.
 let audioContext = null;
 let mainGainNode = null;
+let masterVolume = 1;
 const audioNodes = new Map(); // audio element -> { sourceNode, dryGainNode, wetGainNode, isInitialized }
 
 function ensureAudioContext() {
@@ -16,9 +17,23 @@ function ensureAudioContext() {
         audioContext = new (window.AudioContext || window.webkitAudioContext)(contextOptions);
 
         mainGainNode = audioContext.createGain();
+        mainGainNode.gain.value = masterVolume;
         mainGainNode.connect(audioContext.destination);
     }
     return audioContext;
+}
+
+// master volume affects every song at once, applied after each song's own
+// dry/wet mix, right before the final output
+export function setMasterVolume(value) {
+    masterVolume = value;
+    if (mainGainNode) {
+        mainGainNode.gain.value = value;
+    }
+}
+
+export function getMasterVolume() {
+    return masterVolume;
 }
 
 export function initializeAudioContext(audio) {
