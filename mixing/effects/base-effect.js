@@ -10,7 +10,7 @@ export class AudioEffect {
         this.progressBar = null;
     }
 
-    activate(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar) { // this has to be called on every audio effect. without this function it wont be applied to the audio context menu and the effect wont work
+    activate(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar, effectsRegistry) { // this has to be called on every audio effect. without this function it wont be applied to the audio context menu and the effect wont work
         if (!this.active && audioContext) {
             // store audio context data and audio element for later use
             this.audioContextData = { 
@@ -22,6 +22,7 @@ export class AudioEffect {
             };
             this.audio = audio;
             this.progressBar = progressBar;
+            this.effectsRegistry = effectsRegistry;
             
             // set up nodes and event listeners
             this.setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode);
@@ -55,11 +56,11 @@ export class AudioEffect {
         }
     }
 
-    toggle(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar) {
+    toggle(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar, effectsRegistry) {
         if (this.active) {
             this.deactivate();
         } else {
-            this.activate(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar);
+            this.activate(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode, audio, progressBar, effectsRegistry);
         }
         return this.active;
     }

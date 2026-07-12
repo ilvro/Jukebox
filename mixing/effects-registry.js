@@ -90,7 +90,8 @@ export class EffectsRegistry {
             context.wetGainNode,
             context.mainGainNode,
             this.audio,
-            this.progressBar
+            this.progressBar,
+            this
         );
     }
     

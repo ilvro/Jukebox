@@ -155,9 +155,61 @@ export class SmoothLoopEffect extends AudioEffect {
     }
 }
 
-// not gonna lie this one was entirely vibe coded
-// i dont really know how this effect works
-// the comments are me trying to understand each line
+// builds a small, throwaway Web Audio chain that mirrors a currently active
+// wet-path effect, so the reversed buffer (which otherwise bypasses the
+// normal wet/dry graph entirely) can also be processed by it
+function buildMirrorEffectNodes(audioContext, key, effectInstance) {
+    switch (key) {
+        case 'reverb': {
+            const delay = audioContext.createDelay(1.0);
+            const feedback = audioContext.createGain();
+            const output = audioContext.createGain();
+            delay.delayTime.value = effectInstance.options.delayTime;
+            feedback.gain.value = effectInstance.options.feedback;
+            output.gain.value = effectInstance.options.wet;
+            delay.connect(feedback);
+            feedback.connect(delay);
+            delay.connect(output);
+            return { input: delay, output, extraNodes: [delay, feedback, output] };
+        }
+        case 'echo': {
+            const delay = audioContext.createDelay();
+            const feedback = audioContext.createGain();
+            delay.delayTime.value = effectInstance.options.delayTime;
+            feedback.gain.value = effectInstance.options.feedback;
+            delay.connect(feedback);
+            feedback.connect(delay);
+            return { input: delay, output: delay, extraNodes: [delay, feedback] };
+        }
+        case 'tremolo': {
+            const gainNode = audioContext.createGain();
+            const lfo = audioContext.createOscillator();
+            const lfoGain = audioContext.createGain();
+            lfo.frequency.value = effectInstance.options.frequency;
+            lfoGain.gain.value = effectInstance.options.depth;
+            lfo.connect(lfoGain);
+            lfoGain.connect(gainNode.gain);
+            lfo.start();
+            return { input: gainNode, output: gainNode, extraNodes: [gainNode, lfo, lfoGain] };
+        }
+        case 'highpass':
+        case 'lowpass': {
+            const filter1 = audioContext.createBiquadFilter();
+            const filter2 = audioContext.createBiquadFilter();
+            filter1.type = effectInstance.filterType;
+            filter2.type = effectInstance.filterType;
+            filter1.frequency.value = effectInstance.options.frequency;
+            filter2.frequency.value = effectInstance.options.frequency;
+            filter1.Q.value = effectInstance.options.Q;
+            filter2.Q.value = effectInstance.options.Q;
+            filter1.connect(filter2);
+            return { input: filter1, output: filter2, extraNodes: [filter1, filter2] };
+        }
+        default:
+            return null; // nightcore, loops, and reverse itself aren't mirrored
+    }
+}
+
 export class ReverseEffect extends AudioEffect {
     constructor() {
         super('Reverse');
@@ -171,6 +223,8 @@ export class ReverseEffect extends AudioEffect {
         this.currentPlaybackTime = 0;
         this.lastUpdateTime = 0;
         this.seekPosition = null;
+        this.animationFrameId = null;
+        this.mirrorNodes = [];
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -197,41 +251,19 @@ export class ReverseEffect extends AudioEffect {
                 return;
             }
 
-            const currentTime = audio.currentTime;
-            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                       currentTime <= progressBar.selectedEndTime;
-            
-            // if we just entered the region
-            if (isInSelectedRegion && !this.isReversePlaying) {
-                this.startReversePlayback();
-                console.log('looping? maybe')
-            } 
-            // if we just left the region
-            else if (!isInSelectedRegion && this.isReversePlaying) {
-                this.stopReversePlayback();
-                audio.muted = false;
-                audio.play(); // Resume normal playback
-            }
-            
-            // update progress bar when playing in reverse
-            if (this.isReversePlaying) {
-                // calculate elapsed time since last update
-                const now = this.audioContext.currentTime;
-                const elapsed = now - this.lastUpdateTime;
-                this.lastUpdateTime = now;
-                
-                // update our internal tracker for position in reverse
-                if (this.currentPlaybackTime !== null) {
-                    // In ueverse, subtract time rather than add
-                    this.currentPlaybackTime -= elapsed;
-                    
-                    // calculate position in the original timeline
-                    const regionDuration = progressBar.selectedEndTime - progressBar.selectedStartTime;
-                    const reversedPosition = progressBar.selectedEndTime - 
-                        ((this.currentPlaybackTime / regionDuration) * regionDuration);
-                    
-                    // update the progress bar without triggering 'timeupdate'
-                    progressBar.value = reversedPosition;
+            // audio keeps genuinely playing (muted) the whole time reverse is
+            // active — we deliberately never pause it, since pause() fires
+            // the app's own 'pause' listener, which tears down and rebuilds
+            // the whole track (including every effect) mid-reverse. so this
+            // handler only cares about detecting when we've just ENTERED
+            // the region; region-exit is handled by the reversed buffer's
+            // own onended, not by watching this (muted) forward drift
+            if (!this.isReversePlaying) {
+                const currentTime = audio.currentTime;
+                const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
+                                           currentTime <= progressBar.selectedEndTime;
+                if (isInSelectedRegion) {
+                    this.startReversePlayback();
                 }
             }
         };
@@ -248,7 +280,8 @@ export class ReverseEffect extends AudioEffect {
                     this.stopReversePlayback();
                     this.startReversePlayback();
                 } else {
-                    // user seeked outside the region
+                    // user seeked outside the region — audio was never
+                    // paused, just muted, so no need to resume playback
                     this.stopReversePlayback();
                     audio.muted = false;
                 }
@@ -309,25 +342,55 @@ export class ReverseEffect extends AudioEffect {
         }
         
         // calculate position as percentage through the region
-        const positionInRegion = (currentPosition - regionStart) / regionDuration;
+        const positionInRegion = Math.min(1, Math.max(0, (currentPosition - regionStart) / regionDuration));
         const reversedPosition = 1 - positionInRegion; // reverse the position
         
         // create the reversed buffer
         const reversedBuffer = this.createReversedBuffer(regionStart, regionEnd);
         
-        // mute the original audio but don't pause it (for progress tracking)
+        // mute the original element, but deliberately never pause() it —
+        // pausing would fire the app's own 'pause' listener, which tears
+        // down and rebuilds the whole track (including every effect,
+        // reverse included) mid-playback. it keeps drifting forward,
+        // muted, in the background, but nothing here reacts to that
+        // drift anymore — only the reversed buffer's own onended below
+        // decides when reverse is done, which is what actually fixes the
+        // erratic "plays for a bit then gets stuck looping" bug (it used
+        // to come from these two independent clocks racing each other)
         this.audio.muted = true;
         
         // create a new buffer source for reversed playback
         this.bufferSourceNode = this.audioContext.createBufferSource();
         this.bufferSourceNode.buffer = reversedBuffer;
         
-        // connect through dedicated gain node for volume control
-        this.bufferSourceNode.connect(this.reverseGainNode);
-        this.reverseGainNode.connect(this.mainGainNode);
-        
-        // set the gain to match current volume
+        // connect through a dedicated gain node, then through equivalent
+        // nodes for whichever OTHER effects are currently active, so this
+        // doesn't go completely unprocessed compared to normal playback
         this.reverseGainNode.gain.value = this.audio.volume;
+        this.bufferSourceNode.connect(this.reverseGainNode);
+
+        this.mirrorNodes = [];
+        let lastNode = this.reverseGainNode;
+        const activeKeys = this.effectsRegistry ? this.effectsRegistry.getActiveEffectKeys() : [];
+        activeKeys.forEach(key => {
+            if (key === 'reverse') return;
+            const effectInstance = this.effectsRegistry.effects[key];
+            const mirror = buildMirrorEffectNodes(this.audioContext, key, effectInstance);
+            if (mirror) {
+                lastNode.connect(mirror.input);
+                lastNode = mirror.output;
+                this.mirrorNodes.push(...mirror.extraNodes);
+            }
+        });
+        lastNode.connect(this.mainGainNode);
+
+        // a raw AudioBufferSourceNode has no equivalent to preservesPitch —
+        // changing its rate always changes pitch, there's no way to time-
+        // stretch it. so we only actually change the rate when Pitch Shift
+        // is ALSO active (matching what that toggle implies); otherwise we
+        // deliberately leave the rate at 1 rather than silently pitch-shift
+        // the reversed section regardless of whether Pitch Shift is on
+        this.bufferSourceNode.playbackRate.value = this.getReverseSpeedFactor(activeKeys);
         
         // calculate start position in the buffer
         const startOffset = reversedPosition * reversedBuffer.duration;
@@ -339,15 +402,66 @@ export class ReverseEffect extends AudioEffect {
         // set up tracking for reverse playback time
         this.lastUpdateTime = this.audioContext.currentTime;
         this.currentPlaybackTime = reversedPosition * regionDuration;
-        
-        // when reverse playback reaches the beginning of the region,
-        // resume normal playback from the beginning of the region
-        this.bufferSourceNode.onended = () => {
-            if (this.isReversePlaying) {
+        this.reverseStartedAt = this.audioContext.currentTime;
+        const maxReverseDuration = regionDuration * 1.5 + 1; // safety margin
+
+        // drives the progress bar and keeps the reversed buffer's rate in
+        // sync with the Speed effect — driven by its own rAF loop instead of
+        // the audio element's 'timeupdate', since that's the only thing
+        // that fired reliably during reverse before
+        const tick = () => {
+            if (!this.isReversePlaying) return;
+
+            // safety net: if something goes wrong (e.g. rounding on the
+            // buffer duration) and onended never fires, force a stop rather
+            // than let this run forever and require a page reload
+            if (this.audioContext.currentTime - this.reverseStartedAt > maxReverseDuration) {
                 this.stopReversePlayback();
                 this.audio.currentTime = regionStart;
                 this.audio.muted = false;
-                this.audio.play();
+                return;
+            }
+
+            if (this.bufferSourceNode) {
+                const targetRate = this.getReverseSpeedFactor(
+                    this.effectsRegistry ? this.effectsRegistry.getActiveEffectKeys() : []
+                );
+                if (this.bufferSourceNode.playbackRate.value !== targetRate) {
+                    this.bufferSourceNode.playbackRate.value = targetRate;
+                }
+            }
+
+            const now = this.audioContext.currentTime;
+            const elapsed = now - this.lastUpdateTime;
+            this.lastUpdateTime = now;
+
+            if (this.currentPlaybackTime !== null) {
+                // in reverse, subtract time rather than add
+                this.currentPlaybackTime -= elapsed;
+                this.progressBar.value = regionEnd - this.currentPlaybackTime;
+            }
+
+            this.animationFrameId = requestAnimationFrame(tick);
+        };
+        this.animationFrameId = requestAnimationFrame(tick);
+        
+        // when reverse playback reaches the beginning of the region, loop
+        // it — restarting deterministically from the exact end of the
+        // region via seekPosition. crucially, this does NOT touch
+        // audio.currentTime: doing that fires a 'timeupdate' event, and
+        // since stopReversePlayback() just set isReversePlaying to false,
+        // handleTimeUpdate's own entry-check could react to THAT event and
+        // call startReversePlayback() itself first — using the stale
+        // position, before this function gets to set seekPosition. that
+        // race is what caused every loop to collapse into a tiny ~0.2-1s
+        // blip near the start of the region, no matter its actual size.
+        // the (muted) element just keeps drifting forward in the
+        // background; nothing reacts to that while isReversePlaying is true
+        this.bufferSourceNode.onended = () => {
+            if (this.isReversePlaying) {
+                this.stopReversePlayback();
+                this.seekPosition = regionEnd;
+                this.startReversePlayback();
             }
         };
     }
@@ -355,6 +469,11 @@ export class ReverseEffect extends AudioEffect {
     // stop playing reversed audio
     stopReversePlayback() {
         if (!this.isReversePlaying) return;
+
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
         
         // stop and disconnect the buffer source node
         if (this.bufferSourceNode) {
@@ -363,9 +482,37 @@ export class ReverseEffect extends AudioEffect {
             this.bufferSourceNode.disconnect();
             this.bufferSourceNode = null;
         }
+
+        this.reverseGainNode.disconnect();
+        this.mirrorNodes.forEach(node => {
+            if (typeof node.stop === 'function') {
+                try { node.stop(); } catch (e) { /* already stopped */ }
+            }
+            node.disconnect();
+        });
+        this.mirrorNodes = [];
         
         this.isReversePlaying = false;
         this.currentPlaybackTime = null;
+    }
+
+    // decides the reversed buffer's playback rate from the currently active
+    // effects. a raw AudioBufferSourceNode can't preserve pitch while
+    // changing rate (no equivalent to the native preservesPitch), so a
+    // speed effect only actually changes the buffer's rate when Pitch
+    // Shift is also active — otherwise we'd be silently pitch-shifting
+    // regardless of whether that toggle is on
+    getReverseSpeedFactor(activeKeys) {
+        const hasPitchShift = activeKeys.includes('pitchShift');
+        if (!hasPitchShift) return 1;
+
+        const speedKey = activeKeys.find(key => key.startsWith('speed'));
+        if (!speedKey) return 1;
+
+        // relies on the "speedNNN" naming convention used throughout the
+        // effects registry (speed075, speed090, speed110, speed125...)
+        const factor = parseInt(speedKey.replace('speed', ''), 10) / 100;
+        return isNaN(factor) ? 1 : factor;
     }
     
     // create a reversed copy of the audio buffer for the selected region
@@ -400,11 +547,11 @@ export class ReverseEffect extends AudioEffect {
         if (this.active) {
             this.stopReversePlayback();
             if (this.audio) {
+                // just unmute — the effect never calls pause() on this
+                // element itself (that used to be the cause of a much worse
+                // bug), so if it's paused here, the user paused it on
+                // purpose and we must not override that
                 this.audio.muted = false;
-                // ensure audio is still playable after deactivation
-                if (this.audio.paused) {
-                    this.audio.play().catch(e => console.error("Failed to resume audio:", e));
-                }
             }
             if (this.cleanup) this.cleanup();
             this.active = false;
