@@ -1348,6 +1348,62 @@ export function fadeTo(targetSongId) {
     }
 }
 
+// starts a song from silence and fades it up to its saved volume, without
+// touching whatever else is currently playing — unlike fadeTo, which fades
+// everything else out first
+export function fadeIn(targetSongId) {
+    const fadeDuration = getFadeDuration() * 1000; // ms
+    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    
+    if (!targetItem) return;
+
+    const targetAudio = allAudios[targetSongId];
+    if (!targetAudio) {
+        console.error(`No audio found for song ${targetSongId}`);
+        return;
+    }
+
+    const savedVolume = audioVolumes[targetSongId] || 1;
+    const savedTime = audioTimes[targetSongId] || 0;
+
+    // if it's already playing, just fade its volume up from where it is
+    if (!targetAudio.paused && activeAudios[targetSongId]) {
+        targetAudio.volume = 0;
+        animateVolume(targetAudio, 0, savedVolume, fadeDuration);
+        updatePlayerUI();
+        return;
+    }
+
+    if (targetAudio.paused) {
+        targetAudio.muted = true;
+        targetAudio.volume = 0;
+        
+        targetAudio.pause();
+        
+        targetAudio.currentTime = savedTime;
+        
+        (async () => {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            
+            try {
+                await targetAudio.play();
+                activeAudios[targetSongId] = targetAudio;
+                targetItem.classList.add('playing');
+                updatePlayerUI();
+                
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                targetAudio.muted = false;
+                animateVolume(targetAudio, 0, savedVolume, fadeDuration);
+                
+            } catch (error) {
+                console.error("Error playing audio:", error);
+                targetAudio.muted = false;
+            }
+        })();
+    }
+}
+
 // instant transition to selected audio
 export function cutTo(targetSongId) {
     const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);

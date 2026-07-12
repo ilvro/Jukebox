@@ -384,12 +384,8 @@ export class ReverseEffect extends AudioEffect {
         });
         lastNode.connect(this.mainGainNode);
 
-        // a raw AudioBufferSourceNode has no equivalent to preservesPitch —
-        // changing its rate always changes pitch, there's no way to time-
-        // stretch it. so we only actually change the rate when Pitch Shift
-        // is ALSO active (matching what that toggle implies); otherwise we
-        // deliberately leave the rate at 1 rather than silently pitch-shift
-        // the reversed section regardless of whether Pitch Shift is on
+        // match the active Speed effect (see getReverseSpeedFactor for the
+        // pitch-coupling caveat with a raw buffer source)
         this.bufferSourceNode.playbackRate.value = this.getReverseSpeedFactor(activeKeys);
         
         // calculate start position in the buffer
@@ -497,15 +493,13 @@ export class ReverseEffect extends AudioEffect {
     }
 
     // decides the reversed buffer's playback rate from the currently active
-    // effects. a raw AudioBufferSourceNode can't preserve pitch while
-    // changing rate (no equivalent to the native preservesPitch), so a
-    // speed effect only actually changes the buffer's rate when Pitch
-    // Shift is also active — otherwise we'd be silently pitch-shifting
-    // regardless of whether that toggle is on
+    // Speed effect. note: a raw AudioBufferSourceNode has no equivalent to
+    // the native preservesPitch, so changing its rate always changes pitch
+    // a bit too — there's no way to time-stretch it without a proper pitch-
+    // shifting algorithm. Speed still applies on its own though, since
+    // "no effect at all unless Pitch Shift is also on" was more confusing
+    // than a bit of incidental pitch change
     getReverseSpeedFactor(activeKeys) {
-        const hasPitchShift = activeKeys.includes('pitchShift');
-        if (!hasPitchShift) return 1;
-
         const speedKey = activeKeys.find(key => key.startsWith('speed'));
         if (!speedKey) return 1;
 
