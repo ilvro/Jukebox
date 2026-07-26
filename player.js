@@ -1,5 +1,5 @@
 import { setupAudioEffects } from './mixing/index.js';
-import { setMasterVolume } from './mixing/audio-context.js';
+import { setMasterVolume, createRecordingTap } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
 let activeAudios = {};
 let allAudios = {};
@@ -1506,4 +1506,195 @@ export function resetSong(songId) {
     // the track's own cleanup, so clear them after, not before
     delete songRegions[songId];
     delete songActiveEffects[songId];
+}
+
+// records the song playing through with whatever effects are currently set
+// up on it, then downloads the result. this plays the song in real time
+// (not an instant export) because several effects — speed, pitch shift,
+// reverse — are driven by properties of the actual <audio> element, so the
+// most reliable way to capture exactly what you hear is to actually play
+// it and record the output, rather than trying to reconstruct every effect
+// offline.
+//
+// onProgress(currentTime, duration) is called periodically during
+// recording so the caller can show a progress indicator.
+export async function downloadSong(songId, onProgress) {
+    if (typeof MediaRecorder === 'undefined') {
+        throw new Error('Your browser doesn\'t support MediaRecorder, so recording a download isn\'t possible here. Try Chrome or Firefox.');
+    }
+
+    const audio = allAudios[songId];
+    if (!audio) {
+        throw new Error(`No audio found for song ${songId}`);
+    }
+
+    const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    const title = songItem?.querySelector('.title-input')?.value || 'song';
+
+    // solo this song — anything else playing would otherwise get captured
+    // into the same recording, since they all share one output bus
+    Object.keys(activeAudios).forEach(id => {
+        if (id !== songId) {
+            stopSong(id);
+        }
+    });
+
+    const wasPaused = audio.paused;
+    const volume = audioVolumes[songId] || 1;
+
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = volume;
+    audio.muted = false;
+
+    const { stream, release } = createRecordingTap();
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+    };
+
+    const recordingStopped = new Promise(resolve => {
+        recorder.onstop = resolve;
+    });
+
+    let progressInterval = null;
+    let completionPoll = null;
+    let handleEnded = null;
+
+    const cleanupPlayback = () => {
+        if (progressInterval) clearInterval(progressInterval);
+        if (completionPoll) clearInterval(completionPoll);
+        if (handleEnded) audio.removeEventListener('ended', handleEnded);
+        delete activeAudios[songId];
+        songItem?.classList.remove('playing');
+        updatePlayerUI();
+    };
+
+    if (onProgress) {
+        progressInterval = setInterval(() => {
+            onProgress(audio.currentTime, audio.duration || 0, 'recording');
+        }, 200);
+    }
+
+    // waits for whichever comes first: the natural 'ended' event, or
+    // audio.currentTime reaching the end of the track. currentTime always
+    // reflects true progress through the ORIGINAL media regardless of the
+    // current playback rate, so this works correctly even when Speed is
+    // active — a fixed wall-clock timer based on the nominal duration would
+    // fire too early whenever speed is below 1x (cutting the recording
+    // short, as happened at 0.75x) and too late above 1x. the 'ended'
+    // listener is kept as a fallback for the rare case duration is unknown,
+    // and because a Loop/Smooth Loop effect would otherwise prevent
+    // 'ended' from ever firing on its own.
+    const playedThrough = new Promise((resolve, reject) => {
+        let resolved = false;
+        const finish = () => {
+            if (resolved) return;
+            resolved = true;
+            resolve();
+        };
+
+        handleEnded = finish;
+        audio.addEventListener('ended', handleEnded, { once: true });
+
+        recorder.start();
+        activeAudios[songId] = audio;
+        songItem?.classList.add('playing');
+        updatePlayerUI();
+
+        audio.play().then(() => {
+            const duration = audio.duration;
+            if (isFinite(duration) && duration > 0) {
+                completionPoll = setInterval(() => {
+                    if (audio.currentTime >= duration - 0.15) {
+                        finish();
+                    }
+                }, 100);
+            }
+        }).catch(reject);
+    });
+
+    try {
+        await playedThrough;
+    } finally {
+        recorder.stop();
+        await recordingStopped;
+        release();
+        cleanupPlayback();
+
+        audio.currentTime = 0;
+        if (wasPaused) {
+            audio.pause();
+        }
+    }
+
+    const recordedBlob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+
+    // MediaRecorder can't produce mp3 directly, so convert the recording
+    // afterward: decode it back to raw audio, then re-encode with lamejs.
+    // falls back to the original recording if that library isn't available
+    // or the conversion fails for any reason.
+    let finalBlob = recordedBlob;
+    let extension = recordedBlob.type.includes('mp4') ? 'm4a' : 'webm';
+
+    if (window.lamejs) {
+        try {
+            if (onProgress) onProgress(0, 0, 'encoding');
+
+            if (!sharedAudioContext) {
+                sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const arrayBuffer = await recordedBlob.arrayBuffer();
+            const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+            finalBlob = encodeMp3(audioBuffer);
+            extension = 'mp3';
+        } catch (error) {
+            console.error('Error encoding mp3, downloading the original recording instead:', error);
+        }
+    }
+
+    const url = URL.createObjectURL(finalBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${title} (remix).${extension}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function floatTo16BitPCM(floatArray) {
+    const output = new Int16Array(floatArray.length);
+    for (let i = 0; i < floatArray.length; i++) {
+        const s = Math.max(-1, Math.min(1, floatArray[i]));
+        output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return output;
+}
+
+function encodeMp3(audioBuffer) {
+    const channels = Math.min(audioBuffer.numberOfChannels, 2); // lamejs only supports mono/stereo
+    const sampleRate = audioBuffer.sampleRate;
+    const kbps = 192;
+    const mp3Encoder = new window.lamejs.Mp3Encoder(channels, sampleRate, kbps);
+
+    const left = floatTo16BitPCM(audioBuffer.getChannelData(0));
+    const right = channels === 2 ? floatTo16BitPCM(audioBuffer.getChannelData(1)) : null;
+
+    const mp3Data = [];
+    const sampleBlockSize = 1152; // required block size for lamejs
+
+    for (let i = 0; i < left.length; i += sampleBlockSize) {
+        const leftChunk = left.subarray(i, i + sampleBlockSize);
+        const mp3buf = right
+            ? mp3Encoder.encodeBuffer(leftChunk, right.subarray(i, i + sampleBlockSize))
+            : mp3Encoder.encodeBuffer(leftChunk);
+        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+    }
+
+    const finalBuf = mp3Encoder.flush();
+    if (finalBuf.length > 0) mp3Data.push(finalBuf);
+
+    return new Blob(mp3Data, { type: 'audio/mp3' });
 }

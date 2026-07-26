@@ -1,4 +1,4 @@
-import { addSongToPlayer, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, fadeOut, stopSong, removeSongAudio, resetSong } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -203,6 +203,51 @@ document.addEventListener('keydown', (event) => {
         }
     }
 });
+
+function formatDuration(seconds) {
+    if (!isFinite(seconds) || seconds < 0) seconds = 0;
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function createRecordingIndicator() {
+    const div = document.createElement('div');
+    div.id = 'recording-indicator';
+    div.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 20px 40px;
+        border-radius: 10px;
+        z-index: 10000;
+        font-size: 18px;
+        text-align: center;
+    `;
+    div.innerHTML = `
+        <div>Recording your download...</div>
+        <div style="margin-top: 10px; font-size: 14px;" id="recording-status">0:00 / 0:00</div>
+        <div style="margin-top: 6px; font-size: 12px; color: rgba(255,255,255,0.6);">This plays in real time, so it takes as long as the song does.</div>
+    `;
+    document.body.appendChild(div);
+    return div;
+}
+
+function updateRecordingStatus(current, duration, phase) {
+    const statusEl = document.getElementById('recording-status');
+    const titleEl = document.querySelector('#recording-indicator > div:first-child');
+    if (phase === 'encoding') {
+        if (titleEl) titleEl.textContent = 'Converting to mp3...';
+        if (statusEl) statusEl.textContent = 'Almost done';
+        return;
+    }
+    if (statusEl) {
+        statusEl.textContent = `${formatDuration(current)} / ${formatDuration(duration)}`;
+    }
+}
 
 function createLoadingIndicator() {
     const loadingDiv = document.createElement('div');
@@ -944,6 +989,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     contextMenu.appendChild(createOption('Fade Out', (item) => {
         fadeOut(item.dataset.songId);
+    }));
+
+    contextMenu.appendChild(createOption('Download', async (item) => {
+        const songId = item.dataset.songId;
+        const indicator = createRecordingIndicator();
+        try {
+            await downloadSong(songId, (current, duration, phase) => {
+                updateRecordingStatus(current, duration, phase);
+            });
+        } catch (error) {
+            console.error('Error downloading song:', error);
+            alert(error.message || 'Something went wrong while recording the download.');
+        } finally {
+            indicator.remove();
+        }
     }));
 
     contextMenu.appendChild(createOption('Reset', (item) => {

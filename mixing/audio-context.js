@@ -36,6 +36,25 @@ export function getMasterVolume() {
     return masterVolume;
 }
 
+// taps the shared output bus into a MediaStream, so whatever is currently
+// playing (with its effects applied) can be captured with a MediaRecorder.
+// call release() once done to disconnect the tap.
+export function createRecordingTap() {
+    ensureAudioContext();
+    const destination = audioContext.createMediaStreamDestination();
+    mainGainNode.connect(destination);
+    return {
+        stream: destination.stream,
+        release: () => {
+            try {
+                mainGainNode.disconnect(destination);
+            } catch (error) {
+                // already disconnected, nothing to do
+            }
+        }
+    };
+}
+
 export function initializeAudioContext(audio) {
     if (!audio) {
         console.error("Audio element is required for initialization");
