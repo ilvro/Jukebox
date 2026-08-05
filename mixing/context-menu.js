@@ -1,4 +1,4 @@
-export function createContextMenu(x, y, effectsRegistry, progressBar, updateProgressBarGradient, updateWaveformProgress) {
+export function createContextMenu(x, y, effectsRegistry, progressBar, updateProgressBarGradient, updateWaveformProgress, actions = {}) {
     const existingMenu = document.querySelector('.waveform-context-menu');
     if (existingMenu) {
         existingMenu.remove();
@@ -7,7 +7,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
     const audio = effectsRegistry.audio;
 
     // clear effects if no selection
-    if (!progressBar.selectedStartTime || !progressBar.selectedEndTime) {
+    if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
         effectsRegistry.deactivateAllEffects();
         audio.volume = 1;
         audio.playbackRate = 1.0;
@@ -33,6 +33,49 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
     });
 
     const categories = effectsRegistry.getEffectsByCategory();
+
+    if (typeof actions.togglePlayAndFadeOut === 'function') {
+        const categoryHeader = document.createElement('div');
+        categoryHeader.textContent = 'Selection';
+        categoryHeader.style.color = '#2bdba0';
+        categoryHeader.style.fontSize = '0.8em';
+        categoryHeader.style.textTransform = 'uppercase';
+        categoryHeader.style.padding = '5px';
+        menu.appendChild(categoryHeader);
+
+        const playAndFadeItem = document.createElement('div');
+        playAndFadeItem.className = 'context-menu-item';
+        const updatePlayAndFadeLabel = () => {
+            const active = Boolean(actions.isPlayAndFadeOutActive?.());
+            playAndFadeItem.textContent = `${active ? '✓ ' : ''}Play & Fade Out`;
+            playAndFadeItem.style.color = active ? '#2bdba0' : '#fff';
+        };
+        Object.assign(playAndFadeItem.style, {
+            cursor: 'default',
+            padding: '5px 5px 5px 15px',
+            transition: 'all 0.3s ease',
+            borderLeft: '2px solid transparent',
+            color: '#fff'
+        });
+        updatePlayAndFadeLabel();
+        playAndFadeItem.addEventListener('mouseover', () => {
+            playAndFadeItem.style.borderLeft = '2px solid #2bdba0';
+            playAndFadeItem.style.backgroundColor = 'rgba(43, 219, 160, 0.1)';
+        });
+        playAndFadeItem.addEventListener('mouseout', () => {
+            playAndFadeItem.style.borderLeft = '2px solid transparent';
+            playAndFadeItem.style.backgroundColor = 'transparent';
+        });
+        playAndFadeItem.addEventListener('click', () => {
+            actions.togglePlayAndFadeOut();
+            updatePlayAndFadeLabel();
+            menu.style.opacity = '0';
+            menu.style.transform = 'translateY(-10px)';
+            menu.style.visibility = 'hidden';
+            setTimeout(() => menu.remove(), 300);
+        });
+        menu.appendChild(playAndFadeItem);
+    }
 
     Object.entries(categories).forEach(([categoryName, effectKeys]) => {
         const categoryHeader = document.createElement('div');
