@@ -15,8 +15,11 @@ let lastRightClickTime = 0;
 let isDragging = false;
 
 const songMarkers = {};
+const songMarkerLabels = {};
 const songRegions = {}; // songId -> { start, end }, survives pause/resume so effects don't get silently lost
 const songActiveEffects = {}; // songId -> [effectKey, ...]
+const songSelectionFadeEffects = {}; // songId -> boolean
+const playerPausedAudios = new Set();
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
 const MAX_WAVEFORM_WIDTH = 500;
@@ -40,10 +43,12 @@ if (stopAllBtn) {
         Object.keys(activeAudios).forEach(id => {
             const audio = activeAudios[id];
             audio.pause();
+            audio.volume = audioVolumes[id] ?? audio.volume;
             const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
             item?.classList.remove('playing');
             delete activeAudios[id];
         });
+        playerPausedAudios.clear();
         updatePlayerUI();
     });
 }
@@ -72,6 +77,7 @@ function toggleAudio(audioElement, songItem) {
     const songId = songItem.dataset.songId;
 
     if (audioElement.paused) {
+        playerPausedAudios.delete(songId);
         // restore saved time when resuming
         if (audioTimes[songId] !== undefined) {
             audioElement.currentTime = audioTimes[songId];
@@ -80,13 +86,20 @@ function toggleAudio(audioElement, songItem) {
         if (audioVolumes[songId] !== undefined) {
             audioElement.volume = audioVolumes[songId];
         }
-        audioElement.play();
         songItem.classList.add('playing');
         activeAudios[songId] = audioElement;
+        audioElement.play().catch(error => {
+            delete activeAudios[songId];
+            songItem.classList.remove('playing');
+            console.error('Error playing audio:', error);
+            updatePlayerUI();
+        });
     } else {
         // save time and volume when pausing
         audioTimes[songId] = audioElement.currentTime;
+        renderedTracks.get(songId)?.restoreTransientVolume();
         audioVolumes[songId] = audioElement.volume;
+        playerPausedAudios.delete(songId);
         audioElement.pause();
         songItem.classList.remove('playing');
         delete activeAudios[songId];
@@ -96,6 +109,12 @@ function toggleAudio(audioElement, songItem) {
 function addClickListenerToSongItem(songItem, audio) {
     songItem.addEventListener('click', (event) => {
         if (event.target.classList.contains('title-input')) {
+            return;
+        }
+        const songId = songItem.dataset.songId;
+        if (playerPausedAudios.has(songId)) {
+            playerPausedAudios.delete(songId);
+            updatePlayerUI();
             return;
         }
         toggleAudio(audio, songItem);
@@ -152,6 +171,7 @@ function removeMarker(songId, time) {
     
     const index = songMarkers[songId].findIndex(marker => Math.abs(marker - time) < 0.5);
     if (index !== -1) {
+        delete songMarkerLabels[songId]?.[markerLabelKey(songMarkers[songId][index])];
         songMarkers[songId].splice(index, 1);
         return true;
     }
@@ -159,11 +179,24 @@ function removeMarker(songId, time) {
 }
 
 function getMarkers(songId) {
-    return songMarkers[songId] || [];
+    return (songMarkers[songId] || []).map(time => {
+        const text = songMarkerLabels[songId]?.[markerLabelKey(time)] || '';
+        return text ? { time, text } : time;
+    });
 }
 
 function setMarkers(songId, markers) {
-    songMarkers[songId] = markers || [];
+    songMarkerLabels[songId] = {};
+    songMarkers[songId] = (markers || []).map(marker => {
+        if (typeof marker === 'number') return marker;
+        const time = Number(marker.time);
+        if (marker.text) songMarkerLabels[songId][markerLabelKey(time)] = marker.text;
+        return time;
+    }).filter(Number.isFinite).sort((a, b) => a - b);
+}
+
+function markerLabelKey(time) {
+    return Number(time).toFixed(3);
 }
 
 function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
@@ -318,6 +351,36 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
     });
     
     menu.appendChild(cutToItem);
+
+    const labelHeader = document.createElement('div');
+    labelHeader.textContent = 'Marker text';
+    labelHeader.style.color = '#2bdba0';
+    labelHeader.style.fontSize = '0.8em';
+    labelHeader.style.textTransform = 'uppercase';
+    labelHeader.style.padding = '10px 5px 5px';
+    menu.appendChild(labelHeader);
+
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'marker-label-input';
+    labelInput.placeholder = 'Add a note...';
+    labelInput.maxLength = 80;
+    labelInput.value = songMarkerLabels[songId]?.[markerLabelKey(markerTime)] || '';
+    labelInput.addEventListener('input', () => {
+        songMarkerLabels[songId] ||= {};
+        const value = labelInput.value.trim();
+        if (value) {
+            songMarkerLabels[songId][markerLabelKey(markerTime)] = value;
+        } else {
+            delete songMarkerLabels[songId][markerLabelKey(markerTime)];
+        }
+        updateWaveformProgress(audio, progressBar.previousElementSibling, progressBar);
+    });
+    labelInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') labelInput.blur();
+        event.stopPropagation();
+    });
+    menu.appendChild(labelInput);
     
     document.body.appendChild(menu);
     
@@ -392,10 +455,10 @@ const renderedTracks = new Map(); // songId -> { trackDiv, refresh, cleanup }
 function updatePlayerUI() {
     const playerContainer = document.getElementById('track-list');
 
-    const currentActiveIds = new Set();
+    const currentVisibleIds = new Set(playerPausedAudios);
     Object.entries(activeAudios).forEach(([songId, audio]) => {
         if (!audio.paused) {
-            currentActiveIds.add(songId);
+            currentVisibleIds.add(songId);
         }
     });
 
@@ -403,15 +466,16 @@ function updatePlayerUI() {
     // attached to the (long-lived) audio element and deactivate its effects,
     // otherwise both keep piling up in memory every time this runs
     renderedTracks.forEach((track, songId) => {
-        if (!currentActiveIds.has(songId)) {
+        if (!currentVisibleIds.has(songId)) {
             track.cleanup();
             renderedTracks.delete(songId);
         }
     });
 
     // create tracks that just started playing, lightly refresh ones already rendered
-    currentActiveIds.forEach(songId => {
-        const audio = activeAudios[songId];
+    currentVisibleIds.forEach(songId => {
+        const audio = allAudios[songId];
+        if (!audio) return;
         if (renderedTracks.has(songId)) {
             renderedTracks.get(songId).refresh();
         } else {
@@ -461,6 +525,46 @@ function createTrackUI(songId, audio, playerContainer) {
     }
     
     trackDiv.appendChild(titleContainer);
+
+    const pauseButton = document.createElement('button');
+    pauseButton.type = 'button';
+    pauseButton.className = 'track-pause-button';
+    pauseButton.textContent = '⏸';
+    pauseButton.title = 'Pause';
+    pauseButton.setAttribute('aria-label', `Pause ${getSongTitle()}`);
+    pauseButton.addEventListener('click', event => {
+        event.stopPropagation();
+        if (audio.paused) {
+            playerPausedAudios.delete(songId);
+            activeAudios[songId] = audio;
+            songElement?.classList.add('playing');
+            audio.play().then(() => {
+                updatePlayerUI();
+            }).catch(error => {
+                delete activeAudios[songId];
+                songElement?.classList.remove('playing');
+                playerPausedAudios.add(songId);
+                console.error('Error resuming audio:', error);
+                updatePlayerUI();
+            });
+        } else {
+            audioTimes[songId] = audio.currentTime;
+            playerPausedAudios.add(songId);
+            delete activeAudios[songId];
+            songElement?.classList.remove('playing');
+            audio.pause();
+            updatePlayerUI();
+        }
+    });
+    const updatePauseButton = () => {
+        const paused = audio.paused;
+        pauseButton.textContent = paused ? '▶' : '⏸';
+        pauseButton.title = paused ? 'Resume' : 'Pause';
+        pauseButton.setAttribute('aria-label', `${paused ? 'Resume' : 'Pause'} ${getSongTitle()}`);
+        pauseButton.classList.toggle('paused', paused);
+    };
+    updatePauseButton();
+    trackDiv.appendChild(pauseButton);
 
     const progressContainer = document.createElement('div');
     progressContainer.className = 'progress-container';
@@ -544,20 +648,6 @@ function createTrackUI(songId, audio, playerContainer) {
         const rect = waveformCanvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         hoveredTime = (mouseX / rect.width) * audio.duration;
-        timeTooltip.textContent = formatTime(hoveredTime);
-
-        const tooltipWidth = timeTooltip.offsetWidth;
-        let tooltipLeft = mouseX - (tooltipWidth / 2);
-        const containerWidth = progressContainer.offsetWidth;
-        if (tooltipLeft < 0) {
-            tooltipLeft = 0;
-        } else if (tooltipLeft + tooltipWidth > containerWidth) {
-            tooltipLeft = containerWidth - tooltipWidth;
-        }
-
-        timeTooltip.style.display = 'block';
-        timeTooltip.style.left = `${tooltipLeft}px`;
-        timeTooltip.style.bottom = '100%';
         
         const canvasX = (mouseX / rect.width) * waveformCanvas.width;
         const barWidth = 2;
@@ -573,6 +663,24 @@ function createTrackUI(songId, audio, playerContainer) {
                 break;
             }
         }
+
+        const markerLabel = newHoveredMarker >= 0
+            ? songMarkerLabels[songId]?.[markerLabelKey(markers[newHoveredMarker])]
+            : '';
+        timeTooltip.textContent = markerLabel || formatTime(hoveredTime);
+        timeTooltip.classList.toggle('marker-label-tooltip', Boolean(markerLabel));
+        timeTooltip.style.display = 'block';
+
+        const tooltipWidth = timeTooltip.offsetWidth;
+        let tooltipLeft = mouseX - (tooltipWidth / 2);
+        const containerWidth = progressContainer.offsetWidth;
+        if (tooltipLeft < 0) {
+            tooltipLeft = 0;
+        } else if (tooltipLeft + tooltipWidth > containerWidth) {
+            tooltipLeft = containerWidth - tooltipWidth;
+        }
+        timeTooltip.style.left = `${tooltipLeft}px`;
+        timeTooltip.style.bottom = '100%';
         
         if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
             if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
@@ -647,8 +755,109 @@ function createTrackUI(songId, audio, playerContainer) {
         event.preventDefault();
     });
     
-    // only set up once per playing session now, instead of on every UI refresh
-    const audioEffects = setupAudioEffects(audio, progressBar);
+    // Optional selection effect. It never seeks or starts playback. The fade
+    // only begins when the playhead enters the final Settings-defined fade
+    // window of the region (6.5 seconds by default).
+    let selectionFadeEnabled = Boolean(songSelectionFadeEffects[songId]);
+    let selectionFadeState = null;
+    let selectionFadeFrameId = null;
+
+    const restoreSelectionFadeVolume = () => {
+        if (selectionFadeState) {
+            audio.volume = selectionFadeState.startVolume;
+            selectionFadeState = null;
+        }
+    };
+
+    const monitorSelectionFade = () => {
+        selectionFadeFrameId = null;
+        if (!selectionFadeEnabled || audio.paused) return;
+
+        const start = progressBar.selectedStartTime;
+        const end = progressBar.selectedEndTime;
+        if (start === undefined || end === undefined || end <= start) {
+            restoreSelectionFadeVolume();
+            return;
+        }
+
+        const currentTime = audio.currentTime;
+        const configuredFadeDuration = Math.max(0, getFadeDuration());
+        const fadeStart = Math.max(start, end - configuredFadeDuration);
+        if (selectionFadeState &&
+            (selectionFadeState.regionStart !== start || selectionFadeState.regionEnd !== end)) {
+            restoreSelectionFadeVolume();
+        }
+
+        if (selectionFadeState && currentTime >= end) {
+            const restoredVolume = selectionFadeState.startVolume;
+            selectionFadeState = null;
+            playerPausedAudios.delete(songId);
+            delete activeAudios[songId];
+            songElement?.classList.remove('playing');
+            audio.pause();
+
+            // Do not leave the saved playhead exactly on the effect boundary.
+            // Some media formats seek a fraction backwards to the nearest
+            // frame, which would immediately re-enter the fade and stop again
+            // on the next play. At the actual end of the file, restart at 0.
+            const duration = audio.duration;
+            const resumeTime = Number.isFinite(duration) && end >= duration - 0.1
+                ? 0
+                : Math.min(end + 0.1, Number.isFinite(duration) ? duration : end + 0.1);
+            audio.currentTime = resumeTime;
+            audioTimes[songId] = resumeTime;
+            audio.volume = restoredVolume;
+            updatePlayerUI();
+            return;
+        }
+
+        if (currentTime < fadeStart || currentTime >= end) {
+            restoreSelectionFadeVolume();
+        } else {
+            if (!selectionFadeState) {
+                selectionFadeState = {
+                    startTime: currentTime,
+                    startVolume: audio.volume,
+                    regionStart: start,
+                    regionEnd: end
+                };
+            }
+
+            const remainingDuration = end - selectionFadeState.startTime;
+            const progress = remainingDuration > 0
+                ? Math.min(1, Math.max(0, (currentTime - selectionFadeState.startTime) / remainingDuration))
+                : 1;
+            audio.volume = selectionFadeState.startVolume * Math.pow(1 - progress, 2);
+        }
+
+        selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
+    };
+
+    const startSelectionFadeMonitor = () => {
+        if (selectionFadeEnabled && !audio.paused && selectionFadeFrameId === null) {
+            selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
+        }
+    };
+
+    const handleSelectionFadePlay = () => startSelectionFadeMonitor();
+    audio.addEventListener('play', handleSelectionFadePlay);
+
+    const audioEffects = setupAudioEffects(audio, progressBar, {
+        isPlayAndFadeOutActive: () => selectionFadeEnabled,
+        togglePlayAndFadeOut: () => {
+            selectionFadeEnabled = !selectionFadeEnabled;
+            songSelectionFadeEffects[songId] = selectionFadeEnabled;
+            if (selectionFadeEnabled) {
+                startSelectionFadeMonitor();
+            } else {
+                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+                selectionFadeFrameId = null;
+                restoreSelectionFadeVolume();
+            }
+            return selectionFadeEnabled;
+        }
+    });
+    startSelectionFadeMonitor();
 
     if (savedRegion) {
         updateProgressBarGradient(progressBar, audio);
@@ -699,6 +908,11 @@ function createTrackUI(songId, audio, playerContainer) {
                     }
                 );
             } else if (isDoubleClick) {
+                selectionFadeEnabled = false;
+                delete songSelectionFadeEffects[songId];
+                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+                selectionFadeFrameId = null;
+                restoreSelectionFadeVolume();
                 audioEffects.cleanup();
                 delete songRegions[songId];
                 delete songActiveEffects[songId];
@@ -812,6 +1026,7 @@ function createTrackUI(songId, audio, playerContainer) {
             updateVolumeSlider(volumeControl);
             progressBar.max = audio.duration || 100;
             titleSpan.textContent = getSongTitle();
+            updatePauseButton();
         },
         // called once, when the track actually stops playing
         cleanup() {
@@ -829,8 +1044,15 @@ function createTrackUI(songId, audio, playerContainer) {
             }
 
             audio.removeEventListener('timeupdate', handleTimeUpdate);
+            audio.removeEventListener('play', handleSelectionFadePlay);
+            if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+            selectionFadeFrameId = null;
+            restoreSelectionFadeVolume();
             audioEffects.cleanup();
             trackDiv.remove();
+        },
+        restoreTransientVolume() {
+            restoreSelectionFadeVolume();
         }
     };
 }
@@ -1160,6 +1382,7 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
             const markerX = (markerTime / audio.duration) * width;
             ctx.fillStyle = index === hoveredMarker ? '#ffdd00' : '#ffaa00';
             ctx.fillRect(markerX - 1.5, 0, 3, height);
+
         });
     }
 }
@@ -1260,13 +1483,18 @@ export function fadeOut(targetSongId) {
 // instant stop for a single song, no fade — the "cut" counterpart to fadeOut
 export function stopSong(targetSongId) {
     const audio = activeAudios[targetSongId];
-    if (!audio) return;
+    if (!audio) {
+        if (playerPausedAudios.delete(targetSongId)) updatePlayerUI();
+        return;
+    }
 
     // remember where playback stopped, so fadeTo/cutTo resume here later
     audioTimes[targetSongId] = audio.currentTime;
 
     audio.pause();
+    audio.volume = audioVolumes[targetSongId] ?? audio.volume;
     delete activeAudios[targetSongId];
+    playerPausedAudios.delete(targetSongId);
 
     const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
     if (songElement) {
@@ -1452,6 +1680,7 @@ export function cutTo(targetSongId) {
 }
 
 export function removeSongAudio(songId) {
+    playerPausedAudios.delete(songId);
     if (allAudios[songId]) {
         const audio = allAudios[songId];
         audio.pause();
@@ -1471,6 +1700,8 @@ export function removeSongAudio(songId) {
         delete audioTimes[songId];
     }
     delete songMarkers[songId];
+    delete songMarkerLabels[songId];
+    delete songSelectionFadeEffects[songId];
     waveformCache.delete(songId);
 
     // in case the song was actively playing, make sure its track panel
@@ -1488,6 +1719,7 @@ export function resetSong(songId) {
     if (!audio) return;
     
     const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    playerPausedAudios.delete(songId);
 
     if (!audio.paused) {
         audio.pause();
@@ -1506,6 +1738,7 @@ export function resetSong(songId) {
     // the track's own cleanup, so clear them after, not before
     delete songRegions[songId];
     delete songActiveEffects[songId];
+    delete songSelectionFadeEffects[songId];
 }
 
 // records the song playing through with whatever effects are currently set

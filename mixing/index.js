@@ -2,7 +2,7 @@ import { initializeAudioContext, disconnectAudioContext } from './audio-context.
 import { EffectsRegistry } from './effects-registry.js';
 import { createContextMenu } from './context-menu.js';
 
-export function setupAudioEffects(audio, progressBar) {
+export function setupAudioEffects(audio, progressBar, actions = {}) {
     // initialize audio context and create effects registry
     initializeAudioContext(audio);
     const effectsRegistry = new EffectsRegistry(audio, progressBar);
@@ -13,7 +13,8 @@ export function setupAudioEffects(audio, progressBar) {
             effectsRegistry, 
             progressBar, 
             updateProgressBarGradient, 
-            updateWaveformProgress
+            updateWaveformProgress,
+            actions
         );
     }
 
