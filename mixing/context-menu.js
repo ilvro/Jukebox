@@ -75,6 +75,41 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             setTimeout(() => menu.remove(), 300);
         });
         menu.appendChild(playAndFadeItem);
+
+        if (typeof actions.togglePlayAndStop === 'function') {
+            const playAndStopItem = document.createElement('div');
+            playAndStopItem.className = 'context-menu-item';
+            const updatePlayAndStopLabel = () => {
+                const active = Boolean(actions.isPlayAndStopActive?.());
+                playAndStopItem.textContent = `${active ? '✓ ' : ''}Play & Stop`;
+                playAndStopItem.style.color = active ? '#2bdba0' : '#fff';
+            };
+            Object.assign(playAndStopItem.style, {
+                cursor: 'default',
+                padding: '5px 5px 5px 15px',
+                transition: 'all 0.3s ease',
+                borderLeft: '2px solid transparent',
+                color: '#fff'
+            });
+            updatePlayAndStopLabel();
+            playAndStopItem.addEventListener('mouseover', () => {
+                playAndStopItem.style.borderLeft = '2px solid #2bdba0';
+                playAndStopItem.style.backgroundColor = 'rgba(43, 219, 160, 0.1)';
+            });
+            playAndStopItem.addEventListener('mouseout', () => {
+                playAndStopItem.style.borderLeft = '2px solid transparent';
+                playAndStopItem.style.backgroundColor = 'transparent';
+            });
+            playAndStopItem.addEventListener('click', () => {
+                actions.togglePlayAndStop();
+                updatePlayAndStopLabel();
+                menu.style.opacity = '0';
+                menu.style.transform = 'translateY(-10px)';
+                menu.style.visibility = 'hidden';
+                setTimeout(() => menu.remove(), 300);
+            });
+            menu.appendChild(playAndStopItem);
+        }
     }
 
     Object.entries(categories).forEach(([categoryName, effectKeys]) => {

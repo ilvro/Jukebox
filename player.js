@@ -20,6 +20,7 @@ const songMarkerLabels = {};
 const songRegions = {}; // songId -> { start, end }, survives pause/resume so effects don't get silently lost
 const songActiveEffects = {}; // songId -> [effectKey, ...]
 const songSelectionFadeEffects = {}; // songId -> boolean
+const songSelectionStopEffects = {}; // songId -> boolean
 const playerPausedAudios = new Set();
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
@@ -825,6 +826,8 @@ function createTrackUI(songId, audio, playerContainer) {
     // only begins when the playhead enters the final Settings-defined fade
     // window of the region (6.5 seconds by default).
     let selectionFadeEnabled = Boolean(songSelectionFadeEffects[songId]);
+    let selectionStopEnabled = Boolean(songSelectionStopEffects[songId]);
+    let selectionStopArmed = false;
     let selectionFadeState = null;
     let selectionFadeFrameId = null;
 
@@ -837,12 +840,13 @@ function createTrackUI(songId, audio, playerContainer) {
 
     const monitorSelectionFade = () => {
         selectionFadeFrameId = null;
-        if (!selectionFadeEnabled || audio.paused) return;
+        if ((!selectionFadeEnabled && !selectionStopEnabled) || audio.paused) return;
 
         const start = progressBar.selectedStartTime;
         const end = progressBar.selectedEndTime;
         if (start === undefined || end === undefined || end <= start) {
             restoreSelectionFadeVolume();
+            selectionStopArmed = false;
             return;
         }
 
@@ -852,11 +856,19 @@ function createTrackUI(songId, audio, playerContainer) {
         if (selectionFadeState &&
             (selectionFadeState.regionStart !== start || selectionFadeState.regionEnd !== end)) {
             restoreSelectionFadeVolume();
+            selectionStopArmed = false;
         }
 
-        if (selectionFadeState && currentTime >= end) {
-            const restoredVolume = selectionFadeState.startVolume;
+        if (selectionStopEnabled && currentTime >= start && currentTime < end) {
+            selectionStopArmed = true;
+        }
+
+        const reachedSelectionEnd = currentTime >= end &&
+            (selectionFadeState || (selectionStopEnabled && selectionStopArmed));
+        if (reachedSelectionEnd) {
+            const restoredVolume = selectionFadeState?.startVolume ?? audio.volume;
             selectionFadeState = null;
+            selectionStopArmed = false;
             playerPausedAudios.delete(songId);
             delete activeAudios[songId];
             songElement?.classList.remove('playing');
@@ -877,7 +889,9 @@ function createTrackUI(songId, audio, playerContainer) {
             return;
         }
 
-        if (currentTime < fadeStart || currentTime >= end) {
+        if (currentTime < start) selectionStopArmed = false;
+
+        if (!selectionFadeEnabled || currentTime < fadeStart || currentTime >= end) {
             restoreSelectionFadeVolume();
         } else {
             if (!selectionFadeState) {
@@ -900,7 +914,7 @@ function createTrackUI(songId, audio, playerContainer) {
     };
 
     const startSelectionFadeMonitor = () => {
-        if (selectionFadeEnabled && !audio.paused && selectionFadeFrameId === null) {
+        if ((selectionFadeEnabled || selectionStopEnabled) && !audio.paused && selectionFadeFrameId === null) {
             selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
         }
     };
@@ -914,13 +928,38 @@ function createTrackUI(songId, audio, playerContainer) {
             selectionFadeEnabled = !selectionFadeEnabled;
             songSelectionFadeEffects[songId] = selectionFadeEnabled;
             if (selectionFadeEnabled) {
+                selectionStopEnabled = false;
+                selectionStopArmed = false;
+                songSelectionStopEffects[songId] = false;
                 startSelectionFadeMonitor();
             } else {
-                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-                selectionFadeFrameId = null;
                 restoreSelectionFadeVolume();
+                if (!selectionStopEnabled) {
+                    if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+                    selectionFadeFrameId = null;
+                }
             }
             return selectionFadeEnabled;
+        },
+        isPlayAndStopActive: () => selectionStopEnabled,
+        togglePlayAndStop: () => {
+            selectionStopEnabled = !selectionStopEnabled;
+            songSelectionStopEffects[songId] = selectionStopEnabled;
+            if (selectionStopEnabled) {
+                selectionFadeEnabled = false;
+                songSelectionFadeEffects[songId] = false;
+                restoreSelectionFadeVolume();
+            }
+            selectionStopArmed = selectionStopEnabled &&
+                audio.currentTime >= progressBar.selectedStartTime &&
+                audio.currentTime < progressBar.selectedEndTime;
+            if (selectionStopEnabled) {
+                startSelectionFadeMonitor();
+            } else if (!selectionFadeEnabled) {
+                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+                selectionFadeFrameId = null;
+            }
+            return selectionStopEnabled;
         }
     });
     startSelectionFadeMonitor();
@@ -975,7 +1014,10 @@ function createTrackUI(songId, audio, playerContainer) {
                 );
             } else if (isDoubleClick) {
                 selectionFadeEnabled = false;
+                selectionStopEnabled = false;
+                selectionStopArmed = false;
                 delete songSelectionFadeEffects[songId];
+                delete songSelectionStopEffects[songId];
                 if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
                 selectionFadeFrameId = null;
                 restoreSelectionFadeVolume();
@@ -1768,6 +1810,7 @@ export function removeSongAudio(songId) {
     delete songMarkers[songId];
     delete songMarkerLabels[songId];
     delete songSelectionFadeEffects[songId];
+    delete songSelectionStopEffects[songId];
     waveformCache.delete(songId);
 
     // in case the song was actively playing, make sure its track panel
@@ -1805,6 +1848,7 @@ export function resetSong(songId) {
     delete songRegions[songId];
     delete songActiveEffects[songId];
     delete songSelectionFadeEffects[songId];
+    delete songSelectionStopEffects[songId];
 }
 
 // records the song playing through with whatever effects are currently set
