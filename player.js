@@ -55,7 +55,9 @@ if (stopAllBtn) {
 
 function createAudioElement(audioUrl) {
     const audio = new Audio(audioUrl);
-    audio.preload = 'metadata';
+    // A large preset can contain hundreds of songs. Loading metadata for all
+    // of them at once creates a large burst of I/O; playback loads on demand.
+    audio.preload = 'none';
     audio.volume = 0;
     
     audio.addEventListener('pause', () => {
@@ -138,8 +140,6 @@ function addSongToPlayer(songElement, audioFile) {
     audioVolumes[songId] = 1;
     audioTimes[songId] = 0;
     addClickListenerToSongItem(songElement, audio);
-
-    updatePlayerUI();
 }
 
 function snapToMarker(songId, time) {
@@ -383,6 +383,15 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
     menu.appendChild(labelInput);
     
     document.body.appendChild(menu);
+
+    const menuRect = menu.getBoundingClientRect();
+    const viewportMargin = 8;
+    const minLeft = window.scrollX + viewportMargin;
+    const minTop = window.scrollY + viewportMargin;
+    const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
+    const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
+    menu.style.left = `${Math.max(minLeft, Math.min(x, maxLeft))}px`;
+    menu.style.top = `${Math.max(minTop, Math.min(y, maxTop))}px`;
     
     requestAnimationFrame(() => {
         menu.style.opacity = '1';

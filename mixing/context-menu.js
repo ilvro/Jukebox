@@ -139,6 +139,17 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
 
     document.body.appendChild(menu);
 
+    // Keep the complete menu inside the visible viewport, even when the
+    // selected region is near the bottom or right edge of a long playlist.
+    const menuRect = menu.getBoundingClientRect();
+    const viewportMargin = 8;
+    const minLeft = window.scrollX + viewportMargin;
+    const minTop = window.scrollY + viewportMargin;
+    const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
+    const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
+    menu.style.left = `${Math.max(minLeft, Math.min(x, maxLeft))}px`;
+    menu.style.top = `${Math.max(minTop, Math.min(y, maxTop))}px`;
+
     // animate menu appearance
     requestAnimationFrame(() => {
         menu.style.opacity = '1';

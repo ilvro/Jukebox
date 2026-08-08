@@ -608,7 +608,7 @@ async function loadPreset() {
             songItem.innerHTML = `
                 <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
                 <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-                <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
+                <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}" loading="lazy" decoding="async" fetchpriority="low">
             `;
 
             // disables input and audio blob links from being dragged to the title input
@@ -655,8 +655,10 @@ async function loadSamplePreset() {
         const presetMetadata = await metadataResponse.json();
         console.log('Loaded preset metadata:', presetMetadata);
         
-        // promises for all songs
-        const songPromises = presetMetadata.map(async (songMetadata) => {
+        // Create requests only when their batch starts. Mapping every song to
+        // an async promise up front still launches hundreds of simultaneous
+        // fetches and can make large presets appear frozen.
+        const loadSampleSong = async (songMetadata) => {
             const { currentTitle, genres, tags, markers } = songMetadata;
             const decodedTitle = decodeURIComponent(currentTitle);
             const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
@@ -693,15 +695,15 @@ async function loadSamplePreset() {
                 audioFile: new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' }),
                 thumbnailFile: new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' })
             };
-        });
+        };
         
         // processes batches of song to avoid overwhelming the browser (way faster this way)
         const BATCH_SIZE = 5;
-        const totalSongs = songPromises.length;
+        const totalSongs = presetMetadata.length;
         
         for (let i = 0; i < totalSongs; i += BATCH_SIZE) {
-            const batch = songPromises.slice(i, i + BATCH_SIZE);
-            const songBatch = await Promise.all(batch);
+            const batch = presetMetadata.slice(i, i + BATCH_SIZE);
+            const songBatch = await Promise.all(batch.map(loadSampleSong));
 
             songBatch.forEach(song => {
                 const songItem = document.createElement('div');
@@ -712,7 +714,7 @@ async function loadSamplePreset() {
                 songItem.innerHTML = `
                     <input spellcheck='false' class='title-input' value="${song.decodedTitle}"></input>
                     <p>${song.tags.join(' + ')}${song.updatedGenres.length > 0 ? ' | ' + song.updatedGenres.join(' + ') : ''}</p>
-                    <img src="${URL.createObjectURL(song.thumbnailFile)}" alt="${song.decodedTitle}">
+                    <img src="${URL.createObjectURL(song.thumbnailFile)}" alt="${song.decodedTitle}" loading="lazy" decoding="async" fetchpriority="low">
                 `;
                 
                 const titleInput = songItem.querySelector('.title-input');
@@ -777,7 +779,7 @@ async function handleFilesFallback(files) {
         songItem.innerHTML = `
             <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
             <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-            <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}">
+            <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}" loading="lazy" decoding="async" fetchpriority="low">
         `;
 
         const titleInput = songItem.querySelector('.title-input');
@@ -902,7 +904,7 @@ uploadSubmit.addEventListener('click', () => {
     songItem.innerHTML = `
         <input class="title-input" value="${title}"</input>
         <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-        <img src="${URL.createObjectURL(thumbnail)}" alt="${title}">
+        <img src="${URL.createObjectURL(thumbnail)}" alt="${title}" loading="lazy" decoding="async" fetchpriority="low">
     `;
     songGrid.appendChild(songItem);
     addSongToPlayer(songItem, audio);
@@ -951,6 +953,13 @@ document.addEventListener('DOMContentLoaded', () => {
         contextMenu.style.top = `${event.pageY}px`;
         contextMenu.style.left = `${event.pageX}px`;
         contextMenu.style.display = 'block';
+
+        const menuRect = contextMenu.getBoundingClientRect();
+        const viewportMargin = 8;
+        const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
+        const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
+        contextMenu.style.left = `${Math.max(window.scrollX + viewportMargin, Math.min(event.pageX, maxLeft))}px`;
+        contextMenu.style.top = `${Math.max(window.scrollY + viewportMargin, Math.min(event.pageY, maxTop))}px`;
     });
 
     // helper to create menu options with the visual style you liked

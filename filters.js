@@ -3,37 +3,46 @@ let allSongs = [];
 const genreMenu = document.getElementById('filter-dropdown');
 const filterDimmer = document.getElementById('filter-dimmer');
 let activeFilters = new Set();
+let pendingFilterFrame = null;
 
 function updateAllSongs() {
     allSongs = Array.from(document.querySelectorAll('.song-item'));
+    allSongs.forEach(cacheSongFilterData);
+}
+
+function cacheSongFilterData(song) {
+    song.dataset.searchTitle = (song.querySelector('.title-input')?.value || '').toLowerCase();
+    song._filterTokens = new Set([
+        ...(song.getAttribute('data-genres') || '').split(','),
+        ...(song.getAttribute('data-tags') || '').split(',')
+    ].filter(Boolean));
+}
+
+function scheduleFilters() {
+    if (pendingFilterFrame !== null) cancelAnimationFrame(pendingFilterFrame);
+    pendingFilterFrame = requestAnimationFrame(() => {
+        pendingFilterFrame = null;
+        applyFilters();
+    });
 }
 
 function searchInput() {
-    let searchQuery = document.getElementById('searchBar').value.toLowerCase();
-    
-    allSongs.forEach(song => {
-        const matchesSearch = song.querySelector('input').value.toString().toLowerCase().includes(searchQuery);
-        const matchesFilters = activeFilters.size === 0 || 
-            songMatchesActiveFilters(song, activeFilters);
-        
-        song.style.display = (matchesSearch && matchesFilters) ? '' : 'none';
-    });
+    scheduleFilters();
 }
 
 function songMatchesActiveFilters(song, filters) {
-    const songGenres = song.getAttribute('data-genres').split(',');
-    const songTags = song.getAttribute('data-tags').split(',');
-    
-    return Array.from(filters).every(filter => {
-        return songGenres.includes(filter) || songTags.includes(filter);
-    });
+    if (!song._filterTokens) cacheSongFilterData(song);
+    for (const filter of filters) {
+        if (!song._filterTokens.has(filter)) return false;
+    }
+    return true;
 }
 
 function applyFilters() {
     const searchQuery = document.getElementById('searchBar').value.toLowerCase();
     
     allSongs.forEach(song => {
-        const matchesSearch = song.querySelector('input').value.toString().toLowerCase().includes(searchQuery);
+        const matchesSearch = (song.dataset.searchTitle || '').includes(searchQuery);
         const matchesFilters = activeFilters.size === 0 || 
             songMatchesActiveFilters(song, activeFilters);
         
@@ -55,7 +64,19 @@ genreMenu.addEventListener('mouseleave', () => {
     }, 10);
 });
 
-document.addEventListener('songsUpdated', updateAllSongs);
+document.addEventListener('songsUpdated', () => {
+    updateAllSongs();
+    scheduleFilters();
+});
+document.addEventListener('input', event => {
+    const input = event.target;
+    if (!input.classList?.contains('title-input')) return;
+    const song = input.closest('.song-item');
+    if (song) {
+        song.dataset.searchTitle = input.value.toLowerCase();
+        scheduleFilters();
+    }
+});
 document.addEventListener('DOMContentLoaded', function() {
     updateAllSongs();
     
@@ -85,7 +106,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             
-            applyFilters();
+            scheduleFilters();
         });
     });
     
