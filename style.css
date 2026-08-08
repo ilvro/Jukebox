@@ -352,6 +352,15 @@ button {
     pointer-events: auto;
 }
 
+#player-hover-zone {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 8px;
+    z-index: 2;
+}
+
 .track-item {
     display: flex;
     align-items: center;
@@ -554,7 +563,14 @@ button {
     background: rgba(0, 0, 0, 0.2);
     border-radius: 3px;
     padding: 0 3px;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+}
+
+.progress-container::-webkit-scrollbar {
+    display: none;
 }
 
 .progress-bar {
@@ -602,7 +618,7 @@ button {
 }
 
 .time-tooltip {
-    position: absolute;
+    position: fixed;
     background: rgba(28, 28, 28, 0.9);
     color: white;
     padding: 4px 8px;
@@ -613,8 +629,7 @@ button {
     white-space: nowrap;
     font-family: monospace;
     transform-origin: center bottom;
-    bottom: 100%;
-    margin-bottom: 8px;
+    margin: 0;
 }
 
 .time-tooltip::after {

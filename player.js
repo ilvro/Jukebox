@@ -7,6 +7,7 @@ let audioVolumes = {};
 let audioTimes = {};
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
+const playerHoverZone = document.getElementById('player-hover-zone');
 const showPlayerBtn = document.getElementById('show-player-button');
 const masterVolumeSlider = document.getElementById('master-volume-slider');
 const stopAllBtn = document.getElementById('stop-all-button');
@@ -442,6 +443,48 @@ playerContainer.addEventListener('mouseover', () => {
     }
 });
 
+if (playerHoverZone) {
+    playerHoverZone.addEventListener('mouseenter', () => {
+        playerContainer.classList.add('active');
+    });
+
+    playerHoverZone.addEventListener('mouseleave', () => {
+        requestAnimationFrame(() => {
+            const isPinnedOpen = playerContainer.classList.contains('showBtn');
+            if (!isPinnedOpen && !playerContainer.matches(':hover')) {
+                playerContainer.classList.remove('active');
+            }
+        });
+    });
+}
+
+// Preserve the original "hover where the player lives" behavior without
+// putting an invisible element over the grid. A short delay lets normal card
+// clicks pass through, while a deliberate hover reveals the panel.
+let playerHoverTimer = null;
+document.addEventListener('pointermove', event => {
+    if (playerContainer.classList.contains('showBtn')) return;
+
+    const rect = playerContainer.getBoundingClientRect();
+    const isInsidePlayerArea = event.clientX >= rect.left && event.clientX <= rect.right &&
+        event.clientY >= rect.top && event.clientY <= rect.bottom;
+
+    if (isInsidePlayerArea) {
+        if (!playerContainer.classList.contains('active') && playerHoverTimer === null) {
+            playerHoverTimer = setTimeout(() => {
+                playerHoverTimer = null;
+                playerContainer.classList.add('active');
+            }, 160);
+        }
+    } else {
+        if (playerHoverTimer !== null) clearTimeout(playerHoverTimer);
+        playerHoverTimer = null;
+        if (!playerContainer.matches(':hover')) {
+            playerContainer.classList.remove('active');
+        }
+    }
+}, { passive: true });
+
 playerContainer.addEventListener('mouseout', () => {
     if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn') && !document.getElementById('waveform-context-menu')) {
         playerContainer.classList.remove('active');
@@ -593,9 +636,32 @@ function createTrackUI(songId, audio, playerContainer) {
     progressBar.type = 'range';
     progressBar.min = 0;
     progressBar.max = audio.duration || 100;
+    progressBar.step = 0.001;
     progressBar.value = audio.currentTime;
     progressBar.className = 'progress-bar';
     progressContainer.appendChild(progressBar);
+
+    let timelineZoom = 1;
+
+    const setTimelineZoom = (newZoom, focusTime = audio.currentTime) => {
+        timelineZoom = Math.min(32, Math.max(1, newZoom));
+        waveformCanvas.style.width = `calc(${timelineZoom * 100}% - 6px)`;
+        progressBar.style.width = `calc(${timelineZoom * 100}% + 6px)`;
+
+        requestAnimationFrame(() => {
+            if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+            const focusRatio = Math.min(1, Math.max(0, focusTime / audio.duration));
+            const focusX = focusRatio * waveformCanvas.offsetWidth;
+            progressContainer.scrollLeft = Math.max(0, focusX - progressContainer.clientWidth / 2);
+        });
+    };
+
+    progressContainer.addEventListener('wheel', event => {
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        const focusTime = getExactTime(event, waveformCanvas);
+        setTimelineZoom(event.deltaY < 0 ? timelineZoom * 1.5 : timelineZoom / 1.5, focusTime);
+    }, { passive: false });
 
     // restore a previously selected region, otherwise a paused/resumed song
     // silently loses its effect region every time it starts playing again
@@ -621,7 +687,9 @@ function createTrackUI(songId, audio, playerContainer) {
     const formatTime = (timeInSeconds) => {
         const minutes = Math.floor(timeInSeconds / 60);
         const seconds = Math.floor(timeInSeconds % 60);
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        const milliseconds = Math.floor((timeInSeconds % 1) * 1000);
+        const preciseSuffix = timelineZoom >= 4 ? `.${milliseconds.toString().padStart(3, '0')}` : '';
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}${preciseSuffix}`;
     };
 
     progressBar.addEventListener('input', () => {
@@ -646,14 +714,7 @@ function createTrackUI(songId, audio, playerContainer) {
     let hoveredBar = -1;
     let hoveredTime = -1;
     let hoveredMarker = -1;
-    let lastMoveTime = 0;
-    const moveThrottle = 16;
-    
     progressContainer.addEventListener('mousemove', (event) => {
-        const currentTime = Date.now();
-        if (currentTime - lastMoveTime < moveThrottle) return;
-        lastMoveTime = currentTime;
-
         const rect = waveformCanvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         hoveredTime = (mouseX / rect.width) * audio.duration;
@@ -681,15 +742,11 @@ function createTrackUI(songId, audio, playerContainer) {
         timeTooltip.style.display = 'block';
 
         const tooltipWidth = timeTooltip.offsetWidth;
-        let tooltipLeft = mouseX - (tooltipWidth / 2);
-        const containerWidth = progressContainer.offsetWidth;
-        if (tooltipLeft < 0) {
-            tooltipLeft = 0;
-        } else if (tooltipLeft + tooltipWidth > containerWidth) {
-            tooltipLeft = containerWidth - tooltipWidth;
-        }
+        const tooltipHeight = timeTooltip.offsetHeight;
+        let tooltipLeft = event.clientX - (tooltipWidth / 2);
+        tooltipLeft = Math.max(4, Math.min(tooltipLeft, window.innerWidth - tooltipWidth - 4));
         timeTooltip.style.left = `${tooltipLeft}px`;
-        timeTooltip.style.bottom = '100%';
+        timeTooltip.style.top = `${Math.max(4, rect.top - tooltipHeight - 8)}px`;
         
         if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
             if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
