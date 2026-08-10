@@ -1194,6 +1194,13 @@ function showEditGenresPopup(songItem) {
             pTag.textContent = selectedTags.join(' + ') + (selectedGenres.length > 0 ? ' | ' + selectedGenres.join(' + ') : '');
         }
 
+        // Notify filtering/player code immediately. Filters keep a small
+        // per-card index for large playlists, so changing data attributes
+        // alone is not enough to refresh that cached metadata.
+        document.dispatchEvent(new CustomEvent('genresUpdated', {
+            detail: { songItem }
+        }));
+
         popup.style.opacity = '0';
         dimmer.style.opacity = '0';
         setTimeout(() => {

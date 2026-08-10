@@ -68,6 +68,15 @@ document.addEventListener('songsUpdated', () => {
     updateAllSongs();
     scheduleFilters();
 });
+document.addEventListener('genresUpdated', event => {
+    const song = event.detail?.songItem;
+    if (song?.classList.contains('song-item')) {
+        cacheSongFilterData(song);
+    } else {
+        updateAllSongs();
+    }
+    scheduleFilters();
+});
 document.addEventListener('input', event => {
     const input = event.target;
     if (!input.classList?.contains('title-input')) return;
