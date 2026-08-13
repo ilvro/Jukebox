@@ -536,6 +536,8 @@ function updatePlayerUI() {
             renderedTracks.set(songId, track);
         }
     });
+
+    document.dispatchEvent(new Event('playbackUpdated'));
 }
 
 function createTrackUI(songId, audio, playerContainer) {
