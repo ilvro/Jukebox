@@ -512,8 +512,17 @@ async function savePreset() {
                 updatedData.push(newSong);
             }
 
+            const shouldOverwriteAudio = songItem.dataset.audioEdited === 'true';
             try {
-                await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
+                const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
+                if (shouldOverwriteAudio) {
+                    const audioResponse = await fetch(audioUrl);
+                    const audioBlob = await audioResponse.blob();
+                    const audioWritable = await audioFileHandle.createWritable();
+                    await audioWritable.write(audioBlob);
+                    await audioWritable.close();
+                    delete songItem.dataset.audioEdited;
+                }
             } catch (err) {
                 const audioResponse = await fetch(audioUrl);
                 const audioBlob = await audioResponse.blob();
@@ -521,6 +530,7 @@ async function savePreset() {
                 const audioWritable = await audioFileHandle.createWritable();
                 await audioWritable.write(audioBlob);
                 await audioWritable.close();
+                delete songItem.dataset.audioEdited;
             }
 
             try {

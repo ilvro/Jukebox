@@ -55,7 +55,7 @@ if (stopAllBtn) {
     });
 }
 
-function createAudioElement(audioUrl) {
+function createAudioElement(audioUrl, songId, songItem) {
     const audio = new Audio(audioUrl);
     // A large preset can contain hundreds of songs. Loading metadata for all
     // of them at once creates a large burst of I/O; playback loads on demand.
@@ -67,6 +67,13 @@ function createAudioElement(audioUrl) {
     });
     
     audio.addEventListener('ended', () => {
+        // A natural finish must behave like a real stop. Merely refreshing
+        // the player left the grid item green because its state class and
+        // active-audio entry were never cleared.
+        delete activeAudios[songId];
+        playerPausedAudios.delete(songId);
+        songItem?.classList.remove('playing');
+        audioTimes[songId] = 0;
         updatePlayerUI();
     });
     
@@ -137,7 +144,7 @@ function addSongToPlayer(songElement, audioFile) {
         songMarkers[songId] = [];
     }
     
-    const audio = createAudioElement(audioUrl);
+    const audio = createAudioElement(audioUrl, songId, songElement);
     allAudios[songId] = audio;
     audioVolumes[songId] = 1;
     audioTimes[songId] = 0;
@@ -199,6 +206,154 @@ function setMarkers(songId, markers) {
 
 function markerLabelKey(time) {
     return Number(time).toFixed(3);
+}
+
+function createAudioEditIndicator(message) {
+    const indicator = document.createElement('div');
+    indicator.className = 'audio-edit-indicator';
+    indicator.textContent = message;
+    document.body.appendChild(indicator);
+    return indicator;
+}
+
+function confirmRegionDeletion(selectedDuration, formatTime) {
+    return new Promise(resolve => {
+        const previousModal = document.querySelector('.jukebox-confirm-overlay');
+        previousModal?.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'jukebox-confirm-overlay';
+        overlay.setAttribute('role', 'presentation');
+
+        const dialog = document.createElement('div');
+        dialog.className = 'jukebox-confirm-dialog';
+        dialog.setAttribute('role', 'alertdialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'delete-region-title');
+        dialog.setAttribute('aria-describedby', 'delete-region-description');
+
+        const title = document.createElement('h2');
+        title.id = 'delete-region-title';
+        title.textContent = 'Delete selected region?';
+
+        const description = document.createElement('p');
+        description.id = 'delete-region-description';
+        description.textContent =
+            `This will remove ${formatTime(selectedDuration)} from the song and join the audio before and after it. ` +
+            'This cannot be undone inside Jukebox, and long songs may take a while to process.';
+
+        const actions = document.createElement('div');
+        actions.className = 'jukebox-confirm-actions';
+
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.className = 'jukebox-confirm-cancel';
+        cancelButton.textContent = 'Cancel';
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'jukebox-confirm-delete';
+        deleteButton.textContent = 'Delete region';
+
+        let settled = false;
+        const finish = confirmed => {
+            if (settled) return;
+            settled = true;
+            document.removeEventListener('keydown', handleKeydown);
+            overlay.classList.remove('visible');
+            overlay.addEventListener('transitionend', () => overlay.remove(), { once: true });
+            setTimeout(() => overlay.remove(), 250);
+            resolve(confirmed);
+        };
+        const handleKeydown = event => {
+            if (event.key === 'Escape') finish(false);
+        };
+
+        cancelButton.addEventListener('click', () => finish(false));
+        deleteButton.addEventListener('click', () => finish(true));
+        overlay.addEventListener('mousedown', event => {
+            if (event.target === overlay) finish(false);
+        });
+        dialog.addEventListener('mousedown', event => event.stopPropagation());
+        document.addEventListener('keydown', handleKeydown);
+
+        actions.append(cancelButton, deleteButton);
+        dialog.append(title, description, actions);
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => {
+            overlay.classList.add('visible');
+            cancelButton.focus();
+        });
+    });
+}
+
+async function encodeAudioWithoutRegion(audioUrl, startTime, endTime, onStatus) {
+    onStatus?.('Decoding audio…');
+    if (!sharedAudioContext) {
+        sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    const response = await fetch(audioUrl);
+    if (!response.ok) throw new Error(`Could not read audio (${response.status})`);
+    const sourceBuffer = await sharedAudioContext.decodeAudioData(await response.arrayBuffer());
+
+    const start = Math.max(0, Math.min(startTime, sourceBuffer.duration));
+    const end = Math.max(start, Math.min(endTime, sourceBuffer.duration));
+    const startFrame = Math.floor(start * sourceBuffer.sampleRate);
+    const endFrame = Math.floor(end * sourceBuffer.sampleRate);
+    const outputFrames = sourceBuffer.length - (endFrame - startFrame);
+    if (outputFrames < sourceBuffer.sampleRate * 0.05) {
+        throw new Error('The selection would delete the entire song. Leave at least a small part outside the selection.');
+    }
+
+    onStatus?.('Removing selected region…');
+    const editedBuffer = sharedAudioContext.createBuffer(
+        sourceBuffer.numberOfChannels,
+        outputFrames,
+        sourceBuffer.sampleRate
+    );
+    for (let channel = 0; channel < sourceBuffer.numberOfChannels; channel++) {
+        const source = sourceBuffer.getChannelData(channel);
+        const target = editedBuffer.getChannelData(channel);
+        target.set(source.subarray(0, startFrame), 0);
+        target.set(source.subarray(endFrame), startFrame);
+    }
+
+    if (!window.lamejs) {
+        throw new Error('The MP3 encoder is unavailable. Reload the page while connected to the internet and try again.');
+    }
+
+    // Let the progress message paint before the synchronous MP3 encoder runs.
+    onStatus?.('Encoding edited MP3…');
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+        blob: encodeMp3(editedBuffer),
+        duration: editedBuffer.duration,
+        removedDuration: end - start,
+        start,
+        end
+    };
+}
+
+function waitForAudioMetadata(audio) {
+    return new Promise((resolve, reject) => {
+        const cleanup = () => {
+            audio.removeEventListener('loadedmetadata', handleLoaded);
+            audio.removeEventListener('error', handleError);
+        };
+        const handleLoaded = () => {
+            cleanup();
+            resolve();
+        };
+        const handleError = () => {
+            cleanup();
+            reject(new Error('The edited audio could not be loaded.'));
+        };
+        audio.addEventListener('loadedmetadata', handleLoaded);
+        audio.addEventListener('error', handleError);
+        audio.load();
+    });
 }
 
 function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
@@ -924,6 +1079,109 @@ function createTrackUI(songId, audio, playerContainer) {
     const handleSelectionFadePlay = () => startSelectionFadeMonitor();
     audio.addEventListener('play', handleSelectionFadePlay);
 
+    let isEditingAudio = false;
+    const deleteSelectedRegion = async () => {
+        if (isEditingAudio) return;
+
+        const selectedStart = progressBar.selectedStartTime;
+        const selectedEnd = progressBar.selectedEndTime;
+        if (selectedStart === undefined || selectedEnd === undefined || selectedEnd <= selectedStart) return;
+
+        const selectedDuration = selectedEnd - selectedStart;
+        const confirmed = await confirmRegionDeletion(selectedDuration, formatTime);
+        if (!confirmed) return;
+
+        isEditingAudio = true;
+        const indicator = createAudioEditIndicator('Preparing audio edit…');
+        const oldAudioUrl = audio.src;
+        let replacementUrl = null;
+        let oldUrlRevoked = false;
+
+        try {
+            const edit = await encodeAudioWithoutRegion(
+                oldAudioUrl,
+                selectedStart,
+                selectedEnd,
+                message => { indicator.textContent = message; }
+            );
+
+            const previousTime = audio.currentTime;
+            const adjustedTime = previousTime <= edit.start
+                ? previousTime
+                : previousTime < edit.end
+                    ? edit.start
+                    : previousTime - edit.removedDuration;
+
+            selectionFadeEnabled = false;
+            selectionStopEnabled = false;
+            selectionStopArmed = false;
+            delete songSelectionFadeEffects[songId];
+            delete songSelectionStopEffects[songId];
+            if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+            selectionFadeFrameId = null;
+            restoreSelectionFadeVolume();
+
+            delete activeAudios[songId];
+            playerPausedAudios.delete(songId);
+            songElement?.classList.remove('playing');
+            audio.pause();
+            updatePlayerUI();
+
+            indicator.textContent = 'Loading edited audio…';
+            replacementUrl = URL.createObjectURL(edit.blob);
+            audio.src = replacementUrl;
+            songElement.dataset.audioUrl = replacementUrl;
+            await waitForAudioMetadata(audio);
+
+            audio.currentTime = Math.min(adjustedTime, edit.duration);
+            audioTimes[songId] = audio.currentTime;
+            songElement.dataset.audioEdited = 'true';
+
+            const adjustedMarkers = [];
+            const adjustedLabels = {};
+            (songMarkers[songId] || []).forEach(markerTime => {
+                if (markerTime >= edit.start && markerTime < edit.end) return;
+                const newTime = markerTime >= edit.end
+                    ? markerTime - edit.removedDuration
+                    : markerTime;
+                adjustedMarkers.push(newTime);
+                const label = songMarkerLabels[songId]?.[markerLabelKey(markerTime)];
+                if (label) adjustedLabels[markerLabelKey(newTime)] = label;
+            });
+            songMarkers[songId] = adjustedMarkers;
+            songMarkerLabels[songId] = adjustedLabels;
+
+            waveformCache.delete(songId);
+            waveformGenerationQueue.delete(songId);
+            delete songRegions[songId];
+            delete songActiveEffects[songId];
+
+            if (oldAudioUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(oldAudioUrl);
+                oldUrlRevoked = true;
+            }
+
+            indicator.textContent = 'Selected region deleted ✓';
+            setTimeout(() => indicator.remove(), 1800);
+        } catch (error) {
+            console.error('Could not delete selected audio region:', error);
+
+            if (replacementUrl && !oldUrlRevoked) {
+                audio.src = oldAudioUrl;
+                songElement.dataset.audioUrl = oldAudioUrl;
+                audio.load();
+                URL.revokeObjectURL(replacementUrl);
+            }
+
+            indicator.classList.add('error');
+            indicator.textContent = 'Audio edit failed';
+            setTimeout(() => indicator.remove(), 3000);
+            window.alert(error.message || 'Could not edit this audio.');
+        } finally {
+            isEditingAudio = false;
+        }
+    };
+
     const audioEffects = setupAudioEffects(audio, progressBar, {
         isPlayAndFadeOutActive: () => selectionFadeEnabled,
         togglePlayAndFadeOut: () => {
@@ -962,7 +1220,8 @@ function createTrackUI(songId, audio, playerContainer) {
                 selectionFadeFrameId = null;
             }
             return selectionStopEnabled;
-        }
+        },
+        deleteSelectedRegion
     });
     startSelectionFadeMonitor();
 
@@ -1003,7 +1262,10 @@ function createTrackUI(songId, audio, playerContainer) {
                     break;
                 }
             }
-            if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
+            // The selected region owns right-clicks inside its bounds. A
+            // marker underneath it must not steal the click and open the
+            // marker editor instead of the selection actions.
+            if (isPointInSelectedRegion(selectedTime, progressBar)) {
                 audioEffects.createContextMenu(
                     event.pageX, 
                     event.pageY,

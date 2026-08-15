@@ -110,6 +110,32 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             });
             menu.appendChild(playAndStopItem);
         }
+
+        if (typeof actions.deleteSelectedRegion === 'function') {
+            const deleteRegionItem = document.createElement('div');
+            deleteRegionItem.className = 'context-menu-item';
+            deleteRegionItem.textContent = 'Delete Selected Region…';
+            Object.assign(deleteRegionItem.style, {
+                cursor: 'default',
+                padding: '5px 5px 5px 15px',
+                transition: 'all 0.3s ease',
+                borderLeft: '2px solid transparent',
+                color: '#ff8a72'
+            });
+            deleteRegionItem.addEventListener('mouseover', () => {
+                deleteRegionItem.style.borderLeft = '2px solid #ee420e';
+                deleteRegionItem.style.backgroundColor = 'rgba(238, 66, 14, 0.12)';
+            });
+            deleteRegionItem.addEventListener('mouseout', () => {
+                deleteRegionItem.style.borderLeft = '2px solid transparent';
+                deleteRegionItem.style.backgroundColor = 'transparent';
+            });
+            deleteRegionItem.addEventListener('click', () => {
+                actions.deleteSelectedRegion();
+                menu.remove();
+            });
+            menu.appendChild(deleteRegionItem);
+        }
     }
 
     Object.entries(categories).forEach(([categoryName, effectKeys]) => {
