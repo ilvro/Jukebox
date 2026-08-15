@@ -29,7 +29,9 @@ const MAX_WAVEFORM_WIDTH_LONG = 150;
 const MAX_CONCURRENT_GENERATIONS = 1;
 let currentGenerations = 0;
 
-const MARKER_SNAP_TOLERANCE = 2.5;
+const MAX_MARKER_SNAP_TOLERANCE = 2.5;
+const MARKER_HIT_RADIUS_PX = 7;
+const MARKER_TIME_EPSILON = 0.001;
 const SMOOTH_SKIP_DURATION = 2.5;
 
 if (masterVolumeSlider) {
@@ -151,14 +153,31 @@ function addSongToPlayer(songElement, audioFile) {
     addClickListenerToSongItem(songElement, audio);
 }
 
-function snapToMarker(songId, time) {
+function getMarkerTolerance(duration, element) {
+    const width = element?.getBoundingClientRect().width || element?.clientWidth || 0;
+    if (!Number.isFinite(duration) || duration <= 0 || width <= 0) {
+        return MAX_MARKER_SNAP_TOLERANCE;
+    }
+    return Math.min(MAX_MARKER_SNAP_TOLERANCE, (duration / width) * MARKER_HIT_RADIUS_PX);
+}
+
+function findClosestMarker(songId, time, tolerance) {
     const markers = songMarkers[songId] || [];
-    for (let marker of markers) {
-        if (Math.abs(marker - time) < MARKER_SNAP_TOLERANCE) {
-            return marker;
+    let closestMarker = null;
+    let closestDistance = tolerance;
+
+    for (const marker of markers) {
+        const distance = Math.abs(marker - time);
+        if (distance <= closestDistance) {
+            closestMarker = marker;
+            closestDistance = distance;
         }
     }
-    return time;
+    return closestMarker;
+}
+
+function snapToMarker(songId, time, tolerance) {
+    return findClosestMarker(songId, time, tolerance) ?? time;
 }
 
 function addMarker(songId, time) {
@@ -166,7 +185,7 @@ function addMarker(songId, time) {
         songMarkers[songId] = [];
     }
     
-    const exists = songMarkers[songId].some(marker => Math.abs(marker - time) < 0.5);
+    const exists = songMarkers[songId].some(marker => Math.abs(marker - time) <= MARKER_TIME_EPSILON);
     if (!exists) {
         songMarkers[songId].push(time);
         songMarkers[songId].sort((a, b) => a - b);
@@ -178,7 +197,7 @@ function addMarker(songId, time) {
 function removeMarker(songId, time) {
     if (!songMarkers[songId]) return false;
     
-    const index = songMarkers[songId].findIndex(marker => Math.abs(marker - time) < 0.5);
+    const index = songMarkers[songId].findIndex(marker => Math.abs(marker - time) <= MARKER_TIME_EPSILON);
     if (index !== -1) {
         delete songMarkerLabels[songId]?.[markerLabelKey(songMarkers[songId][index])];
         songMarkers[songId].splice(index, 1);
@@ -872,6 +891,7 @@ function createTrackUI(songId, audio, playerContainer) {
     let hoveredBar = -1;
     let hoveredTime = -1;
     let hoveredMarker = -1;
+    const getCurrentMarkerTolerance = () => getMarkerTolerance(audio.duration, waveformCanvas);
     progressContainer.addEventListener('mousemove', (event) => {
         const rect = waveformCanvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
@@ -885,10 +905,12 @@ function createTrackUI(songId, audio, playerContainer) {
         
         const markers = songMarkers[songId] || [];
         let newHoveredMarker = -1;
+        let closestMarkerDistance = getCurrentMarkerTolerance();
         for (let i = 0; i < markers.length; i++) {
-            if (Math.abs(hoveredTime - markers[i]) < MARKER_SNAP_TOLERANCE) {
+            const markerDistance = Math.abs(hoveredTime - markers[i]);
+            if (markerDistance <= closestMarkerDistance) {
                 newHoveredMarker = i;
-                break;
+                closestMarkerDistance = markerDistance;
             }
         }
 
@@ -920,7 +942,7 @@ function createTrackUI(songId, audio, playerContainer) {
     progressContainer.addEventListener('click', (event) => {
         let clickTime = hoveredTime;
         if (clickTime >= 0 && clickTime <= audio.duration) {
-            clickTime = snapToMarker(songId, clickTime);
+            clickTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
             audio.currentTime = clickTime;
             progressBar.value = clickTime;
         }
@@ -931,7 +953,7 @@ function createTrackUI(songId, audio, playerContainer) {
             event.preventDefault();
             let clickTime = getExactTime(event, waveformCanvas);
             
-            const snappedTime = snapToMarker(songId, clickTime);
+            const snappedTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
             
             const removed = removeMarker(songId, snappedTime);
             if (!removed) {
@@ -1254,18 +1276,15 @@ function createTrackUI(songId, audio, playerContainer) {
             const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
             lastRightClickTime = currentTime;
 
-            const markers = songMarkers[songId] || [];
-            let isOverMarker = false;
-            for (let marker of markers) {
-                if (Math.abs(selectedTime - marker) < MARKER_SNAP_TOLERANCE) {
-                    isOverMarker = true;
-                    break;
-                }
-            }
-            // The selected region owns right-clicks inside its bounds. A
-            // marker underneath it must not steal the click and open the
-            // marker editor instead of the selection actions.
-            if (isPointInSelectedRegion(selectedTime, progressBar)) {
+            const isOverMarker = findClosestMarker(
+                songId,
+                selectedTime,
+                getCurrentMarkerTolerance()
+            ) !== null;
+            // Hover and click use the exact same pixel-based tolerance. If a
+            // marker is visibly highlighted it owns the right-click; the
+            // selected region owns only the remaining space inside it.
+            if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
                 audioEffects.createContextMenu(
                     event.pageX, 
                     event.pageY,
@@ -1276,7 +1295,7 @@ function createTrackUI(songId, audio, playerContainer) {
                         updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                     }
                 );
-            } else if (isDoubleClick) {
+            } else if (isDoubleClick && !isOverMarker) {
                 selectionFadeEnabled = false;
                 selectionStopEnabled = false;
                 selectionStopArmed = false;
@@ -1328,7 +1347,7 @@ function createTrackUI(songId, audio, playerContainer) {
                     }
                     
                     let movedTime = getExactTime(moveEvent, waveformCanvas);
-                    movedTime = snapToMarker(songId, movedTime);
+                    movedTime = snapToMarker(songId, movedTime, getCurrentMarkerTolerance());
                     progressBar.selectedEndTime = movedTime;
     
                     if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
@@ -1350,14 +1369,11 @@ function createTrackUI(songId, audio, playerContainer) {
                     document.removeEventListener('mouseup', onMouseUp);
                     
                     if (!hasMovedMouse && rightClickStartPos) {
-                        const markers = songMarkers[songId] || [];
-                        let clickedMarker = null;
-                        for (let marker of markers) {
-                            if (Math.abs(rightClickStartPos.time - marker) < MARKER_SNAP_TOLERANCE) {
-                                clickedMarker = marker;
-                                break;
-                            }
-                        }
+                        const clickedMarker = findClosestMarker(
+                            songId,
+                            rightClickStartPos.time,
+                            getCurrentMarkerTolerance()
+                        );
                         
                         if (clickedMarker !== null) {
                             createMarkerContextMenu(
