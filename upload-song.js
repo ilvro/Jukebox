@@ -401,6 +401,23 @@ async function downloadVideo(youtubeLink) {
     }
 }
 
+async function writeAudioResponseToFile(audioResponse, audioFileHandle) {
+    if (!audioResponse.ok) {
+        throw new Error(`Could not read edited audio (${audioResponse.status})`);
+    }
+
+    const writable = await audioFileHandle.createWritable();
+    if (audioResponse.body && typeof audioResponse.body.pipeTo === 'function') {
+        // Streams server-backed multi-hour edits directly to disk instead of
+        // creating another enormous Blob in browser memory.
+        await audioResponse.body.pipeTo(writable);
+        return;
+    }
+
+    await writable.write(await audioResponse.blob());
+    await writable.close();
+}
+
 async function savePreset() {
     if (!supportsFileSystemAccess) {
         alert("Your browser doesn't support the File System Access API. Switch to a desktop environment.");
@@ -517,19 +534,13 @@ async function savePreset() {
                 const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
                 if (shouldOverwriteAudio) {
                     const audioResponse = await fetch(audioUrl);
-                    const audioBlob = await audioResponse.blob();
-                    const audioWritable = await audioFileHandle.createWritable();
-                    await audioWritable.write(audioBlob);
-                    await audioWritable.close();
+                    await writeAudioResponseToFile(audioResponse, audioFileHandle);
                     delete songItem.dataset.audioEdited;
                 }
             } catch (err) {
                 const audioResponse = await fetch(audioUrl);
-                const audioBlob = await audioResponse.blob();
                 const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`, { create: true });
-                const audioWritable = await audioFileHandle.createWritable();
-                await audioWritable.write(audioBlob);
-                await audioWritable.close();
+                await writeAudioResponseToFile(audioResponse, audioFileHandle);
                 delete songItem.dataset.audioEdited;
             }
 

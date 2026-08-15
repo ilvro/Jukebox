@@ -5,6 +5,7 @@ let activeAudios = {};
 let allAudios = {};
 let audioVolumes = {};
 let audioTimes = {};
+const songAudioSources = new Map();
 let sharedAudioContext;
 const playerContainer = document.getElementById('player-container');
 const playerHoverZone = document.getElementById('player-hover-zone');
@@ -25,9 +26,13 @@ const songSelectionStopEffects = {}; // songId -> boolean
 const playerPausedAudios = new Set();
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
+const waveformGenerationControllers = new Map();
 const MAX_WAVEFORM_WIDTH = 500;
 const MAX_WAVEFORM_WIDTH_LONG = 150;
 const MAX_CONCURRENT_GENERATIONS = 1;
+const MAX_SAFE_WAVEFORM_DURATION = 20 * 60;
+const LONG_AUDIO_SERVER_EDIT_DURATION = 10 * 60;
+const AUDIO_EDIT_API_URL = 'http://localhost:3000';
 let currentGenerations = 0;
 
 const MAX_MARKER_SNAP_TOLERANCE = 2.5;
@@ -149,6 +154,7 @@ function addSongToPlayer(songElement, audioFile) {
     }
     
     const audio = createAudioElement(audioUrl, songId, songElement);
+    songAudioSources.set(songId, audioFile);
     allAudios[songId] = audio;
     audioVolumes[songId] = 1;
     audioTimes[songId] = 0;
@@ -379,7 +385,88 @@ function confirmRegionDeletion(selectedDuration, formatTime) {
     });
 }
 
-async function encodeAudioWithoutRegion(audioUrl, startTime, endTime, onStatus) {
+async function encodeAudioWithoutRegionViaServer(audioUrl, startTime, endTime, duration, onStatus, sourceFile) {
+    onStatus?.('Checking local FFmpeg server…');
+    try {
+        const statusResponse = await fetch(`${AUDIO_EDIT_API_URL}/edit/audio/status`);
+        if (!statusResponse.ok) throw new Error('Audio edit endpoint is unavailable');
+        const status = await statusResponse.json();
+        if (status.editVersion !== 3) throw new Error('Audio edit server is outdated');
+    } catch (error) {
+        throw new Error(
+            'Long audio editing needs the updated local Jukebox server. Restart it with "node server.js" and try again.'
+        );
+    }
+
+    const serverResultPrefix = `${AUDIO_EDIT_API_URL}/edit/audio/result/`;
+    const isExistingServerResult = audioUrl.startsWith(serverResultPrefix);
+    let sourceBlob = null;
+    let sourceResult = '';
+    if (isExistingServerResult) {
+        sourceResult = decodeURIComponent(new URL(audioUrl).pathname.split('/').pop());
+    } else {
+        onStatus?.('Preparing long audio for FFmpeg…');
+        if (!(sourceFile instanceof Blob)) {
+            throw new Error('The original audio file is unavailable. Reload the preset and try again.');
+        }
+        // A File/Blob request body is streamed from its backing storage. Do
+        // not fetch(blobUrl).blob() here: that can duplicate a multi-hour
+        // file inside the renderer before the upload even begins.
+        sourceBlob = sourceFile;
+    }
+
+    onStatus?.('Copying and editing long audio on disk with FFmpeg…');
+    let response;
+    try {
+        response = await fetch(`${AUDIO_EDIT_API_URL}/edit/audio/delete-region`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': sourceBlob?.type || 'application/octet-stream',
+                'X-Edit-Start': String(startTime),
+                'X-Edit-End': String(endTime),
+                'X-Audio-Duration': String(duration),
+                ...(sourceResult ? { 'X-Source-Result': sourceResult } : {})
+            },
+            body: sourceBlob || new Blob([])
+        });
+    } catch (error) {
+        throw new Error(
+            'The local FFmpeg edit was interrupted. Make sure the Jukebox server is still running and try again.'
+        );
+    }
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `FFmpeg edit failed (${response.status})`);
+    }
+
+    onStatus?.('Loading edited audio…');
+    const result = await response.json();
+    if (!result.url) throw new Error('FFmpeg did not return an edited audio URL.');
+
+    const start = Math.max(0, Math.min(startTime, duration));
+    const end = Math.max(start, Math.min(endTime, duration));
+    return {
+        audioUrl: result.url,
+        duration: Number(result.duration) || Math.max(0, duration - (end - start)),
+        removedDuration: end - start,
+        start,
+        end
+    };
+}
+
+async function encodeAudioWithoutRegion(audioUrl, startTime, endTime, onStatus, sourceDuration, sourceFile) {
+    if (Number.isFinite(sourceDuration) && sourceDuration > LONG_AUDIO_SERVER_EDIT_DURATION) {
+        return encodeAudioWithoutRegionViaServer(
+            audioUrl,
+            startTime,
+            endTime,
+            sourceDuration,
+            onStatus,
+            sourceFile
+        );
+    }
+
     onStatus?.('Decoding audio…');
     if (!sharedAudioContext) {
         sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -1216,11 +1303,25 @@ function createTrackUI(songId, audio, playerContainer) {
         });
     });
     
-    const isLongTrack = audio.duration > 1200;
-    if (isLongTrack) {
-        generateWaveformLazy(audio, waveformCanvas, songId);
+    let waveformSetupStarted = false;
+    const setupTrackWaveform = () => {
+        if (waveformSetupStarted || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+        waveformSetupStarted = true;
+        progressBar.max = audio.duration;
+
+        if (audio.duration > MAX_SAFE_WAVEFORM_DURATION) {
+            createLightweightWaveform(waveformCanvas);
+        } else {
+            // Every real waveform goes through one bounded queue. Rapidly
+            // opening several songs can no longer start many full decoders.
+            generateWaveformLazy(audio, waveformCanvas, songId);
+        }
+    };
+    const handleWaveformMetadata = () => setupTrackWaveform();
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        setupTrackWaveform();
     } else {
-        generateWaveformDirect(audio, waveformCanvas, songId);
+        audio.addEventListener('loadedmetadata', handleWaveformMetadata, { once: true });
     }
     
     // stored so we can remove it in cleanup() instead of stacking a new one every render
@@ -1359,7 +1460,9 @@ function createTrackUI(songId, audio, playerContainer) {
                 oldAudioUrl,
                 selectedStart,
                 selectedEnd,
-                message => { indicator.textContent = message; }
+                message => { indicator.textContent = message; },
+                audio.duration,
+                songAudioSources.get(songId)
             );
 
             const previousTime = audio.currentTime;
@@ -1385,7 +1488,8 @@ function createTrackUI(songId, audio, playerContainer) {
             updatePlayerUI();
 
             indicator.textContent = 'Loading edited audio…';
-            replacementUrl = URL.createObjectURL(edit.blob);
+            replacementUrl = edit.audioUrl || URL.createObjectURL(edit.blob);
+            if (edit.audioUrl) audio.crossOrigin = 'anonymous';
             audio.src = replacementUrl;
             songElement.dataset.audioUrl = replacementUrl;
             await waitForAudioMetadata(audio);
@@ -1393,6 +1497,8 @@ function createTrackUI(songId, audio, playerContainer) {
             audio.currentTime = Math.min(adjustedTime, edit.duration);
             audioTimes[songId] = audio.currentTime;
             songElement.dataset.audioEdited = 'true';
+            if (edit.audioUrl) songAudioSources.delete(songId);
+            else if (edit.blob) songAudioSources.set(songId, edit.blob);
 
             const adjustedMarkers = [];
             const adjustedLabels = {};
@@ -1412,6 +1518,7 @@ function createTrackUI(songId, audio, playerContainer) {
             songMarkerLabels[songId] = adjustedLabels;
             songMarkerColors[songId] = adjustedColors;
 
+            cancelWaveformGeneration(songId);
             waveformCache.delete(songId);
             waveformGenerationQueue.delete(songId);
             delete songRegions[songId];
@@ -1674,6 +1781,8 @@ function createTrackUI(songId, audio, playerContainer) {
 
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.removeEventListener('play', handleSelectionFadePlay);
+            audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
+            cancelWaveformGeneration(songId, waveformCanvas);
             if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
             selectionFadeFrameId = null;
             restoreSelectionFadeVolume();
@@ -1776,6 +1885,27 @@ async function generateWaveformDirect(audio, canvas, songId) {
     }
 }
 
+function createLightweightWaveform(canvas) {
+    canvas.width = MAX_WAVEFORM_WIDTH_LONG;
+    const waveformData = Array.from({ length: MAX_WAVEFORM_WIDTH_LONG }, (_, index) => ({
+        average: 0.08 + (index % 5) * 0.006,
+        peak: 0.14 + (index % 7) * 0.005
+    }));
+    canvas.waveformData = waveformData;
+    canvas.dataset.lightweightWaveform = 'true';
+    drawWaveform(canvas, waveformData);
+}
+
+function cancelWaveformGeneration(songId, canvas = null) {
+    const queued = waveformGenerationQueue.get(songId);
+    if (queued && (canvas === null || queued.canvas === canvas)) {
+        waveformGenerationQueue.delete(songId);
+    }
+
+    const active = waveformGenerationControllers.get(songId);
+    if (active && (canvas === null || active.canvas === canvas)) active.controller.abort();
+}
+
 function generateWaveformLazy(audio, canvas, songId) {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#222';
@@ -1792,10 +1922,8 @@ function generateWaveformLazy(audio, canvas, songId) {
         return;
     }
     
-    if (waveformGenerationQueue.has(songId)) {
-        return;
-    }
-    
+    // Keep the newest canvas as a follow-up when this song is reopened while
+    // an older, now-cancelled generation is still unwinding.
     waveformGenerationQueue.set(songId, { audio, canvas });
     processWaveformQueue();
 }
@@ -1813,12 +1941,16 @@ async function processWaveformQueue() {
     const [songId, { audio, canvas }] = nextEntry;
     waveformGenerationQueue.delete(songId);
     currentGenerations++;
+    const controller = new AbortController();
+    waveformGenerationControllers.set(songId, { controller, canvas });
     
     try {
-        await generateWaveformActual(audio, canvas, songId);
+        await generateWaveformActual(audio, canvas, songId, controller.signal);
     } catch (error) {
-        console.error('Waveform generation failed:', error);
+        if (error.name !== 'AbortError') console.error('Waveform generation failed:', error);
     } finally {
+        const active = waveformGenerationControllers.get(songId);
+        if (active?.controller === controller) waveformGenerationControllers.delete(songId);
         currentGenerations--;
         if (waveformGenerationQueue.size > 0) {
             setTimeout(() => processWaveformQueue(), 100);
@@ -1826,15 +1958,25 @@ async function processWaveformQueue() {
     }
 }
 
-async function generateWaveformActual(audio, canvas, songId) {
+async function generateWaveformActual(audio, canvas, songId, signal) {
     try {
+        if (waveformCache.has(songId)) {
+            const cachedData = waveformCache.get(songId);
+            if (!signal.aborted && canvas.isConnected) {
+                canvas.waveformData = cachedData;
+                drawWaveform(canvas, cachedData);
+            }
+            return;
+        }
         if (!sharedAudioContext) {
             sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         
-        const response = await fetch(audio.src);
+        const response = await fetch(audio.src, { signal });
         const arrayBuffer = await response.arrayBuffer();
+        if (signal.aborted) return;
         const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+        if (signal.aborted) return;
         
         const duration = audioBuffer.duration;
         const targetWidth = duration > 600 ? MAX_WAVEFORM_WIDTH_LONG : MAX_WAVEFORM_WIDTH;
@@ -1847,6 +1989,7 @@ async function generateWaveformActual(audio, canvas, songId) {
         const chunkSize = Math.max(1, Math.floor(targetWidth / 10));
         for (let i = 0; i < targetWidth; i += chunkSize) {
             await new Promise(resolve => setTimeout(resolve, 50));
+            if (signal.aborted) return;
             
             const endChunk = Math.min(i + chunkSize, targetWidth);
             for (let j = i; j < endChunk; j++) {
@@ -1888,14 +2031,19 @@ async function generateWaveformActual(audio, canvas, songId) {
         });
 
         waveformCache.set(songId, waveformData);
-        canvas.waveformData = waveformData;
-        drawWaveform(canvas, waveformData);
+        if (canvas.isConnected) {
+            canvas.waveformData = waveformData;
+            drawWaveform(canvas, waveformData);
+        }
 
     } catch (error) {
+        if (error.name === 'AbortError') return;
         console.error("Waveform generation error:", error);
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#333';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (canvas.isConnected) {
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#333';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
     }
 }
 
@@ -2312,6 +2460,8 @@ export function cutTo(targetSongId) {
 }
 
 export function removeSongAudio(songId) {
+    cancelWaveformGeneration(songId);
+    songAudioSources.delete(songId);
     playerPausedAudios.delete(songId);
     if (allAudios[songId]) {
         const audio = allAudios[songId];
