@@ -431,6 +431,40 @@ button {
     color: #ff8a72;
 }
 
+.preset-load-indicator {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    z-index: 10002;
+    width: min(340px, calc(100vw - 32px));
+    box-sizing: border-box;
+    padding: 12px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 7px;
+    background: rgba(8, 8, 8, 0.94);
+    color: white;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    font: 15px Arial, sans-serif;
+    pointer-events: none;
+}
+
+.preset-load-progress {
+    height: 3px;
+    margin-top: 9px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.preset-load-progress-fill {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: #2bdba0;
+    transition: width 0.12s ease;
+}
+
 /* ------ hotkey panel (toggled like the player) ------ */
 .hotkey-panel {
     position: fixed;

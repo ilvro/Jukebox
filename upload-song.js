@@ -558,6 +558,128 @@ async function savePreset() {
     }
 }
 
+function createPresetLoadIndicator(totalSongs) {
+    document.querySelector('.preset-load-indicator')?.remove();
+
+    const indicator = document.createElement('div');
+    indicator.className = 'preset-load-indicator';
+    indicator.setAttribute('role', 'status');
+    indicator.setAttribute('aria-live', 'polite');
+
+    const label = document.createElement('div');
+    label.className = 'preset-load-label';
+    label.textContent = `Loading songs… 0 / ${totalSongs}`;
+
+    const progress = document.createElement('div');
+    progress.className = 'preset-load-progress';
+    const progressFill = document.createElement('div');
+    progressFill.className = 'preset-load-progress-fill';
+    progress.appendChild(progressFill);
+
+    indicator.append(label, progress);
+    document.body.appendChild(indicator);
+    return indicator;
+}
+
+function updatePresetLoadIndicator(indicator, loaded, total) {
+    const label = indicator.querySelector('.preset-load-label');
+    const progressFill = indicator.querySelector('.preset-load-progress-fill');
+    if (label) label.textContent = `Loading songs… ${loaded} / ${total}`;
+    if (progressFill) progressFill.style.width = `${total > 0 ? (loaded / total) * 100 : 100}%`;
+}
+
+async function indexPresetFiles(directoryHandle, indicator) {
+    const fileHandles = new Map();
+    const label = indicator.querySelector('.preset-load-label');
+    if (label) label.textContent = 'Indexing playlist files…';
+
+    for await (const [name, handle] of directoryHandle.entries()) {
+        if (handle.kind === 'file') fileHandles.set(name, handle);
+    }
+    return fileHandles;
+}
+
+async function loadPresetSongFiles(fileHandles, songMetadata) {
+    const currentTitle = songMetadata.currentTitle;
+    const genres = (songMetadata.genres || [])
+        .map(genre => genre === 'modern' ? 'mystery' : genre)
+        .filter(Boolean);
+    const tags = songMetadata.tags || [];
+
+    const loadPair = async fileTitle => {
+        const audioEntry = fileHandles.get(`${fileTitle}.mp3`);
+        const thumbnailEntry = fileHandles.get(`${fileTitle}.jpg`);
+        if (!audioEntry || !thumbnailEntry) throw new Error('Audio or thumbnail is missing');
+        const [audioFile, thumbnailFile] = await Promise.all([
+            audioEntry.getFile(),
+            thumbnailEntry.getFile()
+        ]);
+        return { audioFile, thumbnailFile };
+    };
+
+    try {
+        // Resolve the filename from the index instead of causing failed file
+        // operations for every song while guessing Google Drive's encoding.
+        const fileTitle = [
+            currentTitle.replace(/%/g, '_'),
+            revertUnderscoreEncoding(currentTitle),
+            currentTitle
+        ].find(candidate =>
+            fileHandles.has(`${candidate}.mp3`) && fileHandles.has(`${candidate}.jpg`)
+        );
+        if (!fileTitle) throw new Error('Audio or thumbnail is missing');
+        const files = await loadPair(fileTitle);
+
+        return {
+            ...songMetadata,
+            ...files,
+            genres,
+            tags,
+            decodedTitle: decodeURIComponent(currentTitle)
+        };
+    } catch (error) {
+        let readableTitle = currentTitle;
+        try {
+            readableTitle = decodeURIComponent(currentTitle);
+        } catch {}
+        console.error(`could not load files for ${readableTitle}`, error);
+        return null;
+    }
+}
+
+function createPresetSongItem(song) {
+    const songItem = document.createElement('div');
+    songItem.className = 'song-item';
+    songItem.draggable = true;
+    songItem.dataset.genres = song.genres.join(',');
+    songItem.dataset.tags = song.tags.join(',');
+
+    const titleInput = document.createElement('input');
+    titleInput.spellcheck = false;
+    titleInput.className = 'title-input';
+    titleInput.value = song.decodedTitle;
+    titleInput.defaultValue = song.decodedTitle;
+    titleInput.addEventListener('dragover', event => event.preventDefault());
+    titleInput.addEventListener('drop', event => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
+
+    const metadata = document.createElement('p');
+    metadata.textContent =
+        `${song.tags.join(' + ')}${song.genres.length > 0 ? ' | ' + song.genres.join(' + ') : ''}`;
+
+    const thumbnail = document.createElement('img');
+    thumbnail.src = URL.createObjectURL(song.thumbnailFile);
+    thumbnail.alt = song.decodedTitle;
+    thumbnail.loading = 'lazy';
+    thumbnail.decoding = 'async';
+    thumbnail.fetchPriority = 'low';
+
+    songItem.append(titleInput, metadata, thumbnail);
+    return songItem;
+}
+
 async function loadPreset() {
     if (!window.showDirectoryPicker) {
         // android user, use alternate fallback function
@@ -581,69 +703,53 @@ async function loadPreset() {
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-        for (const songMetadata of presetMetadata) {
-            let { currentTitle, genres, tags, markers, hotkey } = songMetadata;
+        const loadIndicator = createPresetLoadIndicator(presetMetadata.length);
+        const FILE_BATCH_SIZE = 24;
+        let loadedCount = 0;
 
-            genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
-            songMetadata.genres = genres;
+        try {
+            const fileHandles = await indexPresetFiles(directoryHandle, loadIndicator);
+            updatePresetLoadIndicator(loadIndicator, 0, presetMetadata.length);
 
-            let audioFile, thumbnailFile;
-            try {
-                // first try with the _ encoding (more common because google drive turns it into underscore)
-                const underscoreTitle = currentTitle.replace(/%/g, '_');
-                const audioEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.mp3`);
-                const thumbnailEntry = await directoryHandle.getFileHandle(`${underscoreTitle}.jpg`);
-                audioFile = await audioEntry.getFile();
-                thumbnailFile = await thumbnailEntry.getFile();
-            } catch (error) {
-                // try with the original % encoding
-                try {
-                    const revertedTitle = revertUnderscoreEncoding(currentTitle);
-                    const audioEntry = await directoryHandle.getFileHandle(`${revertedTitle}.mp3`);
-                    const thumbnailEntry = await directoryHandle.getFileHandle(`${revertedTitle}.jpg`);
-                    audioFile = await audioEntry.getFile();
-                    thumbnailFile = await thumbnailEntry.getFile();
-                } catch (finalError) {
-                    console.error(`could not load files for ${decodeURIComponent(currentTitle)}`);
-                    continue;
-                }
+            for (let index = 0; index < presetMetadata.length; index += FILE_BATCH_SIZE) {
+                const metadataBatch = presetMetadata.slice(index, index + FILE_BATCH_SIZE);
+
+                // File System Access calls used to run four-at-a-time for one
+                // song and then wait before starting the next song. A bounded
+                // parallel batch keeps disk access busy without launching all
+                // 1,200 files at once.
+                const loadedBatch = await Promise.all(
+                    metadataBatch.map(songMetadata => loadPresetSongFiles(fileHandles, songMetadata))
+                );
+                const fragment = document.createDocumentFragment();
+                const pendingHotkeys = [];
+
+                loadedBatch.forEach(song => {
+                    if (!song) return;
+
+                    const songItem = createPresetSongItem(song);
+                    fragment.appendChild(songItem);
+                    addSongToPlayer(songItem, song.audioFile);
+
+                    if (song.markers?.length) {
+                        setMarkers(songItem.dataset.songId, song.markers);
+                    }
+                    if (song.hotkey) pendingHotkeys.push([song.hotkey, songItem]);
+                });
+
+                // One DOM insertion per batch avoids hundreds of separate
+                // style/layout passes while preserving metadata order.
+                songGrid.appendChild(fragment);
+                pendingHotkeys.forEach(([hotkey, songItem]) => assignHotkey(hotkey, songItem));
+
+                loadedCount += metadataBatch.length;
+                updatePresetLoadIndicator(loadIndicator, loadedCount, presetMetadata.length);
+                await new Promise(resolve => requestAnimationFrame(resolve));
             }
-
-            // create song item
-            const songItem = document.createElement('div');
-            songItem.classList.add('song-item');
-            songItem.setAttribute('draggable', 'true');
-            songItem.setAttribute('data-genres', genres.join(','));
-            songItem.setAttribute('data-tags', tags.join(','));
-            songItem.innerHTML = `
-                <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
-                <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-                <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}" loading="lazy" decoding="async" fetchpriority="low">
-            `;
-
-            // disables input and audio blob links from being dragged to the title input
-            const titleInput = songItem.querySelector('.title-input');
-            titleInput.addEventListener('dragover', (event) => {
-                event.preventDefault();
-            });
-            titleInput.addEventListener('drop', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-            });
-
-            songGrid.appendChild(songItem);
-            addSongToPlayer(songItem, audioFile);
-            
-            // load markers
-            if (markers && markers.length > 0) {
-                setMarkers(songItem.dataset.songId, markers);
-            }
-
-            // load hotkey
-            if (hotkey) {
-                assignHotkey(hotkey, songItem);
-            }
+        } finally {
+            loadIndicator.remove();
         }
+
         console.log('loaded preset');
         document.dispatchEvent(new Event('songsUpdated'));
     } catch (error) {
