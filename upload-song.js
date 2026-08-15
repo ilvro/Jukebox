@@ -1049,7 +1049,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSongItem = null;
 
     contextMenu.id = 'custom-context-menu';
-    contextMenu.style.position = 'absolute';
+    contextMenu.style.position = 'fixed';
     contextMenu.style.display = 'none';
     contextMenu.style.backgroundColor = 'rgba(0, 0, 0, 0.8)'; // darker as requested
     contextMenu.style.color = '#fff';
@@ -1058,6 +1058,35 @@ document.addEventListener('DOMContentLoaded', () => {
     contextMenu.style.zIndex = '10000'; // high z-index to stay on top
     contextMenu.style.cursor = 'default';
 
+    let menuAnchor = null;
+    const positionSongContextMenu = (setViewportAdjustment = false) => {
+        if (!menuAnchor?.songItem?.isConnected || contextMenu.style.display === 'none') return;
+
+        const anchorRect = menuAnchor.songItem.getBoundingClientRect();
+        const desiredLeft = anchorRect.left + menuAnchor.offsetX;
+        const desiredTop = anchorRect.top + menuAnchor.offsetY;
+
+        if (setViewportAdjustment) {
+            const menuRect = contextMenu.getBoundingClientRect();
+            const margin = 8;
+            const clampedLeft = Math.max(margin, Math.min(desiredLeft, window.innerWidth - menuRect.width - margin));
+            const clampedTop = Math.max(margin, Math.min(desiredTop, window.innerHeight - menuRect.height - margin));
+            menuAnchor.adjustX = clampedLeft - desiredLeft;
+            menuAnchor.adjustY = clampedTop - desiredTop;
+        }
+
+        contextMenu.style.left = `${desiredLeft + menuAnchor.adjustX}px`;
+        contextMenu.style.top = `${desiredTop + menuAnchor.adjustY}px`;
+    };
+
+    // Capture scroll events from the grid's own scrolling container too,
+    // not just document/window scrolling.
+    window.addEventListener('scroll', () => positionSongContextMenu(), {
+        capture: true,
+        passive: true
+    });
+    window.addEventListener('resize', () => positionSongContextMenu(true));
+
     songGrid.addEventListener('contextmenu', (event) => {
         const songItem = event.target.closest('.song-item');
         if (!songItem) return;
@@ -1065,17 +1094,17 @@ document.addEventListener('DOMContentLoaded', () => {
         event.preventDefault();
         event.stopPropagation(); // prevent other context menus
         currentSongItem = songItem;
-        
-        contextMenu.style.top = `${event.pageY}px`;
-        contextMenu.style.left = `${event.pageX}px`;
-        contextMenu.style.display = 'block';
+        const songRect = songItem.getBoundingClientRect();
+        menuAnchor = {
+            songItem,
+            offsetX: event.clientX - songRect.left,
+            offsetY: event.clientY - songRect.top,
+            adjustX: 0,
+            adjustY: 0
+        };
 
-        const menuRect = contextMenu.getBoundingClientRect();
-        const viewportMargin = 8;
-        const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
-        const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
-        contextMenu.style.left = `${Math.max(window.scrollX + viewportMargin, Math.min(event.pageX, maxLeft))}px`;
-        contextMenu.style.top = `${Math.max(window.scrollY + viewportMargin, Math.min(event.pageY, maxTop))}px`;
+        contextMenu.style.display = 'block';
+        positionSongContextMenu(true);
     });
 
     // helper to create menu options with the visual style you liked

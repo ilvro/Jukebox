@@ -1,6 +1,7 @@
 export function createContextMenu(x, y, effectsRegistry, progressBar, updateProgressBarGradient, updateWaveformProgress, actions = {}) {
     const existingMenu = document.querySelector('.waveform-context-menu');
     if (existingMenu) {
+        existingMenu._destroyWaveformMenu?.();
         existingMenu.remove();
     }
 
@@ -18,9 +19,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
     menu.className = 'waveform-context-menu';
     menu.id = 'waveform-context-menu';
     Object.assign(menu.style, {
-        position: 'absolute',
-        left: `${x}px`,
-        top: `${y}px`,
+        position: 'fixed',
         backgroundColor: 'rgba(0, 0, 0, 0.3)',
         borderRadius: '5px',
         padding: '10px',
@@ -72,7 +71,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             menu.style.opacity = '0';
             menu.style.transform = 'translateY(-10px)';
             menu.style.visibility = 'hidden';
-            setTimeout(() => menu.remove(), 300);
+            setTimeout(() => destroyMenu(), 300);
         });
         menu.appendChild(playAndFadeItem);
 
@@ -106,7 +105,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                 menu.style.opacity = '0';
                 menu.style.transform = 'translateY(-10px)';
                 menu.style.visibility = 'hidden';
-                setTimeout(() => menu.remove(), 300);
+                setTimeout(() => destroyMenu(), 300);
             });
             menu.appendChild(playAndStopItem);
         }
@@ -132,7 +131,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             });
             deleteRegionItem.addEventListener('click', () => {
                 actions.deleteSelectedRegion();
-                menu.remove();
+                destroyMenu();
             });
             menu.appendChild(deleteRegionItem);
         }
@@ -191,7 +190,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                 menu.style.opacity = '0';
                 menu.style.transform = 'translateY(-10px)';
                 menu.style.visibility = 'hidden';
-                setTimeout(() => menu.remove(), 300);
+                setTimeout(() => destroyMenu(), 300);
             });
 
             menu.appendChild(menuItem);
@@ -200,16 +199,36 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
 
     document.body.appendChild(menu);
 
-    // Keep the complete menu inside the visible viewport, even when the
-    // selected region is near the bottom or right edge of a long playlist.
-    const menuRect = menu.getBoundingClientRect();
-    const viewportMargin = 8;
-    const minLeft = window.scrollX + viewportMargin;
-    const minTop = window.scrollY + viewportMargin;
-    const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
-    const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
-    menu.style.left = `${Math.max(minLeft, Math.min(x, maxLeft))}px`;
-    menu.style.top = `${Math.max(minTop, Math.min(y, maxTop))}px`;
+    const openingRect = progressBar.getBoundingClientRect();
+    const anchor = {
+        offsetX: x - window.scrollX - openingRect.left,
+        offsetY: y - window.scrollY - openingRect.top,
+        adjustX: 0,
+        adjustY: 0
+    };
+    const positionMenu = (setViewportAdjustment = false) => {
+        if (!progressBar.isConnected || !menu.isConnected) return;
+        const anchorRect = progressBar.getBoundingClientRect();
+        const desiredLeft = anchorRect.left + anchor.offsetX;
+        const desiredTop = anchorRect.top + anchor.offsetY;
+
+        if (setViewportAdjustment) {
+            const menuRect = menu.getBoundingClientRect();
+            const margin = 8;
+            const clampedLeft = Math.max(margin, Math.min(desiredLeft, window.innerWidth - menuRect.width - margin));
+            const clampedTop = Math.max(margin, Math.min(desiredTop, window.innerHeight - menuRect.height - margin));
+            anchor.adjustX = clampedLeft - desiredLeft;
+            anchor.adjustY = clampedTop - desiredTop;
+        }
+
+        menu.style.left = `${desiredLeft + anchor.adjustX}px`;
+        menu.style.top = `${desiredTop + anchor.adjustY}px`;
+    };
+    const handleAnchorScroll = () => positionMenu();
+    const handleAnchorResize = () => positionMenu(true);
+    window.addEventListener('scroll', handleAnchorScroll, { capture: true, passive: true });
+    window.addEventListener('resize', handleAnchorResize);
+    positionMenu(true);
 
     // animate menu appearance
     requestAnimationFrame(() => {
@@ -218,21 +237,29 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
         menu.style.transform = 'translateY(0)';
     });
 
-    const closeMenu = (event) => {
+    let closeMenu = null;
+    const destroyMenu = () => {
+        window.removeEventListener('scroll', handleAnchorScroll, true);
+        window.removeEventListener('resize', handleAnchorResize);
+        if (closeMenu) document.removeEventListener('click', closeMenu);
+        menu.remove();
+    };
+    menu._destroyWaveformMenu = destroyMenu;
+
+    closeMenu = (event) => {
         if (!menu.contains(event.target)) {
             menu.style.opacity = '0';
             menu.style.transform = 'translateY(-10px)';
             menu.style.visibility = 'hidden';
             
             setTimeout(() => {
-                menu.remove();
-                document.removeEventListener('click', closeMenu);
+                destroyMenu();
             }, 300);
         }
     };
     
     setTimeout(() => {
-        document.addEventListener('click', closeMenu);
+        if (menu.isConnected) document.addEventListener('click', closeMenu);
     }, 0);
 
     menu.addEventListener('contextmenu', (event) => {

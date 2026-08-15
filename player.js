@@ -17,6 +17,7 @@ let isDragging = false;
 
 const songMarkers = {};
 const songMarkerLabels = {};
+const songMarkerColors = {};
 const songRegions = {}; // songId -> { start, end }, survives pause/resume so effects don't get silently lost
 const songActiveEffects = {}; // songId -> [effectKey, ...]
 const songSelectionFadeEffects = {}; // songId -> boolean
@@ -32,6 +33,7 @@ let currentGenerations = 0;
 const MAX_MARKER_SNAP_TOLERANCE = 2.5;
 const MARKER_HIT_RADIUS_PX = 7;
 const MARKER_TIME_EPSILON = 0.001;
+const DEFAULT_MARKER_COLOR = '#ffaa00';
 const SMOOTH_SKIP_DURATION = 2.5;
 
 if (masterVolumeSlider) {
@@ -199,7 +201,9 @@ function removeMarker(songId, time) {
     
     const index = songMarkers[songId].findIndex(marker => Math.abs(marker - time) <= MARKER_TIME_EPSILON);
     if (index !== -1) {
-        delete songMarkerLabels[songId]?.[markerLabelKey(songMarkers[songId][index])];
+        const key = markerLabelKey(songMarkers[songId][index]);
+        delete songMarkerLabels[songId]?.[key];
+        delete songMarkerColors[songId]?.[key];
         songMarkers[songId].splice(index, 1);
         return true;
     }
@@ -208,23 +212,91 @@ function removeMarker(songId, time) {
 
 function getMarkers(songId) {
     return (songMarkers[songId] || []).map(time => {
-        const text = songMarkerLabels[songId]?.[markerLabelKey(time)] || '';
-        return text ? { time, text } : time;
+        const key = markerLabelKey(time);
+        const text = songMarkerLabels[songId]?.[key] || '';
+        const color = songMarkerColors[songId]?.[key] || '';
+        if (!text && !color) return time;
+
+        const marker = { time };
+        if (text) marker.text = text;
+        if (color) marker.color = color;
+        return marker;
     });
 }
 
 function setMarkers(songId, markers) {
     songMarkerLabels[songId] = {};
+    songMarkerColors[songId] = {};
     songMarkers[songId] = (markers || []).map(marker => {
         if (typeof marker === 'number') return marker;
         const time = Number(marker.time);
         if (marker.text) songMarkerLabels[songId][markerLabelKey(time)] = marker.text;
+        if (isValidMarkerColor(marker.color)) {
+            songMarkerColors[songId][markerLabelKey(time)] = marker.color.toLowerCase();
+        }
         return time;
     }).filter(Number.isFinite).sort((a, b) => a - b);
 }
 
 function markerLabelKey(time) {
     return Number(time).toFixed(3);
+}
+
+function isValidMarkerColor(color) {
+    return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
+}
+
+function lightenMarkerColor(color, amount = 0.35) {
+    const normalized = isValidMarkerColor(color) ? color : DEFAULT_MARKER_COLOR;
+    const value = Number.parseInt(normalized.slice(1), 16);
+    const channels = [value >> 16, (value >> 8) & 255, value & 255]
+        .map(channel => Math.round(channel + (255 - channel) * amount));
+    return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToHsl(color) {
+    const value = Number.parseInt(color.slice(1), 16);
+    const r = (value >> 16) / 255;
+    const g = ((value >> 8) & 255) / 255;
+    const b = (value & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lightness = (max + min) / 2;
+    const delta = max - min;
+    let hue = 0;
+    let saturation = 0;
+
+    if (delta !== 0) {
+        saturation = delta / (1 - Math.abs(2 * lightness - 1));
+        if (max === r) hue = 60 * (((g - b) / delta) % 6);
+        else if (max === g) hue = 60 * ((b - r) / delta + 2);
+        else hue = 60 * ((r - g) / delta + 4);
+    }
+
+    return {
+        h: Math.round((hue + 360) % 360),
+        s: Math.round(saturation * 100),
+        l: Math.round(lightness * 100)
+    };
+}
+
+function hslToHex(hue, saturation, lightness) {
+    const h = ((Number(hue) % 360) + 360) % 360;
+    const s = Number(saturation) / 100;
+    const l = Number(lightness) / 100;
+    const chroma = (1 - Math.abs(2 * l - 1)) * s;
+    const section = h / 60;
+    const secondary = chroma * (1 - Math.abs((section % 2) - 1));
+    let [r, g, b] = section < 1 ? [chroma, secondary, 0]
+        : section < 2 ? [secondary, chroma, 0]
+        : section < 3 ? [0, chroma, secondary]
+        : section < 4 ? [0, secondary, chroma]
+        : section < 5 ? [secondary, 0, chroma]
+        : [chroma, 0, secondary];
+    const offset = l - chroma / 2;
+    return `#${[r, g, b]
+        .map(channel => Math.round((channel + offset) * 255).toString(16).padStart(2, '0'))
+        .join('')}`;
 }
 
 function createAudioEditIndicator(message) {
@@ -430,15 +502,14 @@ function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
 function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, audioEffects) {
     const existingMenu = document.querySelector('.marker-context-menu');
     if (existingMenu) {
+        existingMenu._destroyMarkerMenu?.();
         existingMenu.remove();
     }
     
     const menu = document.createElement('div');
     menu.className = 'marker-context-menu';
     Object.assign(menu.style, {
-        position: 'absolute',
-        left: `${x}px`,
-        top: `${y}px`,
+        position: 'fixed',
         backgroundColor: 'rgba(0, 0, 0, 0.3)',
         borderRadius: '5px',
         padding: '10px',
@@ -491,7 +562,7 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
         menu.style.opacity = '0';
         menu.style.transform = 'translateY(-10px)';
         menu.style.visibility = 'hidden';
-        setTimeout(() => menu.remove(), 300);
+        setTimeout(() => destroyMenu(), 300);
     });
     
     menu.appendChild(smoothSkipItem);
@@ -523,7 +594,7 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
         menu.style.opacity = '0';
         menu.style.transform = 'translateY(-10px)';
         menu.style.visibility = 'hidden';
-        setTimeout(() => menu.remove(), 300);
+        setTimeout(() => destroyMenu(), 300);
     });
     
     menu.appendChild(cutToItem);
@@ -557,17 +628,173 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
         event.stopPropagation();
     });
     menu.appendChild(labelInput);
+
+    const colorHeader = document.createElement('div');
+    colorHeader.textContent = 'Marker color';
+    colorHeader.className = 'marker-option-header';
+    menu.appendChild(colorHeader);
+
+    const colorControl = document.createElement('div');
+    colorControl.className = 'marker-color-control';
+
+    const initialColor = songMarkerColors[songId]?.[markerLabelKey(markerTime)] || DEFAULT_MARKER_COLOR;
+    const colorButton = document.createElement('button');
+    colorButton.type = 'button';
+    colorButton.className = 'marker-color-swatch';
+    colorButton.title = 'Choose marker color';
+    colorButton.setAttribute('aria-label', 'Choose marker color');
+    colorButton.setAttribute('aria-expanded', 'false');
+    colorButton.style.backgroundColor = initialColor;
+
+    const colorValue = document.createElement('span');
+    colorValue.className = 'marker-color-value';
+    colorValue.textContent = initialColor.toUpperCase();
+
+    const resetColorButton = document.createElement('button');
+    resetColorButton.type = 'button';
+    resetColorButton.className = 'marker-color-reset';
+    resetColorButton.textContent = 'Default';
+
+    const colorPicker = document.createElement('div');
+    colorPicker.className = 'marker-color-picker';
+    colorPicker.hidden = true;
+
+    const createColorSlider = (labelText, min, max) => {
+        const row = document.createElement('label');
+        row.className = 'marker-color-slider-row';
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'marker-color-slider';
+        slider.min = min;
+        slider.max = max;
+        slider.step = '1';
+        row.append(label, slider);
+        colorPicker.appendChild(row);
+        return slider;
+    };
+
+    const hueSlider = createColorSlider('Hue', 0, 359);
+    hueSlider.classList.add('marker-color-hue');
+    const saturationSlider = createColorSlider('Saturation', 0, 100);
+    const lightnessSlider = createColorSlider('Lightness', 0, 100);
+
+    const hexRow = document.createElement('label');
+    hexRow.className = 'marker-color-hex-row';
+    const hexLabel = document.createElement('span');
+    hexLabel.textContent = 'Hex';
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.className = 'marker-color-hex';
+    hexInput.maxLength = 7;
+    hexInput.spellcheck = false;
+    hexRow.append(hexLabel, hexInput);
+    colorPicker.appendChild(hexRow);
+
+    const updateSliderBackgrounds = () => {
+        const h = hueSlider.value;
+        const s = saturationSlider.value;
+        const l = lightnessSlider.value;
+        saturationSlider.style.background =
+            `linear-gradient(to right, hsl(${h} 0% ${l}%), hsl(${h} 100% ${l}%))`;
+        lightnessSlider.style.background =
+            `linear-gradient(to right, #000, hsl(${h} ${s}% 50%), #fff)`;
+    };
+
+    const syncColorControls = color => {
+        const hsl = hexToHsl(color);
+        hueSlider.value = hsl.h;
+        saturationSlider.value = hsl.s;
+        lightnessSlider.value = hsl.l;
+        hexInput.value = color.toUpperCase();
+        updateSliderBackgrounds();
+    };
+
+    let currentMarkerColor = initialColor;
+    const applyMarkerColor = (color, syncControls = true) => {
+        songMarkerColors[songId] ||= {};
+        const key = markerLabelKey(markerTime);
+        const normalized = color.toLowerCase();
+        if (normalized === DEFAULT_MARKER_COLOR) {
+            delete songMarkerColors[songId][key];
+        } else {
+            songMarkerColors[songId][key] = normalized;
+        }
+        currentMarkerColor = normalized;
+        colorButton.style.backgroundColor = normalized;
+        colorValue.textContent = normalized.toUpperCase();
+        if (syncControls) syncColorControls(normalized);
+        else hexInput.value = normalized.toUpperCase();
+        header.style.color = normalized;
+        updateWaveformProgress(audio, progressBar.previousElementSibling, progressBar);
+    };
+
+    colorButton.addEventListener('click', event => {
+        event.stopPropagation();
+        colorPicker.hidden = !colorPicker.hidden;
+        colorButton.setAttribute('aria-expanded', String(!colorPicker.hidden));
+    });
+    [hueSlider, saturationSlider, lightnessSlider].forEach(slider => {
+        slider.addEventListener('input', () => {
+            updateSliderBackgrounds();
+            applyMarkerColor(
+                hslToHex(hueSlider.value, saturationSlider.value, lightnessSlider.value),
+                false
+            );
+        });
+    });
+    hexInput.addEventListener('input', () => {
+        const value = hexInput.value.startsWith('#') ? hexInput.value : `#${hexInput.value}`;
+        if (isValidMarkerColor(value)) applyMarkerColor(value);
+    });
+    hexInput.addEventListener('blur', () => {
+        if (!isValidMarkerColor(hexInput.value)) {
+            hexInput.value = currentMarkerColor.toUpperCase();
+        }
+    });
+    hexInput.addEventListener('keydown', event => event.stopPropagation());
+    resetColorButton.addEventListener('click', event => {
+        event.stopPropagation();
+        applyMarkerColor(DEFAULT_MARKER_COLOR);
+    });
+
+    syncColorControls(initialColor);
+    colorControl.append(colorButton, colorValue, resetColorButton);
+    menu.append(colorControl, colorPicker);
     
     document.body.appendChild(menu);
 
-    const menuRect = menu.getBoundingClientRect();
-    const viewportMargin = 8;
-    const minLeft = window.scrollX + viewportMargin;
-    const minTop = window.scrollY + viewportMargin;
-    const maxLeft = window.scrollX + window.innerWidth - menuRect.width - viewportMargin;
-    const maxTop = window.scrollY + window.innerHeight - menuRect.height - viewportMargin;
-    menu.style.left = `${Math.max(minLeft, Math.min(x, maxLeft))}px`;
-    menu.style.top = `${Math.max(minTop, Math.min(y, maxTop))}px`;
+    const openingRect = progressBar.getBoundingClientRect();
+    const anchor = {
+        offsetX: x - window.scrollX - openingRect.left,
+        offsetY: y - window.scrollY - openingRect.top,
+        adjustX: 0,
+        adjustY: 0
+    };
+    const positionMenu = (setViewportAdjustment = false) => {
+        if (!progressBar.isConnected || !menu.isConnected) return;
+        const anchorRect = progressBar.getBoundingClientRect();
+        const desiredLeft = anchorRect.left + anchor.offsetX;
+        const desiredTop = anchorRect.top + anchor.offsetY;
+
+        if (setViewportAdjustment) {
+            const menuRect = menu.getBoundingClientRect();
+            const margin = 8;
+            const clampedLeft = Math.max(margin, Math.min(desiredLeft, window.innerWidth - menuRect.width - margin));
+            const clampedTop = Math.max(margin, Math.min(desiredTop, window.innerHeight - menuRect.height - margin));
+            anchor.adjustX = clampedLeft - desiredLeft;
+            anchor.adjustY = clampedTop - desiredTop;
+        }
+
+        menu.style.left = `${desiredLeft + anchor.adjustX}px`;
+        menu.style.top = `${desiredTop + anchor.adjustY}px`;
+    };
+    const handleAnchorScroll = () => positionMenu();
+    const handleAnchorResize = () => positionMenu(true);
+    window.addEventListener('scroll', handleAnchorScroll, { capture: true, passive: true });
+    window.addEventListener('resize', handleAnchorResize);
+    positionMenu(true);
     
     requestAnimationFrame(() => {
         menu.style.opacity = '1';
@@ -575,21 +802,29 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
         menu.style.transform = 'translateY(0)';
     });
     
-    const closeMenu = (event) => {
+    let closeMenu = null;
+    const destroyMenu = () => {
+        window.removeEventListener('scroll', handleAnchorScroll, true);
+        window.removeEventListener('resize', handleAnchorResize);
+        if (closeMenu) document.removeEventListener('click', closeMenu);
+        menu.remove();
+    };
+    menu._destroyMarkerMenu = destroyMenu;
+
+    closeMenu = (event) => {
         if (!menu.contains(event.target)) {
             menu.style.opacity = '0';
             menu.style.transform = 'translateY(-10px)';
             menu.style.visibility = 'hidden';
             
             setTimeout(() => {
-                menu.remove();
-                document.removeEventListener('click', closeMenu);
+                destroyMenu();
             }, 300);
         }
     };
     
     setTimeout(() => {
-        document.addEventListener('click', closeMenu);
+        if (menu.isConnected) document.addEventListener('click', closeMenu);
     }, 0);
     
     menu.addEventListener('contextmenu', (event) => {
@@ -1161,6 +1396,7 @@ function createTrackUI(songId, audio, playerContainer) {
 
             const adjustedMarkers = [];
             const adjustedLabels = {};
+            const adjustedColors = {};
             (songMarkers[songId] || []).forEach(markerTime => {
                 if (markerTime >= edit.start && markerTime < edit.end) return;
                 const newTime = markerTime >= edit.end
@@ -1169,9 +1405,12 @@ function createTrackUI(songId, audio, playerContainer) {
                 adjustedMarkers.push(newTime);
                 const label = songMarkerLabels[songId]?.[markerLabelKey(markerTime)];
                 if (label) adjustedLabels[markerLabelKey(newTime)] = label;
+                const color = songMarkerColors[songId]?.[markerLabelKey(markerTime)];
+                if (color) adjustedColors[markerLabelKey(newTime)] = color;
             });
             songMarkers[songId] = adjustedMarkers;
             songMarkerLabels[songId] = adjustedLabels;
+            songMarkerColors[songId] = adjustedColors;
 
             waveformCache.delete(songId);
             waveformGenerationQueue.delete(songId);
@@ -1313,6 +1552,7 @@ function createTrackUI(songId, audio, playerContainer) {
                     progressBar.style.background = '#333';
                     const existingMenu = document.querySelector('.waveform-context-menu');
                     if (existingMenu) {
+                        existingMenu._destroyWaveformMenu?.();
                         existingMenu.remove();
                     }
                     requestAnimationFrame(() => {
@@ -1397,6 +1637,7 @@ function createTrackUI(songId, audio, playerContainer) {
             } else {
                 const existingMenu = document.querySelector('.waveform-context-menu');
                 if (existingMenu) {
+                    existingMenu._destroyWaveformMenu?.();
                     existingMenu.remove();
                 }
             }
@@ -1768,7 +2009,10 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     if (songId && songMarkers[songId]) {
         songMarkers[songId].forEach((markerTime, index) => {
             const markerX = (markerTime / audio.duration) * width;
-            ctx.fillStyle = index === hoveredMarker ? '#ffdd00' : '#ffaa00';
+            const markerColor = songMarkerColors[songId]?.[markerLabelKey(markerTime)] || DEFAULT_MARKER_COLOR;
+            ctx.fillStyle = index === hoveredMarker
+                ? lightenMarkerColor(markerColor)
+                : markerColor;
             ctx.fillRect(markerX - 1.5, 0, 3, height);
 
         });
@@ -2089,6 +2333,7 @@ export function removeSongAudio(songId) {
     }
     delete songMarkers[songId];
     delete songMarkerLabels[songId];
+    delete songMarkerColors[songId];
     delete songSelectionFadeEffects[songId];
     delete songSelectionStopEffects[songId];
     waveformCache.delete(songId);
