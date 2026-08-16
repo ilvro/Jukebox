@@ -375,6 +375,19 @@ button {
     text-overflow: ellipsis;
 }
 
+.track-title-container {
+    min-width: 132px;
+}
+
+.track-time-display {
+    color: rgba(255, 255, 255, 0.72);
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+    text-overflow: clip !important;
+}
+
 .track-pause-button {
     flex: 0 0 30px;
     width: 30px;

@@ -1043,6 +1043,20 @@ function createTrackUI(songId, audio, playerContainer) {
         return (mouseX / rect.width) * audio.duration;
     };
 
+    const formatPlaybackTime = (timeInSeconds) => {
+        const safeTime = Number.isFinite(timeInSeconds) && timeInSeconds >= 0
+            ? Math.floor(timeInSeconds)
+            : 0;
+        const hours = Math.floor(safeTime / 3600);
+        const minutes = Math.floor((safeTime % 3600) / 60);
+        const seconds = safeTime % 60;
+
+        if (hours > 0) {
+            return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    };
+
     const trackDiv = document.createElement('div');
     trackDiv.className = 'track-item';
     trackDiv.dataset.songId = songId;
@@ -1050,6 +1064,7 @@ function createTrackUI(songId, audio, playerContainer) {
     const songElement = document.querySelector(`[data-song-id="${songId}"]`);
     
     const titleContainer = document.createElement('div');
+    titleContainer.className = 'track-title-container';
     titleContainer.style.display = 'flex';
     titleContainer.style.flexDirection = 'column';
     titleContainer.style.gap = '2px';
@@ -1065,6 +1080,19 @@ function createTrackUI(songId, audio, playerContainer) {
     const titleSpan = document.createElement('span');
     titleSpan.textContent = getSongTitle();
     titleContainer.appendChild(titleSpan);
+
+    const timeDisplay = document.createElement('span');
+    timeDisplay.className = 'track-time-display';
+    const updateTimeDisplay = () => {
+        const currentTime = formatPlaybackTime(audio.currentTime);
+        const totalTime = Number.isFinite(audio.duration) && audio.duration > 0
+            ? formatPlaybackTime(audio.duration)
+            : '--:--';
+        timeDisplay.textContent = `${currentTime} / ${totalTime}`;
+        timeDisplay.setAttribute('aria-label', `${currentTime} of ${totalTime}`);
+    };
+    updateTimeDisplay();
+    titleContainer.appendChild(timeDisplay);
     
     const tags = songElement.getAttribute('data-tags');
     if (tags && tags.trim() !== '') {
@@ -1193,6 +1221,7 @@ function createTrackUI(songId, audio, playerContainer) {
 
     progressBar.addEventListener('input', () => {
         audio.currentTime = progressBar.value;
+        updateTimeDisplay();
     });
 
     volumeControl.addEventListener('input', () => {
@@ -1267,6 +1296,7 @@ function createTrackUI(songId, audio, playerContainer) {
             clickTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
             audio.currentTime = clickTime;
             progressBar.value = clickTime;
+            updateTimeDisplay();
         }
     });
 
@@ -1308,6 +1338,7 @@ function createTrackUI(songId, audio, playerContainer) {
         if (waveformSetupStarted || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
         waveformSetupStarted = true;
         progressBar.max = audio.duration;
+        updateTimeDisplay();
 
         if (audio.duration > MAX_SAFE_WAVEFORM_DURATION) {
             createLightweightWaveform(waveformCanvas);
@@ -1317,7 +1348,10 @@ function createTrackUI(songId, audio, playerContainer) {
             generateWaveformLazy(audio, waveformCanvas, songId);
         }
     };
-    const handleWaveformMetadata = () => setupTrackWaveform();
+    const handleWaveformMetadata = () => {
+        updateTimeDisplay();
+        setupTrackWaveform();
+    };
     if (Number.isFinite(audio.duration) && audio.duration > 0) {
         setupTrackWaveform();
     } else {
@@ -1327,6 +1361,7 @@ function createTrackUI(songId, audio, playerContainer) {
     // stored so we can remove it in cleanup() instead of stacking a new one every render
     const handleTimeUpdate = () => {
         progressBar.value = audio.currentTime;
+        updateTimeDisplay();
         requestAnimationFrame(() => {
             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
         });
@@ -1762,6 +1797,7 @@ function createTrackUI(songId, audio, playerContainer) {
             updateVolumeSlider(volumeControl);
             progressBar.max = audio.duration || 100;
             titleSpan.textContent = getSongTitle();
+            updateTimeDisplay();
             updatePauseButton();
         },
         // called once, when the track actually stops playing
