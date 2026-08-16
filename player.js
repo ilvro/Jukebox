@@ -23,6 +23,7 @@ const songRegions = {}; // songId -> { start, end }, survives pause/resume so ef
 const songActiveEffects = {}; // songId -> [effectKey, ...]
 const songSelectionFadeEffects = {}; // songId -> boolean
 const songSelectionStopEffects = {}; // songId -> boolean
+const pendingHotkeyEffects = new Map(); // songId -> effect keys to apply before hotkey playback
 const playerPausedAudios = new Set();
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
@@ -1657,6 +1658,61 @@ function createTrackUI(songId, audio, playerContainer) {
         },
         deleteSelectedRegion
     });
+
+    let waitingForHotkeyMetadata = false;
+    const handleHotkeyEffectsMetadata = () => {
+        waitingForHotkeyMetadata = false;
+        const requestedEffects = pendingHotkeyEffects.get(songId);
+        if (requestedEffects) applyHotkeyEffectSelection(requestedEffects);
+    };
+    const applyHotkeyEffectSelection = (effectKeys = []) => {
+        const requestedEffects = [...new Set(effectKeys.filter(key => typeof key === 'string'))];
+
+        if (requestedEffects.length > 0 && (!Number.isFinite(audio.duration) || audio.duration <= 0)) {
+            pendingHotkeyEffects.set(songId, requestedEffects);
+            if (!waitingForHotkeyMetadata) {
+                waitingForHotkeyMetadata = true;
+                audio.addEventListener('loadedmetadata', handleHotkeyEffectsMetadata, { once: true });
+            }
+            return false;
+        }
+
+        pendingHotkeyEffects.delete(songId);
+        selectionFadeEnabled = false;
+        selectionStopEnabled = false;
+        selectionStopArmed = false;
+        delete songSelectionFadeEffects[songId];
+        delete songSelectionStopEffects[songId];
+
+        if (requestedEffects.length === 0) {
+            progressBar.selectedStartTime = undefined;
+            progressBar.selectedEndTime = undefined;
+            delete songRegions[songId];
+            delete songActiveEffects[songId];
+            audioEffects.setActiveEffectKeys([]);
+            progressBar.style.background = '#333';
+        } else {
+            // Keep a small gap before the real media end. This prevents the
+            // browser's natural ended event from racing a loop at the exact
+            // same timestamp, while still selecting 98%+ of short sounds.
+            const endPadding = Math.min(0.1, audio.duration * 0.02);
+            const region = {
+                start: 0,
+                end: Math.max(0.001, audio.duration - endPadding)
+            };
+            progressBar.selectedStartTime = region.start;
+            progressBar.selectedEndTime = region.end;
+            songRegions[songId] = region;
+            const activatedEffects = audioEffects.setActiveEffectKeys(requestedEffects);
+            songActiveEffects[songId] = activatedEffects;
+            updateProgressBarGradient(progressBar, audio);
+        }
+
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+        });
+        return true;
+    };
     startSelectionFadeMonitor();
 
     if (savedRegion) {
@@ -1667,6 +1723,10 @@ function createTrackUI(songId, audio, playerContainer) {
 
         const savedEffectKeys = songActiveEffects[songId] || [];
         savedEffectKeys.forEach(key => audioEffects.activateEffect(key));
+    }
+
+    if (pendingHotkeyEffects.has(songId)) {
+        applyHotkeyEffectSelection(pendingHotkeyEffects.get(songId));
     }
     
     let rightClickStartPos = null;
@@ -1732,7 +1792,7 @@ function createTrackUI(songId, audio, playerContainer) {
                         updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                     });
                 }, 50);
-            } else if ((!progressBar.selectedStartTime || !progressBar.selectedEndTime) || isOverMarker) {
+            } else if ((progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) || isOverMarker) {
                 // don't commit to a new selection on mousedown alone — a plain
                 // right-click on a marker (no movement) should only open the
                 // marker menu and must NOT wipe out the existing region.
@@ -1835,6 +1895,9 @@ function createTrackUI(songId, audio, playerContainer) {
             updateTimeDisplay();
             updatePauseButton();
         },
+        applyHotkeyEffects(effectKeys) {
+            applyHotkeyEffectSelection(effectKeys);
+        },
         // called once, when the track actually stops playing
         cleanup() {
             // remember the region and active effects so they come back if
@@ -1853,6 +1916,7 @@ function createTrackUI(songId, audio, playerContainer) {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.removeEventListener('play', handleSelectionFadePlay);
             audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
+            audio.removeEventListener('loadedmetadata', handleHotkeyEffectsMetadata);
             cancelWaveformGeneration(songId, waveformCanvas);
             if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
             selectionFadeFrameId = null;
@@ -2590,6 +2654,12 @@ export function playSong(targetSongId) {
     });
 }
 
+export function prepareHotkeyPlayback(targetSongId, effectKeys = []) {
+    const normalizedEffects = [...new Set(effectKeys.filter(key => typeof key === 'string'))];
+    pendingHotkeyEffects.set(targetSongId, normalizedEffects);
+    renderedTracks.get(targetSongId)?.applyHotkeyEffects(normalizedEffects);
+}
+
 export function removeSongAudio(songId) {
     cancelWaveformGeneration(songId);
     songAudioSources.delete(songId);
@@ -2617,6 +2687,7 @@ export function removeSongAudio(songId) {
     delete songMarkerColors[songId];
     delete songSelectionFadeEffects[songId];
     delete songSelectionStopEffects[songId];
+    pendingHotkeyEffects.delete(songId);
     waveformCache.delete(songId);
 
     // in case the song was actively playing, make sure its track panel
@@ -2655,6 +2726,7 @@ export function resetSong(songId) {
     delete songActiveEffects[songId];
     delete songSelectionFadeEffects[songId];
     delete songSelectionStopEffects[songId];
+    pendingHotkeyEffects.delete(songId);
 }
 
 // records the song playing through with whatever effects are currently set

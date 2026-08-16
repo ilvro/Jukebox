@@ -45,7 +45,7 @@ export class SmoothLoopEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (!this.active || !progressBar.selectedStartTime || !progressBar.selectedEndTime) return;
+            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) return;
 
             const loopEndTime = progressBar.selectedEndTime;
             const timeUntilEnd = loopEndTime - audio.currentTime;
@@ -247,7 +247,7 @@ export class ReverseEffect extends AudioEffect {
         this.fetchAudioData(audio.src);
 
         const handleTimeUpdate = () => {
-            if (!this.active || !progressBar.selectedStartTime || !progressBar.selectedEndTime || !this.audioBuffer) {
+            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined || !this.audioBuffer) {
                 return;
             }
 

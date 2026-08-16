@@ -68,7 +68,7 @@ export class AudioEffect {
     // handler to make effects region-based
     createRegionBasedHandler(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         return () => {
-            if (!this.active || !progressBar.selectedStartTime || !progressBar.selectedEndTime) {
+            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
                 return;
             }
             

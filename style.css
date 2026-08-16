@@ -614,7 +614,9 @@ button {
     background: rgba(0, 0, 0, 0.15);
     color: white;
     padding: 15px;
-    width: 220px;
+    width: 260px;
+    max-height: calc(100vh - 186px);
+    overflow-y: auto;
     border-radius: 5px;
     z-index: 3;
     opacity: 0;
@@ -632,6 +634,12 @@ button {
     flex-direction: column;
     gap: 6px;
     margin-top: 8px;
+}
+
+.hotkey-panel-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
 }
 
 .hotkey-panel-row {
@@ -656,13 +664,92 @@ button {
 }
 
 .hotkey-panel-title {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+.hotkey-panel-effects-button {
+    flex: 0 0 auto;
+    min-width: 31px;
+    padding: 2px 5px;
+    border: 1px solid rgba(43, 219, 160, 0.42);
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.28);
+    color: #2bdba0;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.hotkey-panel-effects-button:hover {
+    background: rgba(43, 219, 160, 0.14);
+}
+
+.hotkey-effects-menu {
+    margin: 0 0 5px 28px;
+    padding: 7px;
+    border: 1px solid rgba(43, 219, 160, 0.28);
+    border-radius: 4px;
+    background: rgba(5, 8, 7, 0.88);
+}
+
+.hotkey-effects-help {
+    margin-bottom: 6px;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: 11px;
+    line-height: 1.25;
+}
+
+.hotkey-effects-category {
+    margin: 7px 0 3px;
+    color: #2bdba0;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.hotkey-effect-option {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 2px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.hotkey-effect-option:hover {
+    background: rgba(43, 219, 160, 0.08);
+}
+
+.hotkey-effect-option input {
+    appearance: none;
+    position: relative;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    border: 1px solid rgba(43, 219, 160, 0.68);
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.hotkey-effect-option input:checked {
+    background: #2bdba0;
+}
+
+.hotkey-effect-option input:checked::after {
+    content: '✓';
+    position: absolute;
+    left: 2px;
+    top: -3px;
+    color: #07110e;
+    font-size: 11px;
+    font-weight: bold;
+}
+
 .hotkey-panel-clear {
-    margin-left: auto;
+    flex: 0 0 auto;
     cursor: pointer;
     opacity: 0.6;
     transition: opacity 0.3s ease;
