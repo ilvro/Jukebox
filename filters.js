@@ -1,3 +1,5 @@
+import { getSongState } from './song-state.mjs';
+
 // filtering ===================================================================================================================
 let allSongs = [];
 const genreMenu = document.getElementById('filter-dropdown');
@@ -34,7 +36,7 @@ function songMatchesActiveFilters(song, filters) {
     if (!song._filterTokens) cacheSongFilterData(song);
     for (const filter of filters) {
         if (filter === 'Now Playing') {
-            if (!song.classList.contains('playing')) return false;
+            if (getSongState(song.dataset.songId)?.status !== 'playing') return false;
             continue;
         }
         if (!song._filterTokens.has(filter)) return false;

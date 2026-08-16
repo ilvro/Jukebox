@@ -117,6 +117,26 @@ export function disconnectAudioContext(audio) {
     }
 }
 
+// Permanently releases a song that was removed from the jukebox. Pausing a
+// song uses disconnectAudioContext() because its MediaElementSource must be
+// reused; deletion uses this so the internal map cannot retain abandoned
+// audio elements after a new preset is loaded.
+export function releaseAudioContext(audio) {
+    const entry = audioNodes.get(audio);
+    if (!entry) return;
+
+    try {
+        entry.sourceNode.disconnect();
+        entry.sourceGainNode.disconnect();
+        entry.dryGainNode.disconnect();
+        entry.wetGainNode.disconnect();
+    } catch (error) {
+        console.warn('Error releasing audio context:', error);
+    } finally {
+        audioNodes.delete(audio);
+    }
+}
+
 export function getAudioContext(audio) {
     const entry = audioNodes.get(audio) || {};
     return {

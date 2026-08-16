@@ -1,4 +1,12 @@
-import { addSongToPlayer, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, prepareHotkeyPlayback, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
+import { addSongToPlayer, clearAllSongs, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, prepareHotkeyPlayback, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
+import {
+    assignSongHotkey,
+    clearSongHotkey,
+    getHotkeyEntries,
+    getSongIdForHotkey,
+    getSongState,
+    setSongHotkeyEffects
+} from './song-state.mjs';
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -19,8 +27,6 @@ const dimmer = document.getElementById('dimmer');
 const songGrid = document.getElementById('song-grid');
 
 // ---------------- song hotkeys (1-9) ----------------
-const songHotkeys = new Map(); // '1'..'9' -> songId
-const songHotkeyEffects = new Map(); // songId -> effect keys applied before hotkey playback
 const HOTKEY_EFFECT_CATEGORIES = [
     ['Playback', [['loop', 'Loop'], ['smoothLoop', 'Smooth Loop'], ['reverse', 'Reverse']]],
     ['Speed & Pitch', [['speed075', 'Speed 0.75x'], ['speed090', 'Speed 0.90x'], ['speed110', 'Speed 1.10x'], ['speed125', 'Speed 1.25x'], ['pitchShift', 'Pitch Shift']]],
@@ -68,7 +74,7 @@ function renderHotkeyPanel() {
 
     hotkeyPanelList.innerHTML = '';
 
-    const sortedKeys = [...songHotkeys.keys()].sort();
+    const sortedKeys = getHotkeyEntries().map(([key]) => key).sort();
 
     if (sortedKeys.length === 0) {
         const empty = document.createElement('div');
@@ -79,10 +85,10 @@ function renderHotkeyPanel() {
     }
 
     sortedKeys.forEach(key => {
-        const songId = songHotkeys.get(key);
+        const songId = getSongIdForHotkey(key);
         const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
         if (!songItem) {
-            songHotkeys.delete(key); // song no longer exists, drop the stale entry
+            clearSongHotkey(songId); // song no longer exists, drop the stale entry
             return;
         }
 
@@ -100,7 +106,7 @@ function renderHotkeyPanel() {
         label.className = 'hotkey-panel-title';
         label.textContent = songItem.querySelector('.title-input')?.value || 'Unknown';
 
-        const configuredEffects = songHotkeyEffects.get(songId) || [];
+        const configuredEffects = getSongState(songId)?.hotkey.effects || [];
         const effectsButton = document.createElement('button');
         effectsButton.type = 'button';
         effectsButton.className = 'hotkey-panel-effects-button';
@@ -145,7 +151,7 @@ function renderHotkeyPanel() {
                     checkbox.type = 'checkbox';
                     checkbox.checked = configuredEffects.includes(effectKey);
                     checkbox.addEventListener('change', () => {
-                        const nextEffects = new Set(songHotkeyEffects.get(songId) || []);
+                        const nextEffects = new Set(getSongState(songId)?.hotkey.effects || []);
                         if (checkbox.checked) {
                             if (effectKey === 'loop') nextEffects.delete('smoothLoop');
                             if (effectKey === 'smoothLoop') nextEffects.delete('loop');
@@ -153,8 +159,7 @@ function renderHotkeyPanel() {
                         } else {
                             nextEffects.delete(effectKey);
                         }
-                        if (nextEffects.size > 0) songHotkeyEffects.set(songId, [...nextEffects]);
-                        else songHotkeyEffects.delete(songId);
+                        setSongHotkeyEffects(songId, [...nextEffects]);
                         renderHotkeyPanel();
                     });
                     const optionText = document.createElement('span');
@@ -203,15 +208,9 @@ function removeHotkeyBadge(songItem) {
 }
 
 function clearHotkey(songId) {
-    for (const [key, id] of songHotkeys) {
-        if (id === songId) {
-            songHotkeys.delete(key);
-            const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
-            if (item) removeHotkeyBadge(item);
-            break;
-        }
-    }
-    songHotkeyEffects.delete(songId);
+    const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    if (item) removeHotkeyBadge(item);
+    clearSongHotkey(songId);
     if (expandedHotkeyEffectsSongId === songId) expandedHotkeyEffectsSongId = null;
     renderHotkeyPanel();
 }
@@ -230,19 +229,18 @@ function normalizeHotkeyEffects(effectKeys) {
 function assignHotkey(key, songItem, effectKeys) {
     const songId = songItem.dataset.songId;
     const retainedEffects = effectKeys === undefined
-        ? [...(songHotkeyEffects.get(songId) || [])]
+        ? [...(getSongState(songId)?.hotkey.effects || [])]
         : normalizeHotkeyEffects(effectKeys);
 
-    const previousSongId = songHotkeys.get(key);
+    const previousSongId = getSongIdForHotkey(key);
     if (previousSongId && previousSongId !== songId) {
         const previousItem = document.querySelector(`.song-item[data-song-id="${previousSongId}"]`);
         if (previousItem) removeHotkeyBadge(previousItem);
-        songHotkeyEffects.delete(previousSongId);
+        clearSongHotkey(previousSongId);
     }
     clearHotkey(songId);
 
-    songHotkeys.set(key, songId);
-    if (retainedEffects.length > 0) songHotkeyEffects.set(songId, retainedEffects);
+    assignSongHotkey(songId, key, retainedEffects);
     renderHotkeyBadge(songItem, key);
     renderHotkeyPanel();
 }
@@ -283,12 +281,11 @@ document.addEventListener('keydown', (event) => {
     if (!/^[1-9]$/.test(event.key)) return;
     if (event.repeat) return;
 
-    const songId = songHotkeys.get(event.key);
+    const songId = getSongIdForHotkey(event.key);
     if (!songId) return;
     event.preventDefault();
 
-    const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
-    const isPlaying = songItem?.classList.contains('playing');
+    const isPlaying = getSongState(songId)?.status === 'playing';
 
     if (isPlaying) {
         if (hotkeyMode === 'fade') {
@@ -297,7 +294,7 @@ document.addEventListener('keydown', (event) => {
             stopSong(songId);
         }
     } else {
-        prepareHotkeyPlayback(songId, songHotkeyEffects.get(songId) || []);
+        prepareHotkeyPlayback(songId, getSongState(songId)?.hotkey.effects || []);
         if (hotkeyMode === 'fade') {
             fadeTo(songId);
         } else if (hotkeyMode === 'cut') {
@@ -581,9 +578,8 @@ async function savePreset() {
             
             const songId = songItem.dataset.songId;
             const markers = getMarkers(songId);
-            const hotkeyEntry = [...songHotkeys].find(([key, id]) => id === songId);
-            const hotkey = hotkeyEntry ? hotkeyEntry[0] : null;
-            const hotkeyEffects = hotkey ? [...(songHotkeyEffects.get(songId) || [])] : [];
+            const hotkey = getSongState(songId)?.hotkey.key || null;
+            const hotkeyEffects = hotkey ? [...(getSongState(songId)?.hotkey.effects || [])] : [];
 
             // check for title changes
             const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
@@ -814,11 +810,15 @@ async function loadPreset() {
 
     try {
         const directoryHandle = await window.showDirectoryPicker();
-        songGrid.innerHTML = '';
 
         const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json');
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
+
+        clearAllSongs();
+        expandedHotkeyEffectsSongId = null;
+        renderHotkeyPanel();
+        songGrid.innerHTML = '';
 
         const loadIndicator = createPresetLoadIndicator(presetMetadata.length);
         const FILE_BATCH_SIZE = 24;
@@ -877,8 +877,7 @@ async function loadPreset() {
 async function loadSamplePreset() {
     try {
         console.log('Loading sample preset...');
-        songGrid.innerHTML = '';
-        
+
         const sampleFolderPath = './sample/';
         const metadataResponse = await fetch(`${sampleFolderPath}preset_metadata.json`);
         if (!metadataResponse.ok) {
@@ -887,6 +886,11 @@ async function loadSamplePreset() {
         
         const presetMetadata = await metadataResponse.json();
         console.log('Loaded preset metadata:', presetMetadata);
+
+        clearAllSongs();
+        expandedHotkeyEffectsSongId = null;
+        renderHotkeyPanel();
+        songGrid.innerHTML = '';
         
         // Create requests only when their batch starts. Mapping every song to
         // an async promise up front still launches hundreds of simultaneous
@@ -994,6 +998,11 @@ async function handleFilesFallback(files) {
 
     const presetMetadataFile = fileMap['preset_metadata.json'];
     const presetMetadata = JSON.parse(await presetMetadataFile.text());
+
+    clearAllSongs();
+    expandedHotkeyEffectsSongId = null;
+    renderHotkeyPanel();
+    songGrid.innerHTML = '';
 
     for (const songMetadata of presetMetadata) {
         let { currentTitle, genres, tags, markers, hotkey, hotkeyEffects } = songMetadata;
@@ -1295,14 +1304,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const songId = item.dataset.songId;
         deletedSongs.push(title);
 
-        // release the thumbnail's blob URL too, not just the audio's
-        const thumbnailImg = item.querySelector('img');
-        if (thumbnailImg && thumbnailImg.src.startsWith('blob:')) {
-            URL.revokeObjectURL(thumbnailImg.src);
-        }
-
         clearHotkey(songId);
-        removeSongAudio(songId); // Clean up audio references
+        removeSongAudio(songId); // Releases all state, audio nodes and blob URLs.
         item.remove();
         document.dispatchEvent(new Event('songsUpdated'));
     }));
