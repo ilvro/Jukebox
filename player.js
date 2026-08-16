@@ -2551,6 +2551,45 @@ export function cutTo(targetSongId) {
     }
 }
 
+// Starts or resumes one song immediately while leaving every other active
+// audio untouched. This is the hotkey "Insert" counterpart to Fade and Cut.
+export function playSong(targetSongId) {
+    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const targetAudio = allAudios[targetSongId];
+
+    if (!targetItem || !targetAudio) {
+        console.error(`No audio found for song ${targetSongId}`);
+        return;
+    }
+
+    if (!targetAudio.paused) {
+        activeAudios[targetSongId] = targetAudio;
+        playerPausedAudios.delete(targetSongId);
+        targetItem.classList.add('playing');
+        updatePlayerUI();
+        return;
+    }
+
+    const savedVolume = audioVolumes[targetSongId] ?? 1;
+    const savedTime = audioTimes[targetSongId] ?? targetAudio.currentTime ?? 0;
+
+    playerPausedAudios.delete(targetSongId);
+    targetAudio.muted = false;
+    targetAudio.volume = savedVolume;
+    targetAudio.currentTime = savedTime;
+
+    targetAudio.play().then(() => {
+        activeAudios[targetSongId] = targetAudio;
+        targetItem.classList.add('playing');
+        updatePlayerUI();
+    }).catch(error => {
+        delete activeAudios[targetSongId];
+        targetItem.classList.remove('playing');
+        console.error('Error playing audio:', error);
+        updatePlayerUI();
+    });
+}
+
 export function removeSongAudio(songId) {
     cancelWaveformGeneration(songId);
     songAudioSources.delete(songId);

@@ -1,4 +1,4 @@
-import { addSongToPlayer, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
+import { addSongToPlayer, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -20,7 +20,13 @@ const songGrid = document.getElementById('song-grid');
 
 // ---------------- song hotkeys (1-9) ----------------
 const songHotkeys = new Map(); // '1'..'9' -> songId
-let hotkeyMode = 'fade'; // 'fade' | 'cut'
+const HOTKEY_MODES = ['fade', 'cut', 'insert'];
+const HOTKEY_MODE_LABELS = {
+    fade: 'Hotkeys: Fade',
+    cut: 'Hotkeys: Cut',
+    insert: 'Hotkeys: Insert'
+};
+let hotkeyMode = 'fade';
 
 const hotkeyModeBtn = document.getElementById('hotkey-mode-button');
 const hotkeyPanel = document.getElementById('hotkey-panel');
@@ -29,13 +35,17 @@ const showHotkeysBtn = document.getElementById('show-hotkeys-button');
 
 function updateHotkeyModeLabel() {
     if (hotkeyModeBtn) {
-        hotkeyModeBtn.textContent = hotkeyMode === 'fade' ? 'Hotkeys: Fade' : 'Hotkeys: Cut';
+        hotkeyModeBtn.textContent = HOTKEY_MODE_LABELS[hotkeyMode];
+        hotkeyModeBtn.title = hotkeyMode === 'insert'
+            ? 'Starts the assigned song without stopping or fading other songs'
+            : `Hotkey mode: ${hotkeyMode}`;
     }
 }
 
 if (hotkeyModeBtn) {
     hotkeyModeBtn.addEventListener('click', () => {
-        hotkeyMode = hotkeyMode === 'fade' ? 'cut' : 'fade';
+        const currentModeIndex = HOTKEY_MODES.indexOf(hotkeyMode);
+        hotkeyMode = HOTKEY_MODES[(currentModeIndex + 1) % HOTKEY_MODES.length];
         updateHotkeyModeLabel();
     });
     updateHotkeyModeLabel();
@@ -177,14 +187,17 @@ function startHotkeyAssignment(songItem) {
 
 // pressing 1-9 anywhere (outside of text inputs) triggers that song's hotkey.
 // if the song is already playing, the same key stops it instead of
-// restarting it — using fade or an instant cut, depending on hotkeyMode
+// restarting it — using fade, an instant cut, or inserting it alongside the
+// currently playing songs, depending on hotkeyMode
 document.addEventListener('keydown', (event) => {
     const activeTag = document.activeElement?.tagName;
     if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
     if (!/^[1-9]$/.test(event.key)) return;
+    if (event.repeat) return;
 
     const songId = songHotkeys.get(event.key);
     if (!songId) return;
+    event.preventDefault();
 
     const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
     const isPlaying = songItem?.classList.contains('playing');
@@ -198,8 +211,10 @@ document.addEventListener('keydown', (event) => {
     } else {
         if (hotkeyMode === 'fade') {
             fadeTo(songId);
-        } else {
+        } else if (hotkeyMode === 'cut') {
             cutTo(songId);
+        } else {
+            playSong(songId);
         }
     }
 });
