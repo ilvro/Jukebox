@@ -36,7 +36,9 @@ export class SmoothLoopEffect extends AudioEffect {
         this.crossfadeSource = null;
         this.crossfadeGain = null;
         this.CROSSFADE_DURATION = 2;
-        this.timeoutId = null;
+        this.monitorFrameId = null;
+        this.transitionTimeoutId = null;
+        this.previousNativeLoop = false;
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -44,83 +46,207 @@ export class SmoothLoopEffect extends AudioEffect {
     }
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
-        const handleTimeUpdate = () => {
-            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) return;
+        this.audio = audio;
+        this.progressBar = progressBar;
+        this.audioContextData.sourceGainNode = getAudioContext(audio).sourceGainNode;
+        this.previousNativeLoop = audio.loop;
+        this.prepareCrossfadeAudio();
 
-            const loopEndTime = progressBar.selectedEndTime;
-            const timeUntilEnd = loopEndTime - audio.currentTime;
+        const monitorLoop = () => {
+            if (!this.active) return;
 
-            if (timeUntilEnd <= this.CROSSFADE_DURATION && timeUntilEnd > 0 && !this.crossfading) {
-                this.startCrossfade();
+            const start = progressBar.selectedStartTime;
+            const end = progressBar.selectedEndTime;
+            if (start !== undefined && end !== undefined && end > start) {
+                this.updateNativeLoopSafety(start, end);
+                const regionDuration = end - start;
+                const crossfadeDuration = Math.min(
+                    this.CROSSFADE_DURATION,
+                    Math.max(0.08, regionDuration * 0.25)
+                );
+                const timeUntilEnd = end - audio.currentTime;
+
+                if (!this.crossfading && timeUntilEnd <= crossfadeDuration && timeUntilEnd > 0) {
+                    this.startCrossfade(crossfadeDuration);
+                } else if (!this.crossfading && audio.currentTime >= end) {
+                    // Last-resort protection for a delayed animation frame.
+                    audio.currentTime = start;
+                }
             }
-        };
 
-        audio.addEventListener('timeupdate', handleTimeUpdate);
+            this.monitorFrameId = requestAnimationFrame(monitorLoop);
+        };
+        this.monitorFrameId = requestAnimationFrame(monitorLoop);
         
         this.cleanup = () => {
-            audio.removeEventListener('timeupdate', handleTimeUpdate);
+            if (this.monitorFrameId !== null) {
+                cancelAnimationFrame(this.monitorFrameId);
+                this.monitorFrameId = null;
+            }
+            audio.loop = this.previousNativeLoop;
             this.stopCrossfade();
         };
     }
 
-    startCrossfade() {
+    updateNativeLoopSafety(start, end) {
+        const duration = this.audio.duration;
+        const coversAlmostEntireSong = Number.isFinite(duration) &&
+            start <= 0.05 && end >= duration - 0.5;
+        this.audio.loop = coversAlmostEntireSong || this.previousNativeLoop;
+    }
+
+    prepareCrossfadeAudio() {
+        if (this.crossfadeAudio || !this.audio?.src) return;
+        const standbyAudio = new Audio(this.audio.src);
+        standbyAudio.preload = 'auto';
+        if (this.audio.crossOrigin) standbyAudio.crossOrigin = this.audio.crossOrigin;
+        standbyAudio.load();
+        this.crossfadeAudio = standbyAudio;
+    }
+
+    async startCrossfade(requestedDuration) {
         if (this.crossfading || !this.active || !this.audioContextData) return;
         
-        const { audioContext, dryGainNode, mainGainNode } = this.audioContextData;
+        const { audioContext, dryGainNode, sourceGainNode, mainGainNode } = this.audioContextData;
+        const mainAudioGainNode = sourceGainNode || dryGainNode;
         const audio = this.audio;
         const progressBar = this.progressBar;
 
         this.crossfading = true;
+        this.prepareCrossfadeAudio();
 
-        // sync volume with the main audio element to avoid loudness spikes
-        const currentVolume = audio.volume;
+        const secondaryAudio = this.crossfadeAudio;
+        if (!secondaryAudio) {
+            this.crossfading = false;
+            return;
+        }
 
-        // create a secondary audio element for the crossfade
-        this.crossfadeAudio = new Audio(audio.src);
-        this.crossfadeAudio.currentTime = progressBar.selectedStartTime;
-        this.crossfadeAudio.playbackRate = audio.playbackRate;
-        this.crossfadeAudio.preservesPitch = audio.preservesPitch;
-        this.crossfadeAudio.volume = currentVolume; // sync volume
+        if (secondaryAudio.readyState < HTMLMediaElement.HAVE_METADATA) {
+            await Promise.race([
+                new Promise(resolve => secondaryAudio.addEventListener('loadedmetadata', resolve, { once: true })),
+                new Promise(resolve => setTimeout(resolve, 500))
+            ]);
+        }
+        if (!this.active) {
+            this.stopCrossfadeLogic();
+            return;
+        }
+
+        try {
+            secondaryAudio.currentTime = progressBar.selectedStartTime;
+        } catch (error) {
+            console.error('Could not seek smooth-loop standby audio:', error);
+            audio.currentTime = progressBar.selectedStartTime;
+            this.stopCrossfadeLogic();
+            this.crossfading = false;
+            this.prepareCrossfadeAudio();
+            return;
+        }
+        secondaryAudio.playbackRate = audio.playbackRate;
+        secondaryAudio.preservesPitch = audio.preservesPitch;
+        secondaryAudio.volume = audio.volume;
         
-        // connect the secondary audio to the web audio graph
-        this.crossfadeSource = audioContext.createMediaElementSource(this.crossfadeAudio);
+        this.crossfadeSource = audioContext.createMediaElementSource(secondaryAudio);
         this.crossfadeGain = audioContext.createGain();
-        
         this.crossfadeGain.gain.setValueAtTime(0, audioContext.currentTime);
         this.crossfadeSource.connect(this.crossfadeGain);
         this.crossfadeGain.connect(mainGainNode);
-        this.crossfadeAudio.play().catch(e => console.error("crossfade error:", e));
+
+        try {
+            await secondaryAudio.play();
+        } catch (error) {
+            console.error('crossfade error:', error);
+            this.stopCrossfadeLogic();
+            this.crossfading = false;
+            return;
+        }
+
+        if (!this.active) {
+            this.stopCrossfadeLogic();
+            return;
+        }
 
         const now = audioContext.currentTime;
-        const duration = this.CROSSFADE_DURATION;
-
-        // fade out main audio (relative to drygain current value)
-        dryGainNode.gain.cancelScheduledValues(now);
-        dryGainNode.gain.setValueAtTime(dryGainNode.gain.value, now);
-        dryGainNode.gain.linearRampToValueAtTime(0, now + duration);
-
-        // fade in secondary audio
-        this.crossfadeGain.gain.cancelScheduledValues(now);
-        this.crossfadeGain.gain.setValueAtTime(0, now);
-        this.crossfadeGain.gain.linearRampToValueAtTime(1, now + duration);
-
-        // schedule the jump back to the start
-        this.timeoutId = setTimeout(() => {
-            if (!this.active) return;
-
-            audio.currentTime = progressBar.selectedStartTime + duration;
-            
-            // restore main volume
-            dryGainNode.gain.cancelScheduledValues(audioContext.currentTime);
-            dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
-
+        const remaining = progressBar.selectedEndTime - audio.currentTime;
+        if (remaining <= 0.03) {
+            audio.currentTime = progressBar.selectedStartTime;
             this.stopCrossfadeLogic();
+            this.crossfading = false;
+            this.prepareCrossfadeAudio();
+            return;
+        }
+        if (remaining > requestedDuration + 0.1) {
+            // The main element wrapped through the native safety loop while
+            // the standby media was becoming ready. Retry at the next real
+            // crossfade window instead of fading at the beginning.
+            this.stopCrossfadeLogic();
+            this.crossfading = false;
+            this.prepareCrossfadeAudio();
+            return;
+        }
+        const duration = Math.min(requestedDuration, remaining);
+        const curveSteps = 64;
+        const fadeOutCurve = new Float32Array(curveSteps);
+        const fadeInCurve = new Float32Array(curveSteps);
+        this.mainGainBeforeCrossfade = mainAudioGainNode.gain.value;
+        for (let index = 0; index < curveSteps; index++) {
+            const ratio = index / (curveSteps - 1);
+            fadeOutCurve[index] = this.mainGainBeforeCrossfade * Math.cos(ratio * Math.PI / 2);
+            fadeInCurve[index] = Math.sin(ratio * Math.PI / 2);
+        }
+
+        mainAudioGainNode.gain.cancelScheduledValues(now);
+        mainAudioGainNode.gain.setValueCurveAtTime(fadeOutCurve, now, duration);
+        this.crossfadeGain.gain.cancelScheduledValues(now);
+        this.crossfadeGain.gain.setValueCurveAtTime(fadeInCurve, now, duration);
+
+        this.transitionTimeoutId = setTimeout(() => {
+            if (!this.active) return;
+            this.finishCrossfade(duration, mainAudioGainNode, audioContext);
         }, duration * 1000);
+    }
+
+    async finishCrossfade(duration, mainAudioGainNode, audioContext) {
+        if (!this.active || !this.crossfadeAudio || !this.crossfadeGain) return;
+
+        // Seek the silent main element to the exact position currently heard
+        // from the secondary element. Keep the secondary audible until the
+        // seek completes, which removes the buffering gap from the handoff.
+        const targetTime = Math.min(
+            this.progressBar.selectedEndTime,
+            this.crossfadeAudio.currentTime || this.progressBar.selectedStartTime + duration
+        );
+        this.audio.currentTime = targetTime;
+
+        if (this.audio.seeking) {
+            await Promise.race([
+                new Promise(resolve => this.audio.addEventListener('seeked', resolve, { once: true })),
+                new Promise(resolve => setTimeout(resolve, 80))
+            ]);
+        }
+        if (!this.active || !this.crossfadeGain) return;
+
+        const handoffDuration = 0.06;
+        const now = audioContext.currentTime;
+        mainAudioGainNode.gain.cancelScheduledValues(now);
+        mainAudioGainNode.gain.setValueAtTime(0, now);
+        mainAudioGainNode.gain.linearRampToValueAtTime(this.mainGainBeforeCrossfade ?? 1, now + handoffDuration);
+        this.crossfadeGain.gain.cancelScheduledValues(now);
+        this.crossfadeGain.gain.setValueAtTime(this.crossfadeGain.gain.value, now);
+        this.crossfadeGain.gain.linearRampToValueAtTime(0, now + handoffDuration);
+
+        this.transitionTimeoutId = setTimeout(() => {
+            this.stopCrossfadeLogic();
+            this.crossfading = false;
+            this.prepareCrossfadeAudio();
+        }, handoffDuration * 1000 + 15);
     }
 
     stopCrossfadeLogic() {
         if (this.crossfadeAudio) {
             this.crossfadeAudio.pause();
+            this.crossfadeAudio.removeAttribute('src');
+            this.crossfadeAudio.load();
             this.crossfadeAudio = null;
         }
         if (this.crossfadeSource) {
@@ -135,15 +261,16 @@ export class SmoothLoopEffect extends AudioEffect {
     }
 
     stopCrossfade() {
-        if (this.timeoutId) {
-            clearTimeout(this.timeoutId);
-            this.timeoutId = null;
+        if (this.transitionTimeoutId) {
+            clearTimeout(this.transitionTimeoutId);
+            this.transitionTimeoutId = null;
         }
         
         if (this.audioContextData?.dryGainNode) {
-            const { dryGainNode, audioContext } = this.audioContextData;
-            dryGainNode.gain.cancelScheduledValues(audioContext.currentTime);
-            dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
+            const { sourceGainNode, dryGainNode, audioContext } = this.audioContextData;
+            const mainAudioGainNode = sourceGainNode || dryGainNode;
+            mainAudioGainNode.gain.cancelScheduledValues(audioContext.currentTime);
+            mainAudioGainNode.gain.setValueAtTime(this.mainGainBeforeCrossfade ?? 1, audioContext.currentTime);
         }
 
         this.stopCrossfadeLogic();

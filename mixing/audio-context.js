@@ -71,21 +71,21 @@ export function initializeAudioContext(audio) {
             // element, so each song's source node is created a single time
             // and reused for the lifetime of that audio element
             const sourceNode = audioContext.createMediaElementSource(audio);
+            const sourceGainNode = audioContext.createGain();
             const dryGainNode = audioContext.createGain();
             const wetGainNode = audioContext.createGain();
 
-            sourceNode.connect(dryGainNode);
-            sourceNode.connect(wetGainNode);
+            sourceNode.connect(sourceGainNode);
+            sourceGainNode.connect(dryGainNode);
+            sourceGainNode.connect(wetGainNode);
             dryGainNode.connect(mainGainNode);
 
-            entry = { sourceNode, dryGainNode, wetGainNode, isInitialized: true };
+            entry = { sourceNode, sourceGainNode, dryGainNode, wetGainNode, isInitialized: true };
             audioNodes.set(audio, entry);
 
             console.log("Audio context initialized for song");
         } else if (!entry.isInitialized) {
-            entry.sourceNode.connect(entry.dryGainNode);
-            entry.sourceNode.connect(entry.wetGainNode);
-            entry.dryGainNode.connect(mainGainNode);
+            entry.sourceGainNode.connect(entry.wetGainNode);
 
             entry.isInitialized = true;
             console.log("Audio context connections restored for song");
@@ -108,7 +108,7 @@ export function disconnectAudioContext(audio) {
 
         // disconnect the wet path but keep the dry path intact, so the song
         // keeps playing normally once its effects are turned off
-        entry.sourceNode.disconnect(entry.wetGainNode);
+        entry.sourceGainNode.disconnect(entry.wetGainNode);
 
         entry.isInitialized = false;
         console.log("Audio context disconnected for song");
@@ -123,6 +123,7 @@ export function getAudioContext(audio) {
         audioContext,
         sourceNode: entry.sourceNode,
         mainGainNode,
+        sourceGainNode: entry.sourceGainNode,
         dryGainNode: entry.dryGainNode,
         wetGainNode: entry.wetGainNode,
         isInitialized: !!entry.isInitialized
