@@ -1168,20 +1168,50 @@ function createTrackUI(songId, audio, playerContainer) {
     progressBar.className = 'progress-bar';
     progressContainer.appendChild(progressBar);
 
+    const zoomIndicator = document.createElement('span');
+    zoomIndicator.className = 'timeline-zoom-indicator';
+    zoomIndicator.hidden = true;
+    progressContainer.appendChild(zoomIndicator);
+
     let timelineZoom = 1;
+
+    const positionZoomIndicator = () => {
+        zoomIndicator.style.left = `${progressContainer.scrollLeft + progressContainer.clientWidth - zoomIndicator.offsetWidth - 5}px`;
+    };
+
+    const updateZoomIndicator = () => {
+        const roundedZoom = Math.round(timelineZoom * 10) / 10;
+        zoomIndicator.textContent = `${Number.isInteger(roundedZoom) ? roundedZoom : roundedZoom.toFixed(1)}×`;
+        zoomIndicator.hidden = timelineZoom <= 1.01;
+        if (!zoomIndicator.hidden) positionZoomIndicator();
+    };
+
+    const syncWaveformResolution = () => {
+        if (!waveformCanvas.waveformData) return;
+        const displayWidth = Math.max(1, Math.round(waveformCanvas.getBoundingClientRect().width));
+        if (waveformCanvas.width !== displayWidth) waveformCanvas.width = displayWidth;
+        if (waveformCanvas.height !== 30) waveformCanvas.height = 30;
+        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+    };
 
     const setTimelineZoom = (newZoom, focusTime = audio.currentTime) => {
         timelineZoom = Math.min(32, Math.max(1, newZoom));
         waveformCanvas.style.width = `calc(${timelineZoom * 100}% - 6px)`;
         progressBar.style.width = `calc(${timelineZoom * 100}% + 6px)`;
 
+        updateZoomIndicator();
+
         requestAnimationFrame(() => {
+            syncWaveformResolution();
             if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
             const focusRatio = Math.min(1, Math.max(0, focusTime / audio.duration));
             const focusX = focusRatio * waveformCanvas.offsetWidth;
             progressContainer.scrollLeft = Math.max(0, focusX - progressContainer.clientWidth / 2);
+            positionZoomIndicator();
         });
     };
+
+    progressContainer.addEventListener('scroll', positionZoomIndicator, { passive: true });
 
     progressContainer.addEventListener('wheel', event => {
         if (!event.ctrlKey) return;
@@ -1280,7 +1310,8 @@ function createTrackUI(songId, audio, playerContainer) {
         timeTooltip.style.top = `${Math.max(4, rect.top - tooltipHeight - 8)}px`;
         
         if (newHoveredBar !== hoveredBar || newHoveredMarker !== hoveredMarker) {
-            if (newHoveredBar >= 0 && newHoveredBar < waveformCanvas.waveformData?.length) {
+            const visibleBarCount = Math.ceil(waveformCanvas.width / 3);
+            if (newHoveredBar >= 0 && newHoveredBar < visibleBarCount) {
                 hoveredBar = newHoveredBar;
             }
             hoveredMarker = newHoveredMarker;
@@ -1787,6 +1818,10 @@ function createTrackUI(songId, audio, playerContainer) {
     });
 
     playerContainer.appendChild(trackDiv);
+    requestAnimationFrame(() => {
+        syncWaveformResolution();
+        updateZoomIndicator();
+    });
 
     return {
         trackDiv,
@@ -2084,6 +2119,10 @@ async function generateWaveformActual(audio, canvas, songId, signal) {
 }
 
 function drawWaveform(canvas, waveformData) {
+    const displayWidth = Math.round(canvas.getBoundingClientRect().width);
+    if (displayWidth > 0 && canvas.width !== displayWidth) canvas.width = displayWidth;
+    if (canvas.height !== 30) canvas.height = 30;
+
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const width = canvas.width;
     const height = canvas.height;
@@ -2092,17 +2131,24 @@ function drawWaveform(canvas, waveformData) {
     
     const barWidth = 2;
     const gap = 1;
+    const totalBarWidth = barWidth + gap;
+    const renderBarCount = Math.ceil(width / totalBarWidth);
     const centerY = height / 2;
     
-    for (let i = 0; i < waveformData.length; i++) {
-        const x = i * (barWidth + gap);
+    for (let i = 0; i < renderBarCount; i++) {
+        const sourceIndex = Math.min(
+            waveformData.length - 1,
+            Math.floor((i / Math.max(1, renderBarCount - 1)) * (waveformData.length - 1))
+        );
+        const point = waveformData[sourceIndex];
+        const x = i * totalBarWidth;
         
-        const avgHeight = waveformData[i].average * height * 0.8;
+        const avgHeight = point.average * height * 0.8;
         const avgY = centerY - (avgHeight / 2);
         ctx.fillStyle = '#333';
         ctx.fillRect(x, avgY, barWidth, avgHeight);
         
-        const peakHeight = waveformData[i].peak * height * 0.8;
+        const peakHeight = point.peak * height * 0.8;
         const peakTopY = centerY - (peakHeight / 2);
         const peakBottomY = centerY + (peakHeight / 2) - 1;
         
@@ -2125,11 +2171,16 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     const barWidth = 2;
     const gap = 1;
     const totalBarWidth = barWidth + gap;
+    const renderBarCount = Math.ceil(width / totalBarWidth);
     const centerY = height / 2;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
-    const selectedStartPixel = progressBar.selectedStartTime ? Math.floor((progressBar.selectedStartTime / audio.duration) * width) : -1;
-    const selectedEndPixel = progressBar.selectedEndTime ? Math.floor((progressBar.selectedEndTime / audio.duration) * width) : -1;
+    const selectedStartPixel = progressBar.selectedStartTime !== undefined
+        ? Math.floor((progressBar.selectedStartTime / audio.duration) * width)
+        : -1;
+    const selectedEndPixel = progressBar.selectedEndTime !== undefined
+        ? Math.floor((progressBar.selectedEndTime / audio.duration) * width)
+        : -1;
 
     if (hoveredTime >= 0) {
         const hoverPixel = Math.floor((hoveredTime / audio.duration) * width);
@@ -2138,10 +2189,15 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     }
 
     const batchSize = 100;
-    for (let i = 0; i < waveformData.length; i += batchSize) {
-        const endIndex = Math.min(i + batchSize, waveformData.length);
+    for (let i = 0; i < renderBarCount; i += batchSize) {
+        const endIndex = Math.min(i + batchSize, renderBarCount);
         
         for (let j = i; j < endIndex; j++) {
+            const sourceIndex = Math.min(
+                waveformData.length - 1,
+                Math.floor((j / Math.max(1, renderBarCount - 1)) * (waveformData.length - 1))
+            );
+            const point = waveformData[sourceIndex];
             const x = j * totalBarWidth;
             const barTime = (x / width) * audio.duration;
             
@@ -2164,12 +2220,12 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
                 peakColor = '#444';
             }
             
-            const avgHeight = waveformData[j].average * height * 0.8;
+            const avgHeight = point.average * height * 0.8;
             const avgY = centerY - (avgHeight / 2);
             ctx.fillStyle = mainColor;
             ctx.fillRect(x, avgY, barWidth, avgHeight);
             
-            const peakHeight = waveformData[j].peak * height * 0.8;
+            const peakHeight = point.peak * height * 0.8;
             const peakTopY = centerY - (peakHeight / 2);
             const peakBottomY = centerY + (peakHeight / 2) - 1;
             
