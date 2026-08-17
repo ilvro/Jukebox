@@ -40,6 +40,8 @@
                 <label> | </label>
                 <button class="show-player-button" id="show-hotkeys-button" onclick="toggleHotkeyPanel()">Show Hotkeys</button>
                 <label> | </label>
+                <button class="show-player-button" id="show-scenes-button" aria-controls="scene-panel" aria-expanded="false">Scenes</button>
+                <label> | </label>
                 <button class="show-player-button" id="settings-button">Settings</button>
             </nav>
         </header>
@@ -63,6 +65,30 @@
         <div class="hotkey-panel" id="hotkey-panel">
             <h1>HOTKEYS</h1>
             <div class="hotkey-panel-list" id="hotkey-panel-list"></div>
+        </div>
+
+        <aside class="scene-panel" id="scene-panel" aria-hidden="true">
+            <div class="scene-panel-header">
+                <div>
+                    <h1>SCENES</h1>
+                    <p>Recall an entire mix with one click.</p>
+                </div>
+                <button type="button" id="close-scenes-button" class="scene-panel-close" aria-label="Close scenes">×</button>
+            </div>
+            <button type="button" id="create-scene-button" class="scene-create-button">+ Save Current Mix</button>
+            <div class="scene-list" id="scene-list"></div>
+        </aside>
+
+        <div class="scene-dialog-overlay" id="scene-dialog-overlay" hidden>
+            <form class="scene-dialog" id="scene-dialog">
+                <h2 id="scene-dialog-title">Save Scene</h2>
+                <p id="scene-dialog-description"></p>
+                <input id="scene-name-input" maxlength="60" autocomplete="off" placeholder="Scene name">
+                <div class="scene-dialog-actions">
+                    <button type="button" id="scene-dialog-cancel">Cancel</button>
+                    <button type="submit" id="scene-dialog-confirm">Save Scene</button>
+                </div>
+            </form>
         </div>
 
         <div class="genre-filters">
@@ -211,5 +237,6 @@
         <script type="module" src="player.js"></script>
         <script type="module" src="upload-song.js"></script>
         <script type="module" src="settings.js"></script>
+        <script type="module" src="scenes.js"></script>
     </body>
 </html>

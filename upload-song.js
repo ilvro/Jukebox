@@ -183,8 +183,17 @@ function toggleHotkeyPanel() {
         showHotkeysBtn.textContent = showHotkeysBtn.textContent === 'Show Hotkeys' ? 'Hide Hotkeys' : 'Show Hotkeys';
     }
     renderHotkeyPanel();
+    if (hotkeyPanel.classList.contains('active')) {
+        document.dispatchEvent(new CustomEvent('jukeboxPanelOpened', { detail: 'hotkeys' }));
+    }
 }
 window.toggleHotkeyPanel = toggleHotkeyPanel;
+
+document.addEventListener('jukeboxPanelOpened', event => {
+    if (event.detail === 'hotkeys' || !hotkeyPanel?.classList.contains('active')) return;
+    hotkeyPanel.classList.remove('active');
+    if (showHotkeysBtn) showHotkeysBtn.textContent = 'Show Hotkeys';
+});
 
 // keep the panel's titles fresh if it's open while someone renames a song
 document.addEventListener('input', (event) => {

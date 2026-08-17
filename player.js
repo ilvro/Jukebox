@@ -1915,6 +1915,50 @@ function createTrackUI(songId, audio, playerContainer) {
         applyHotkeyEffects(effectKeys) {
             applyHotkeyEffectSelection(effectKeys);
         },
+        applySceneState(sceneState = {}) {
+            const region = sceneState.region;
+            if (region && Number.isFinite(region.start) && Number.isFinite(region.end) && region.end > region.start) {
+                progressBar.selectedStartTime = region.start;
+                progressBar.selectedEndTime = region.end;
+            } else {
+                progressBar.selectedStartTime = undefined;
+                progressBar.selectedEndTime = undefined;
+            }
+
+            audioEffects.setActiveEffectKeys(sceneState.activeEffects || []);
+            selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
+            selectionStopEnabled = Boolean(sceneState.selectionStopEnabled);
+            if (selectionFadeEnabled && selectionStopEnabled) selectionStopEnabled = false;
+            selectionStopArmed = selectionStopEnabled &&
+                audio.currentTime >= (progressBar.selectedStartTime ?? Infinity) &&
+                audio.currentTime < (progressBar.selectedEndTime ?? -Infinity);
+
+            if (selectionFadeEnabled || selectionStopEnabled) {
+                startSelectionFadeMonitor();
+            } else {
+                restoreSelectionFadeVolume();
+                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
+                selectionFadeFrameId = null;
+            }
+
+            updateProgressBarGradient(progressBar, audio);
+            requestAnimationFrame(() => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+            });
+        },
+        getSceneState() {
+            const hasRegion = progressBar.selectedStartTime !== undefined &&
+                progressBar.selectedEndTime !== undefined;
+            return {
+                region: hasRegion ? {
+                    start: progressBar.selectedStartTime,
+                    end: progressBar.selectedEndTime
+                } : null,
+                activeEffects: audioEffects.getActiveEffectKeys(),
+                selectionFadeEnabled,
+                selectionStopEnabled
+            };
+        },
         // called once, when the track actually stops playing
         cleanup() {
             // remember the region and active effects so they come back if
@@ -2691,6 +2735,55 @@ export function prepareHotkeyPlayback(targetSongId, effectKeys = []) {
     const normalizedEffects = [...new Set(effectKeys.filter(key => typeof key === 'string'))];
     pendingHotkeyEffects.set(targetSongId, normalizedEffects);
     renderedTracks.get(targetSongId)?.applyHotkeyEffects(normalizedEffects);
+}
+
+export function configureSongForScene(targetSongId, sceneState = {}) {
+    const state = getSongState(targetSongId);
+    const audio = state?.audio;
+    if (!state || !audio) return false;
+
+    const volume = Number(sceneState.volume);
+    if (Number.isFinite(volume)) state.volume = Math.max(0, Math.min(1, volume));
+
+    const currentTime = Number(sceneState.currentTime);
+    if (Number.isFinite(currentTime) && currentTime >= 0) {
+        const boundedTime = Number.isFinite(audio.duration)
+            ? Math.min(currentTime, Math.max(0, audio.duration - 0.001))
+            : currentTime;
+        state.currentTime = boundedTime;
+        try {
+            audio.currentTime = boundedTime;
+        } catch {
+            // fadeIn/playSong will apply state.currentTime after metadata loads.
+        }
+    }
+
+    const region = sceneState.region;
+    state.region = region && Number.isFinite(region.start) && Number.isFinite(region.end)
+        ? { start: region.start, end: region.end }
+        : null;
+    state.activeEffects = Array.isArray(sceneState.activeEffects)
+        ? [...sceneState.activeEffects]
+        : [];
+    state.selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
+    state.selectionStopEnabled = Boolean(sceneState.selectionStopEnabled) && !state.selectionFadeEnabled;
+
+    renderedTracks.get(targetSongId)?.applySceneState(state);
+    return true;
+}
+
+export function getSongSceneSnapshot(songId) {
+    const state = getSongState(songId);
+    if (!state?.audio) return null;
+    const liveTrackState = renderedTracks.get(songId)?.getSceneState();
+    return {
+        volume: state.volume ?? state.audio.volume,
+        currentTime: state.audio.currentTime || state.currentTime || 0,
+        region: liveTrackState?.region ?? (state.region ? { ...state.region } : null),
+        activeEffects: [...(liveTrackState?.activeEffects ?? state.activeEffects ?? [])],
+        selectionFadeEnabled: liveTrackState?.selectionFadeEnabled ?? state.selectionFadeEnabled,
+        selectionStopEnabled: liveTrackState?.selectionStopEnabled ?? state.selectionStopEnabled
+    };
 }
 
 export function removeSongAudio(songId) {
