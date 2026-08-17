@@ -187,6 +187,12 @@ button {
     transform: translateY(0);
 }
 
+.header-dropdown:focus-within .dropdown-content {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
 .upload-container {
     position: relative;
 }
@@ -1018,6 +1024,11 @@ button {
     opacity: 1;
 }
 
+.filter-dropdown:focus-within .filter-dropdown-content {
+    visibility: visible;
+    opacity: 1;
+}
+
 .filter-category-header {
     color: rgb(43, 219, 160);
     text-transform: uppercase;
@@ -1061,11 +1072,24 @@ button {
 }
 
 #searchBar,
-.filter-dropdown-button {
+.filter-dropdown-button,
+.view-mode-button {
     padding: 6px 10px;
     border-radius: 6px;
     background: rgba(0, 0, 0, 0.32);
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.view-mode-button {
+    margin-left: 10px;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.view-mode-button:hover,
+.view-mode-button[aria-pressed="true"] {
+    color: rgb(43, 219, 160);
+    border-color: rgba(43, 219, 160, 0.5);
+    background: rgba(0, 0, 0, 0.46);
 }
 
 @media (max-width: 850px) {
@@ -1145,6 +1169,73 @@ button {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     align-items: stretch;
+}
+
+.song-grid.compact-view {
+    max-width: 880px;
+    padding: 8px 12px;
+    background: rgba(5, 5, 5, 0.34);
+}
+
+.song-grid.compact-view .virtual-grid-window {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.song-grid.compact-view .song-item {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+        "thumbnail title"
+        "thumbnail metadata";
+    align-items: center;
+    column-gap: 11px;
+    height: 64px;
+    box-sizing: border-box;
+    padding: 7px 9px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 0;
+    background: transparent;
+    contain-intrinsic-size: 880px 64px;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+}
+
+.song-grid.compact-view .song-item:hover {
+    transform: none;
+    background: rgba(255, 255, 255, 0.055);
+}
+
+.song-grid.compact-view .song-item.playing {
+    background: rgba(43, 219, 160, 0.075);
+    box-shadow: inset 3px 0 rgb(43, 219, 160);
+}
+
+.song-grid.compact-view .song-item img {
+    grid-area: thumbnail;
+    width: 52px;
+    height: 48px;
+}
+
+.song-grid.compact-view .song-item input {
+    grid-area: title;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    margin: 0;
+    align-self: end;
+    font-size: 17px;
+    line-height: 1.15;
+}
+
+.song-grid.compact-view .song-item p {
+    grid-area: metadata;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    align-self: start;
+    margin-top: 1px;
+    font-size: 12px;
 }
 
 .virtual-grid-spacer {
@@ -1312,4 +1403,257 @@ button {
     border: 0;
     outline: 2px dashed rgb(255, 255, 255, 0.2);
     outline-offset: 0;
+}
+
+/* ---------------- mobile / compact experience --------------- */
+@media (max-width: 620px) {
+    html,
+    body {
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    .top-header {
+        min-height: 88px;
+        padding: max(5px, env(safe-area-inset-top)) 6px 6px;
+        gap: 2px;
+        background: rgba(5, 5, 5, 0.88);
+        backdrop-filter: blur(8px);
+    }
+
+    .main-title {
+        margin: 0;
+        font-size: 22px;
+        line-height: 1;
+    }
+
+    .main-title::first-letter {
+        font-size: 28px;
+    }
+
+    .navbar-home-playlists {
+        position: static;
+        right: auto;
+        width: 100%;
+        justify-content: space-around;
+        flex-wrap: nowrap;
+        gap: 2px;
+    }
+
+    .navbar-home-playlists > label {
+        display: none;
+    }
+
+    .navbar-home-playlists button,
+    .header-dropdown {
+        min-height: 34px;
+        margin: 0;
+        padding-inline: 3px;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .dropdown-content {
+        top: 100%;
+        left: 0;
+        min-width: 150px;
+        background: rgba(8, 8, 8, 0.98);
+    }
+
+    .genre-filters {
+        top: 88px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 5px;
+        width: 100%;
+        margin-top: 0;
+        padding: 7px 6px;
+        background: rgba(5, 5, 5, 0.84);
+        backdrop-filter: blur(8px);
+    }
+
+    #searchBar {
+        width: 100%;
+        min-width: 0;
+        margin: 0;
+        box-sizing: border-box;
+    }
+
+    .filter-dropdown,
+    .filter-dropdown-button,
+    .view-mode-button {
+        min-height: 36px;
+        margin: 0;
+        white-space: nowrap;
+    }
+
+    .filter-dropdown-content {
+        top: 100%;
+        right: 0;
+        min-width: 180px;
+        max-height: calc(100vh - 145px);
+        overflow-y: auto;
+        background: rgba(8, 8, 8, 0.98);
+    }
+
+    .filter-option {
+        padding-block: 9px;
+    }
+
+    .song-grid-container {
+        padding: 0;
+        overflow: visible;
+    }
+
+    .song-grid,
+    .song-grid.compact-view {
+        width: 100%;
+        margin: 6px 0 16px;
+        padding: 12px 6px;
+        border-radius: 0;
+        overflow: visible;
+    }
+
+    .song-grid.compact-view .song-item {
+        grid-template-columns: 56px minmax(0, 1fr);
+        height: 68px;
+        padding: 7px 6px;
+        column-gap: 9px;
+        contain-intrinsic-size: 360px 68px;
+    }
+
+    .song-grid.compact-view .song-item img {
+        width: 56px;
+        height: 50px;
+    }
+
+    .song-grid.compact-view .song-item input {
+        min-height: 34px;
+        font-size: 16px;
+    }
+
+    .song-grid.compact-view .hotkey-badge {
+        top: 4px;
+        left: 4px;
+        width: 18px;
+        height: 18px;
+        font-size: 11px;
+    }
+
+    .player-container {
+        top: max(4px, env(safe-area-inset-top));
+        left: 4px;
+        width: calc(100vw - 8px);
+        max-height: calc(100dvh - 8px - env(safe-area-inset-top));
+        box-sizing: border-box;
+        padding: 10px;
+        background: rgba(5, 5, 5, 0.96);
+    }
+
+    .player-header h1 {
+        margin: 0;
+        font-size: 22px;
+    }
+
+    .player-controls {
+        width: 100%;
+        justify-content: space-between;
+        gap: 7px;
+    }
+
+    .master-volume-control {
+        min-width: 0;
+    }
+
+    .master-volume-control .volume-slider {
+        width: min(90px, 24vw);
+    }
+
+    .track-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 34px;
+        gap: 7px;
+        padding: 7px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    .track-title-container {
+        min-width: 0;
+    }
+
+    .track-pause-button {
+        width: 34px;
+        height: 34px;
+    }
+
+    .track-item .progress-container,
+    .track-item > .volume-slider {
+        grid-column: 1 / -1;
+        width: 100%;
+        box-sizing: border-box;
+        margin-inline: 0;
+    }
+
+    .track-item > .volume-slider {
+        height: 16px;
+    }
+
+    .hotkey-panel {
+        top: 96px;
+        right: 4px;
+        width: calc(100vw - 8px);
+        max-height: calc(100dvh - 104px);
+        box-sizing: border-box;
+        background: rgba(5, 5, 5, 0.96);
+        z-index: 21;
+    }
+
+    .popup {
+        top: 50%;
+        width: calc(100vw - 20px);
+        height: auto;
+        max-height: calc(100dvh - 24px);
+        box-sizing: border-box;
+        overflow-y: auto;
+        background: rgba(20, 20, 20, 0.98);
+        z-index: 30;
+    }
+
+    .popup label {
+        font-size: 18px;
+    }
+
+    .upload-step input,
+    .upload-step input[type="file"] {
+        width: calc(100% - 20px);
+        box-sizing: border-box;
+    }
+
+    #or {
+        margin-left: 10px;
+    }
+
+    .genre-checkboxes {
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .waveform-context-menu,
+    .marker-context-menu,
+    #custom-context-menu {
+        max-width: calc(100vw - 16px);
+        max-height: calc(100dvh - 16px);
+    }
+
+    .marker-color-control,
+    .marker-color-picker,
+    .marker-label-input {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .jukebox-confirm-overlay {
+        padding: 10px;
+    }
 }

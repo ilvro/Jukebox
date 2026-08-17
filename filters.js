@@ -8,10 +8,17 @@ import {
 const songGrid = document.getElementById('song-grid');
 const genreMenu = document.getElementById('filter-dropdown');
 const filterDimmer = document.getElementById('filter-dimmer');
+const viewModeButton = document.getElementById('view-mode-button');
 const activeFilters = new Set();
 const OVERSCAN_ROWS = 3;
 const FALLBACK_ROW_HEIGHT = 221;
+const COMPACT_ROW_HEIGHT = 64;
+const MOBILE_COMPACT_ROW_HEIGHT = 68;
 const MIN_COLUMN_WIDTH = 250;
+// Versioned so the earlier auto-mobile experiment cannot leave an old
+// "compact" value making the new grid-first default look broken.
+const VIEW_MODE_STORAGE_KEY = 'jukebox-grid-view-mode-v2';
+const mobileViewQuery = window.matchMedia('(max-width: 620px)');
 
 let allSongs = [];
 let filteredSongs = [];
@@ -22,6 +29,7 @@ let renderedStart = -1;
 let renderedEnd = -1;
 let renderedColumns = -1;
 let renderedSignature = '';
+let isCompactView = false;
 
 const topSpacer = document.createElement('div');
 topSpacer.className = 'virtual-grid-spacer virtual-grid-spacer-top';
@@ -63,8 +71,78 @@ function updateAllSongs() {
 }
 
 function getColumnCount() {
+    if (isCompactView) return 1;
     const width = gridWindow.clientWidth || Math.max(1, songGrid.clientWidth - 40);
     return Math.max(1, Math.floor(width / MIN_COLUMN_WIDTH));
+}
+
+function readStoredViewMode() {
+    try {
+        const storedMode = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+        if (storedMode === 'compact') return true;
+        if (storedMode === 'grid') return false;
+    } catch {
+        // Fall through to the default.
+    }
+    return false;
+}
+
+function getCompactRowHeight() {
+    return mobileViewQuery.matches ? MOBILE_COMPACT_ROW_HEIGHT : COMPACT_ROW_HEIGHT;
+}
+
+function getGridPaddingTop() {
+    if (mobileViewQuery.matches) return 12;
+    return isCompactView ? 8 : 20;
+}
+
+function storeViewMode() {
+    try {
+        localStorage.setItem(VIEW_MODE_STORAGE_KEY, isCompactView ? 'compact' : 'grid');
+    } catch {
+        // The view still works when storage is unavailable (for example in a
+        // restrictive private window); it simply will not persist.
+    }
+}
+
+function setCompactView(enabled, { persist = true } = {}) {
+    const previousColumns = getColumnCount();
+    const previousRowHeight = rowHeight;
+    const previousGridRect = songGrid.getBoundingClientRect();
+    const previousPaddingTop = getGridPaddingTop();
+    const previousVisibleOffset = Math.max(0, -(previousGridRect.top + previousPaddingTop));
+    const anchorIndex = Math.min(
+        Math.max(0, filteredSongs.length - 1),
+        Math.floor(previousVisibleOffset / previousRowHeight) * previousColumns
+    );
+
+    isCompactView = enabled;
+    songGrid.classList.toggle('compact-view', enabled);
+    rowHeight = enabled ? getCompactRowHeight() : FALLBACK_ROW_HEIGHT;
+
+    if (viewModeButton) {
+        viewModeButton.textContent = enabled ? 'Grid View' : 'Compact View';
+        viewModeButton.title = enabled
+            ? 'Show songs using large artwork cards'
+            : 'Show more songs using a compact list';
+        viewModeButton.setAttribute('aria-pressed', String(enabled));
+    }
+
+    // The number of columns and card height change together, so recalculate
+    // the window even if it happens to contain the same song IDs.
+    renderedColumns = -1;
+    if (persist) storeViewMode();
+    scheduleVirtualRender();
+
+    // Keep roughly the same first visible song on screen when switching far
+    // down a large library instead of jumping to a different part of it.
+    if (persist && previousVisibleOffset > 0) {
+        const nextColumns = getColumnCount();
+        const nextVisibleOffset = Math.floor(anchorIndex / nextColumns) * rowHeight;
+        requestAnimationFrame(() => {
+            window.scrollBy(0, nextVisibleOffset - previousVisibleOffset);
+        });
+    }
 }
 
 function scheduleVirtualRender() {
@@ -82,7 +160,7 @@ function renderVirtualGrid() {
     const totalRows = Math.ceil(filteredSongs.length / columns);
     const totalHeight = totalRows * rowHeight;
     const gridRect = songGrid.getBoundingClientRect();
-    const gridTop = gridRect.top + 20;
+    const gridTop = gridRect.top + getGridPaddingTop();
     const visibleTop = Math.max(0, Math.min(totalHeight, -gridTop));
     const visibleBottom = Math.max(visibleTop, Math.min(totalHeight, window.innerHeight - gridTop));
     const firstVisibleRow = Math.floor(visibleTop / rowHeight);
@@ -295,7 +373,9 @@ function enableDragAndDrop() {
         if (target?.dataset.songId && target.dataset.songId !== draggedSongId) {
             targetIndex = orderedWithoutDragged.findIndex(state => state.id === target.dataset.songId);
             const rect = target.getBoundingClientRect();
-            const afterTarget = event.clientX > rect.left + rect.width / 2;
+            const afterTarget = isCompactView
+                ? event.clientY > rect.top + rect.height / 2
+                : event.clientX > rect.left + rect.width / 2;
             if (afterTarget) targetIndex += 1;
         }
 
@@ -315,9 +395,27 @@ function enableDragAndDrop() {
 
 document.addEventListener('DOMContentLoaded', () => {
     ensureVirtualGridShell();
+    setCompactView(readStoredViewMode(), { persist: false });
     updateAllSongs();
     applyFilters();
     enableDragAndDrop();
+
+    viewModeButton?.addEventListener('click', () => {
+        setCompactView(!isCompactView);
+    });
+
+    const handleMobileViewChange = event => {
+        if (isCompactView) {
+            rowHeight = event.matches ? MOBILE_COMPACT_ROW_HEIGHT : COMPACT_ROW_HEIGHT;
+            renderedColumns = -1;
+            scheduleVirtualRender();
+        }
+    };
+    if (typeof mobileViewQuery.addEventListener === 'function') {
+        mobileViewQuery.addEventListener('change', handleMobileViewChange);
+    } else {
+        mobileViewQuery.addListener(handleMobileViewChange);
+    }
 
     const filterList = document.querySelectorAll('.filter-option');
     filterList.forEach(filter => {

@@ -1080,7 +1080,7 @@ function createTrackUI(songId, audio, playerContainer) {
     trackDiv.className = 'track-item';
     trackDiv.dataset.songId = songId;
 
-    const songElement = document.querySelector(`[data-song-id="${songId}"]`);
+    const songElement = getSongElement(songId);
     
     const titleContainer = document.createElement('div');
     titleContainer.className = 'track-title-container';
