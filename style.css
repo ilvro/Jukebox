@@ -1130,14 +1130,26 @@ button {
 }
 
 .song-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    display: block;
     max-width: 1200px;
+    width: calc(100% - 40px);
+    box-sizing: border-box;
     margin: 20px auto;
     background-color: rgba(0, 0, 0, 0.15);
     border-radius: 15px;
     padding: 20px;
     overflow-y: auto;
+}
+
+.virtual-grid-window {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    align-items: stretch;
+}
+
+.virtual-grid-spacer {
+    width: 100%;
+    pointer-events: none;
 }
 
 .song-item {
@@ -1168,6 +1180,11 @@ button {
     opacity: 0.5;
     border: 2px dashed rgb(43, 219, 160);
 }  
+
+.song-item.virtual-drop-target {
+    outline: 2px solid rgba(43, 219, 160, 0.8);
+    outline-offset: -3px;
+}
 
 .song-item img {
     width: 100%;
@@ -1279,6 +1296,8 @@ button {
     background-color: transparent;
     border: 0px;    
     align-self: auto;
+    cursor: text;
+    user-select: text;
 }
 
 .song-item p {
@@ -1290,5 +1309,7 @@ button {
 
 .title-input:focus {
     background-color: rgba(0, 0, 0  , 0.1);
-    border: 2px dashed rgb(255, 255, 255, 0.2);
+    border: 0;
+    outline: 2px dashed rgb(255, 255, 255, 0.2);
+    outline-offset: 0;
 }

@@ -27,6 +27,10 @@ const doubleClickDelay = 300;
 let lastRightClickTime = 0;
 let isDragging = false;
 
+function getSongElement(songId) {
+    return getSongState(songId)?.element || null;
+}
+
 const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
 const waveformGenerationControllers = new Map();
@@ -58,7 +62,7 @@ if (stopAllBtn) {
             const { id, audio } = state;
             audio.pause();
             audio.volume = state.volume ?? audio.volume;
-            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            const item = getSongElement(id);
             item?.classList.remove('playing');
             state.status = 'stopped';
         });
@@ -2421,7 +2425,7 @@ export function fadeOut(targetSongId) {
         state.status = 'stopped';
 
         // remove playing class from grid (to remove the green color)
-        const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+        const songElement = getSongElement(targetSongId);
         if (songElement) {
             songElement.classList.remove('playing');
         }
@@ -2450,7 +2454,7 @@ export function stopSong(targetSongId) {
     audio.volume = state.volume ?? audio.volume;
     state.status = 'stopped';
 
-    const songElement = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const songElement = getSongElement(targetSongId);
     if (songElement) {
         songElement.classList.remove('playing');
     }
@@ -2460,7 +2464,7 @@ export function stopSong(targetSongId) {
 
 export function fadeTo(targetSongId) {
     const fadeDuration = getFadeDuration() * 1000; // ms
-    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const targetItem = getSongElement(targetSongId);
     
     if (!targetItem) return;
 
@@ -2479,7 +2483,7 @@ export function fadeTo(targetSongId) {
         const id = state.id;
         if (id !== targetSongId) {
             const audio = state.audio;
-            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            const item = getSongElement(id);
             
             state.volume = audio.volume;
             state.currentTime = audio.currentTime;
@@ -2539,7 +2543,7 @@ export function fadeTo(targetSongId) {
 // everything else out first
 export function fadeIn(targetSongId) {
     const fadeDuration = getFadeDuration() * 1000; // ms
-    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const targetItem = getSongElement(targetSongId);
     
     if (!targetItem) return;
 
@@ -2595,7 +2599,7 @@ export function fadeIn(targetSongId) {
 
 // instant transition to selected audio
 export function cutTo(targetSongId) {
-    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const targetItem = getSongElement(targetSongId);
     
     if (!targetItem) return;
 
@@ -2613,7 +2617,7 @@ export function cutTo(targetSongId) {
         const id = state.id;
         if (id !== targetSongId) {
             const audio = state.audio;
-            const item = document.querySelector(`.song-item[data-song-id="${id}"]`);
+            const item = getSongElement(id);
             
             state.volume = audio.volume;
             state.currentTime = audio.currentTime;
@@ -2647,7 +2651,7 @@ export function cutTo(targetSongId) {
 // Starts or resumes one song immediately while leaving every other active
 // audio untouched. This is the hotkey "Insert" counterpart to Fade and Cut.
 export function playSong(targetSongId) {
-    const targetItem = document.querySelector(`.song-item[data-song-id="${targetSongId}"]`);
+    const targetItem = getSongElement(targetSongId);
     const targetState = getSongState(targetSongId);
     const targetAudio = targetState?.audio;
 
@@ -2754,7 +2758,7 @@ export function resetSong(songId) {
     const audio = state?.audio;
     if (!state || !audio) return;
     
-    const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    const item = getSongElement(songId);
     state.status = 'stopped';
 
     if (!audio.paused) {
@@ -2799,7 +2803,7 @@ export async function downloadSong(songId, onProgress) {
         throw new Error(`No audio found for song ${songId}`);
     }
 
-    const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    const songItem = getSongElement(songId);
     const title = songItem?.querySelector('.title-input')?.value || 'song';
 
     // solo this song — anything else playing would otherwise get captured

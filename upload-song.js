@@ -4,6 +4,7 @@ import {
     clearSongHotkey,
     getHotkeyEntries,
     getSongIdForHotkey,
+    getOrderedSongStates,
     getSongState,
     setSongHotkeyEffects
 } from './song-state.mjs';
@@ -86,7 +87,7 @@ function renderHotkeyPanel() {
 
     sortedKeys.forEach(key => {
         const songId = getSongIdForHotkey(key);
-        const songItem = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+        const songItem = getSongState(songId)?.element;
         if (!songItem) {
             clearSongHotkey(songId); // song no longer exists, drop the stale entry
             return;
@@ -208,7 +209,7 @@ function removeHotkeyBadge(songItem) {
 }
 
 function clearHotkey(songId) {
-    const item = document.querySelector(`.song-item[data-song-id="${songId}"]`);
+    const item = getSongState(songId)?.element;
     if (item) removeHotkeyBadge(item);
     clearSongHotkey(songId);
     if (expandedHotkeyEffectsSongId === songId) expandedHotkeyEffectsSongId = null;
@@ -234,7 +235,7 @@ function assignHotkey(key, songItem, effectKeys) {
 
     const previousSongId = getSongIdForHotkey(key);
     if (previousSongId && previousSongId !== songId) {
-        const previousItem = document.querySelector(`.song-item[data-song-id="${previousSongId}"]`);
+        const previousItem = getSongState(previousSongId)?.element;
         if (previousItem) removeHotkeyBadge(previousItem);
         clearSongHotkey(previousSongId);
     }
@@ -527,7 +528,7 @@ async function savePreset() {
 
     try {
         const directoryHandle = await window.showDirectoryPicker();
-        const songItems = document.querySelectorAll('.song-item');
+        const songItems = getOrderedSongStates().map(state => state.element).filter(Boolean);
         let presetData = [];
 
         // load preset_metadata.json if it exists, create one if it doesnt
@@ -783,11 +784,11 @@ function createPresetSongItem(song) {
         `${song.tags.join(' + ')}${song.genres.length > 0 ? ' | ' + song.genres.join(' + ') : ''}`;
 
     const thumbnail = document.createElement('img');
-    thumbnail.src = URL.createObjectURL(song.thumbnailFile);
-    thumbnail.alt = song.decodedTitle;
     thumbnail.loading = 'lazy';
     thumbnail.decoding = 'async';
     thumbnail.fetchPriority = 'low';
+    thumbnail.alt = song.decodedTitle;
+    thumbnail.src = URL.createObjectURL(song.thumbnailFile);
 
     songItem.append(titleInput, metadata, thumbnail);
     return songItem;
@@ -818,7 +819,7 @@ async function loadPreset() {
         clearAllSongs();
         expandedHotkeyEffectsSongId = null;
         renderHotkeyPanel();
-        songGrid.innerHTML = '';
+        document.dispatchEvent(new Event('songsUpdated'));
 
         const loadIndicator = createPresetLoadIndicator(presetMetadata.length);
         const FILE_BATCH_SIZE = 24;
@@ -838,14 +839,12 @@ async function loadPreset() {
                 const loadedBatch = await Promise.all(
                     metadataBatch.map(songMetadata => loadPresetSongFiles(fileHandles, songMetadata))
                 );
-                const fragment = document.createDocumentFragment();
                 const pendingHotkeys = [];
 
                 loadedBatch.forEach(song => {
                     if (!song) return;
 
                     const songItem = createPresetSongItem(song);
-                    fragment.appendChild(songItem);
                     addSongToPlayer(songItem, song.audioFile);
 
                     if (song.markers?.length) {
@@ -854,9 +853,8 @@ async function loadPreset() {
                     if (song.hotkey) pendingHotkeys.push([song.hotkey, songItem, song.hotkeyEffects]);
                 });
 
-                // One DOM insertion per batch avoids hundreds of separate
-                // style/layout passes while preserving metadata order.
-                songGrid.appendChild(fragment);
+                // Cards stay detached until the virtual grid requests their
+                // visible rows. This avoids laying out the whole preset here.
                 pendingHotkeys.forEach(([hotkey, songItem, hotkeyEffects]) => assignHotkey(hotkey, songItem, hotkeyEffects));
 
                 loadedCount += metadataBatch.length;
@@ -890,7 +888,7 @@ async function loadSamplePreset() {
         clearAllSongs();
         expandedHotkeyEffectsSongId = null;
         renderHotkeyPanel();
-        songGrid.innerHTML = '';
+        document.dispatchEvent(new Event('songsUpdated'));
         
         // Create requests only when their batch starts. Mapping every song to
         // an async promise up front still launches hundreds of simultaneous
@@ -965,7 +963,6 @@ async function loadSamplePreset() {
                     event.stopPropagation();
                 });
                 
-                songGrid.appendChild(songItem);
                 addSongToPlayer(songItem, song.audioFile);
                 
                 if (song.markers && song.markers.length > 0) {
@@ -1002,7 +999,7 @@ async function handleFilesFallback(files) {
     clearAllSongs();
     expandedHotkeyEffectsSongId = null;
     renderHotkeyPanel();
-    songGrid.innerHTML = '';
+    document.dispatchEvent(new Event('songsUpdated'));
 
     for (const songMetadata of presetMetadata) {
         let { currentTitle, genres, tags, markers, hotkey, hotkeyEffects } = songMetadata;
@@ -1036,7 +1033,6 @@ async function handleFilesFallback(files) {
             event.stopPropagation();
         });
 
-        songGrid.appendChild(songItem);
         addSongToPlayer(songItem, audioFile);
         
         if (markers && markers.length > 0) {
@@ -1152,7 +1148,6 @@ uploadSubmit.addEventListener('click', () => {
         <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
         <img src="${URL.createObjectURL(thumbnail)}" alt="${title}" loading="lazy" decoding="async" fetchpriority="low">
     `;
-    songGrid.appendChild(songItem);
     addSongToPlayer(songItem, audio);
     document.dispatchEvent(new Event('songsUpdated'));
 
@@ -1190,7 +1185,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let menuAnchor = null;
     const positionSongContextMenu = (setViewportAdjustment = false) => {
-        if (!menuAnchor?.songItem?.isConnected || contextMenu.style.display === 'none') return;
+        if (contextMenu.style.display === 'none') return;
+        if (!menuAnchor?.songItem?.isConnected) {
+            contextMenu.style.display = 'none';
+            menuAnchor = null;
+            return;
+        }
 
         const anchorRect = menuAnchor.songItem.getBoundingClientRect();
         const desiredLeft = anchorRect.left + menuAnchor.offsetX;
