@@ -641,11 +641,8 @@ export class ReverseEffect extends AudioEffect {
     getReverseSpeedFactor(activeKeys) {
         const speedKey = activeKeys.find(key => key.startsWith('speed'));
         if (!speedKey) return 1;
-
-        // relies on the "speedNNN" naming convention used throughout the
-        // effects registry (speed075, speed090, speed110, speed125...)
-        const factor = parseInt(speedKey.replace('speed', ''), 10) / 100;
-        return isNaN(factor) ? 1 : factor;
+        const factor = this.effectsRegistry?.effects[speedKey]?.speedFactor;
+        return Number.isFinite(factor) ? factor : 1;
     }
     
     // create a reversed copy of the audio buffer for the selected region
@@ -696,7 +693,8 @@ export class ReverseEffect extends AudioEffect {
 export class PlaybackSpeedEffect extends AudioEffect {
     constructor(speedFactor) {
         super(`Speed ${speedFactor}x`);
-        this.speedFactor = speedFactor;
+        this.speedFactor = Math.max(0.5, Math.min(2, Number(speedFactor) || 1));
+        this.applyPlaybackRate = null;
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -719,12 +717,31 @@ export class PlaybackSpeedEffect extends AudioEffect {
                 }
             }
         };
-    
+
+        this.applyPlaybackRate = handleTimeUpdate;
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.playbackRate = 1.0;
+            this.applyPlaybackRate = null;
         };
+    }
+
+    setSpeedFactor(value) {
+        this.speedFactor = Math.max(0.5, Math.min(2, Number(value) || this.speedFactor));
+        this.name = `Speed ${this.speedFactor.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}x`;
+        this.applyPlaybackRate?.();
+        return this.speedFactor;
+    }
+
+    getSettings() {
+        return { speedFactor: this.speedFactor };
+    }
+
+    applySettings(settings = {}) {
+        if (settings.speedFactor !== undefined) this.setSpeedFactor(settings.speedFactor);
+        return this.getSettings();
     }
 }
 

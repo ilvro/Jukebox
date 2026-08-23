@@ -42,7 +42,7 @@ export function setupAudioEffects(audio, progressBar, actions = {}) {
         getEffectSettings: () => effectsRegistry.getEffectSettings(),
         setEffectSettings: (settings = {}) => effectsRegistry.setEffectSettings(settings),
         setActiveEffectKeys: (keys = []) => {
-            const requestedKeys = new Set(keys);
+            const requestedKeys = new Set(effectsRegistry.normalizeEffectKeys(keys));
             effectsRegistry.getActiveEffectKeys().forEach(key => {
                 if (!requestedKeys.has(key)) effectsRegistry.deactivateEffect(key);
             });

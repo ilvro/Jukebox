@@ -19,6 +19,8 @@ const FILTER_CONTROL_CONFIG = {
     }
 };
 
+const isSpeedEffectKey = key => key.startsWith('speed');
+
 function frequencyToSlider(frequency, min, max) {
     return Math.log(Math.max(min, Math.min(max, frequency)) / min) / Math.log(max / min) * 1000;
 }
@@ -101,6 +103,59 @@ function createFilterControls(effect, key, repositionMenu) {
     });
 
     controls.append(cutoffRow, resonanceRow, presetRow);
+    controls.addEventListener('click', event => event.stopPropagation());
+    controls.addEventListener('pointerdown', event => event.stopPropagation());
+    refresh();
+    requestAnimationFrame(repositionMenu);
+    return controls;
+}
+
+function createSpeedControls(effect, repositionMenu, onChange) {
+    const controls = document.createElement('div');
+    controls.className = 'filter-effect-controls speed-effect-controls';
+
+    const speedRow = document.createElement('label');
+    speedRow.className = 'filter-control-row';
+    const speedHeader = document.createElement('span');
+    speedHeader.className = 'filter-control-header';
+    const speedName = document.createElement('span');
+    speedName.textContent = 'Playback speed';
+    const speedValue = document.createElement('output');
+    const speedSlider = document.createElement('input');
+    speedSlider.type = 'range';
+    speedSlider.min = '0.5';
+    speedSlider.max = '2';
+    speedSlider.step = '0.01';
+    speedHeader.append(speedName, speedValue);
+    speedRow.append(speedHeader, speedSlider);
+
+    const presetRow = document.createElement('div');
+    presetRow.className = 'filter-preset-row speed-preset-row';
+
+    const refresh = () => {
+        speedSlider.value = String(effect.speedFactor);
+        speedValue.textContent = `${effect.speedFactor.toFixed(2)}x`;
+        onChange?.();
+    };
+
+    speedSlider.addEventListener('input', event => {
+        effect.setSpeedFactor(event.target.value);
+        refresh();
+    });
+
+    [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2].forEach(speed => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `${speed}x`;
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            effect.setSpeedFactor(speed);
+            refresh();
+        });
+        presetRow.appendChild(button);
+    });
+
+    controls.append(speedRow, presetRow);
     controls.addEventListener('click', event => event.stopPropagation());
     controls.addEventListener('pointerdown', event => event.stopPropagation());
     refresh();
@@ -265,6 +320,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
 
             const menuItem = document.createElement('div');
             menuItem.className = 'context-menu-item';
+            menuItem.dataset.effectKey = key;
             menuItem.textContent = `${effect.active ? '✓ ' : ''}${effect.name}`;
             Object.assign(menuItem.style, {
                 cursor: 'default',
@@ -300,6 +356,27 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                     requestAnimationFrame(repositionMenu);
                     return;
                 }
+
+                if (isSpeedEffectKey(key)) {
+                    menu.querySelectorAll('.context-menu-item[data-effect-key^="speed"]').forEach(speedItem => {
+                        const speedKey = speedItem.dataset.effectKey;
+                        const speedEffect = effectsRegistry.effects[speedKey];
+                        const active = Boolean(speedEffect?.active);
+                        speedItem.textContent = `${active ? '✓ ' : ''}${speedEffect.name}`;
+                        speedItem.style.color = active ? '#2bdba0' : '#fff';
+                        if (!active && speedItem.nextElementSibling?.classList.contains('speed-effect-controls')) {
+                            speedItem.nextElementSibling.remove();
+                        }
+                    });
+
+                    if (isNowActive && !menuItem.nextElementSibling?.classList.contains('speed-effect-controls')) {
+                        menuItem.after(createSpeedControls(effect, repositionMenu, () => {
+                            menuItem.textContent = `✓ ${effect.name}`;
+                        }));
+                    }
+                    requestAnimationFrame(repositionMenu);
+                    return;
+                }
                 
                 // special handling for loop effects
                 if (key === 'loop' || key === 'smoothLoop') {
@@ -320,6 +397,10 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             menu.appendChild(menuItem);
             if (effect.active && FILTER_CONTROL_CONFIG[key]) {
                 menu.appendChild(createFilterControls(effect, key, repositionMenu));
+            } else if (effect.active && isSpeedEffectKey(key)) {
+                menu.appendChild(createSpeedControls(effect, repositionMenu, () => {
+                    menuItem.textContent = `✓ ${effect.name}`;
+                }));
             }
         });
     });

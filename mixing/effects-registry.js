@@ -16,6 +16,13 @@ import { ReverbEffect, EchoEffect, TremoloEffect } from './effects/time-effects.
 import { FilterEffect } from './effects/filter-effects.js';
 import { NightcoreEffect } from './effects/preset-effects.js';
 
+const LEGACY_SPEED_FACTORS = {
+    speed075: 0.75,
+    speed090: 0.9,
+    speed110: 1.1,
+    speed125: 1.25
+};
+
 export class EffectsRegistry {
     constructor(audioElement, progressBar) {
         this.audio = audioElement;
@@ -30,10 +37,7 @@ export class EffectsRegistry {
             loop: new LoopEffect(),
             smoothLoop: new SmoothLoopEffect(),
             reverse: new ReverseEffect(),
-            speed075: new PlaybackSpeedEffect(0.75),
-            speed090: new PlaybackSpeedEffect(0.90),
-            speed125: new PlaybackSpeedEffect(1.25),
-            speed110: new PlaybackSpeedEffect(1.10),
+            speed: new PlaybackSpeedEffect(1),
             pitchShift: new PitchShiftEffect(),
             reverb: new ReverbEffect(),
             echo: new EchoEffect(),
@@ -47,7 +51,7 @@ export class EffectsRegistry {
     getEffectsByCategory() {
         const categories = {
             'Playback': ['loop', 'smoothLoop', 'reverse'],
-            'Speed & Pitch': ['speed075', 'speed090', 'speed110', 'speed125', 'pitchShift'],
+            'Speed & Pitch': ['speed', 'pitchShift'],
             'Effects': ['echo', 'reverb', 'tremolo'],
             'Filters': ['highpass', 'lowpass'],
             'Presets': ['nightcore']
@@ -57,14 +61,31 @@ export class EffectsRegistry {
     }
 
     activateEffect(effectKey) {
+        const requestedKey = effectKey;
+        effectKey = this.normalizeEffectKey(effectKey);
         const effect = this.effects[effectKey];
         if (!effect) return false;
+
+        if (LEGACY_SPEED_FACTORS[requestedKey] !== undefined) {
+            effect.setSpeedFactor(LEGACY_SPEED_FACTORS[requestedKey]);
+        }
 
         // special cases for mutually exclusive effects (loops)
         if (effectKey === 'loop' && this.effects.smoothLoop?.active) {
             this.deactivateEffect('smoothLoop');
         } else if (effectKey === 'smoothLoop' && this.effects.loop?.active) {
             this.deactivateEffect('loop');
+        }
+
+        // Only one playback-rate controller may own audio.playbackRate at a
+        // time. Older builds allowed several Speed effects to fight on each
+        // timeupdate, which made the resulting rate unpredictable.
+        if (effectKey.startsWith('speed') && !effect.active) {
+            Object.entries(this.effects).forEach(([key, candidate]) => {
+                if (key !== effectKey && key.startsWith('speed') && candidate.active) {
+                    this.deactivateEffect(key);
+                }
+            });
         }
 
         // ensure audio context is initialized before activating effects
@@ -96,6 +117,7 @@ export class EffectsRegistry {
     }
     
     deactivateEffect(effectKey) {
+        effectKey = this.normalizeEffectKey(effectKey);
         const effect = this.effects[effectKey];
         if (effect && effect.active) {
             effect.deactivate();
@@ -120,6 +142,16 @@ export class EffectsRegistry {
         return Object.entries(this.effects)
             .filter(([, effect]) => effect.active)
             .map(([key]) => key);
+    }
+
+    normalizeEffectKey(effectKey) {
+        return LEGACY_SPEED_FACTORS[effectKey] !== undefined ? 'speed' : effectKey;
+    }
+
+    normalizeEffectKeys(effectKeys = []) {
+        const legacySpeedKey = [...effectKeys].reverse().find(key => LEGACY_SPEED_FACTORS[key] !== undefined);
+        if (legacySpeedKey) this.effects.speed.setSpeedFactor(LEGACY_SPEED_FACTORS[legacySpeedKey]);
+        return [...new Set(effectKeys.map(key => this.normalizeEffectKey(key)))];
     }
 
     getActiveTailDuration() {

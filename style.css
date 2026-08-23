@@ -1645,6 +1645,14 @@ button {
     background: rgba(43, 219, 160, 0.1);
 }
 
+.speed-preset-row {
+    flex-wrap: wrap;
+}
+
+.speed-preset-row button {
+    flex: 1 0 calc(25% - 5px);
+}
+
 .jukebox-confirm-overlay {
     position: fixed;
     inset: 0;
