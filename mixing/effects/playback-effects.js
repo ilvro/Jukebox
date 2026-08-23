@@ -1,6 +1,6 @@
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from '../audio-context.js';
 import { AudioEffect } from './base-effect.js';
-import { createReverbChain } from './time-effects.js';
+import { createEchoChain, createReverbChain } from './time-effects.js';
 
 export class LoopEffect extends AudioEffect {
     constructor() {
@@ -305,13 +305,20 @@ function buildMirrorEffectNodes(audioContext, key, effectInstance) {
             };
         }
         case 'echo': {
-            const delay = audioContext.createDelay();
-            const feedback = audioContext.createGain();
-            delay.delayTime.value = effectInstance.options.delayTime;
-            feedback.gain.value = effectInstance.options.feedback;
-            delay.connect(feedback);
-            feedback.connect(delay);
-            return { input: delay, output: delay, extraNodes: [delay, feedback] };
+            const chain = createEchoChain(audioContext, effectInstance.options);
+            const input = audioContext.createGain();
+            const dry = audioContext.createGain();
+            const output = audioContext.createGain();
+            dry.gain.value = effectInstance.options.dry;
+            input.connect(dry);
+            dry.connect(output);
+            input.connect(chain.input);
+            chain.output.connect(output);
+            return {
+                input,
+                output,
+                extraNodes: [input, dry, output, ...Object.values(chain.nodes)]
+            };
         }
         case 'tremolo': {
             const gainNode = audioContext.createGain();

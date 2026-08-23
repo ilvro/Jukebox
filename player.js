@@ -69,6 +69,7 @@ if (stopAllBtn) {
         getVisiblePlayerSongStates().forEach(state => {
             if (state.status === 'player-paused') state.status = 'stopped';
         });
+        renderedTracks.forEach(track => track.cancelEffectTail());
         updatePlayerUI();
     });
 }
@@ -86,6 +87,12 @@ function createAudioElement(audioUrl, songId, songItem) {
             state.status = 'stopped';
             state.currentTime = audio.currentTime;
         }
+        const reachedNaturalEnd = !audio.loop && Number.isFinite(audio.duration) &&
+            audio.duration > 0 && audio.currentTime >= audio.duration - 0.05;
+        if (reachedNaturalEnd) {
+            songItem?.classList.remove('playing');
+            renderedTracks.get(songId)?.beginEffectTail();
+        }
         updatePlayerUI();
     });
     
@@ -99,6 +106,7 @@ function createAudioElement(audioUrl, songId, songItem) {
             state.currentTime = 0;
         }
         songItem?.classList.remove('playing');
+        renderedTracks.get(songId)?.beginEffectTail();
         updatePlayerUI();
     });
     
@@ -1034,7 +1042,7 @@ function updatePlayerUI() {
     // attached to the (long-lived) audio element and deactivate its effects,
     // otherwise both keep piling up in memory every time this runs
     renderedTracks.forEach((track, songId) => {
-        if (!currentVisibleIds.has(songId)) {
+        if (!currentVisibleIds.has(songId) && !track.isEffectTailActive()) {
             track.cleanup();
             renderedTracks.delete(songId);
         }
@@ -1079,6 +1087,14 @@ function createTrackUI(songId, audio, playerContainer) {
     const trackDiv = document.createElement('div');
     trackDiv.className = 'track-item';
     trackDiv.dataset.songId = songId;
+    let effectTailTimer = null;
+    let effectTailActive = false;
+
+    const cancelEffectTail = () => {
+        if (effectTailTimer !== null) clearTimeout(effectTailTimer);
+        effectTailTimer = null;
+        effectTailActive = false;
+    };
 
     const songElement = getSongElement(songId);
     
@@ -1905,6 +1921,7 @@ function createTrackUI(songId, audio, playerContainer) {
         // called on every updatePlayerUI() while the track keeps playing;
         // deliberately does NOT touch listeners, effects, or the waveform
         refresh() {
+            if (!audio.paused) cancelEffectTail();
             volumeControl.value = audio.volume;
             updateVolumeSlider(volumeControl);
             progressBar.max = audio.duration || 100;
@@ -1959,8 +1976,26 @@ function createTrackUI(songId, audio, playerContainer) {
                 selectionStopEnabled
             };
         },
+        beginEffectTail() {
+            if (effectTailActive) return true;
+            const tailDuration = audioEffects.getActiveTailDuration();
+            if (!(tailDuration > 0)) return false;
+            cancelEffectTail();
+            effectTailActive = true;
+            effectTailTimer = setTimeout(() => {
+                effectTailTimer = null;
+                effectTailActive = false;
+                updatePlayerUI();
+            }, tailDuration * 1000);
+            return true;
+        },
+        isEffectTailActive() {
+            return effectTailActive;
+        },
+        cancelEffectTail,
         // called once, when the track actually stops playing
         cleanup() {
+            cancelEffectTail();
             // remember the region and active effects so they come back if
             // this song starts playing again later, instead of resetting
             if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {

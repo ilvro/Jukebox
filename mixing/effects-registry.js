@@ -121,4 +121,10 @@ export class EffectsRegistry {
             .filter(([, effect]) => effect.active)
             .map(([key]) => key);
     }
+
+    getActiveTailDuration() {
+        return Math.max(0, ...Object.values(this.effects)
+            .filter(effect => effect.active && typeof effect.getTailDuration === 'function')
+            .map(effect => effect.getTailDuration()));
+    }
 }

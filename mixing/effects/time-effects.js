@@ -70,6 +70,75 @@ export function createReverbChain(audioContext, options = {}) {
     };
 }
 
+export function createEchoChain(audioContext, options = {}) {
+    const settings = {
+        delayTime: options.delayTime ?? 0.34,
+        feedback: options.feedback ?? 0.42,
+        wet: options.wet ?? 0.36,
+        lowpass: options.lowpass ?? 5200,
+        stereoWidth: options.stereoWidth ?? 0.55
+    };
+
+    const leftDelay = audioContext.createDelay(2.0);
+    const rightDelay = audioContext.createDelay(2.0);
+    const leftTone = audioContext.createBiquadFilter();
+    const rightTone = audioContext.createBiquadFilter();
+    const leftFeedback = audioContext.createGain();
+    const rightFeedback = audioContext.createGain();
+    const leftPan = typeof audioContext.createStereoPanner === 'function'
+        ? audioContext.createStereoPanner()
+        : audioContext.createGain();
+    const rightPan = typeof audioContext.createStereoPanner === 'function'
+        ? audioContext.createStereoPanner()
+        : audioContext.createGain();
+    const outputGain = audioContext.createGain();
+
+    leftDelay.delayTime.value = settings.delayTime;
+    rightDelay.delayTime.value = settings.delayTime;
+    leftTone.type = 'lowpass';
+    rightTone.type = 'lowpass';
+    leftTone.frequency.value = settings.lowpass;
+    rightTone.frequency.value = settings.lowpass;
+    leftTone.Q.value = 0.3;
+    rightTone.Q.value = 0.3;
+    leftFeedback.gain.value = settings.feedback;
+    rightFeedback.gain.value = settings.feedback;
+    if (leftPan.pan) leftPan.pan.value = -settings.stereoWidth;
+    if (rightPan.pan) rightPan.pan.value = settings.stereoWidth;
+    outputGain.gain.value = settings.wet;
+
+    // The first repeat starts on the left, then crosses to the right and
+    // continues alternating. The low-pass filters soften every return so the
+    // echoes recede naturally instead of stacking harsh identical copies.
+    leftDelay.connect(leftTone);
+    leftTone.connect(leftPan);
+    leftPan.connect(outputGain);
+    leftTone.connect(leftFeedback);
+    leftFeedback.connect(rightDelay);
+
+    rightDelay.connect(rightTone);
+    rightTone.connect(rightPan);
+    rightPan.connect(outputGain);
+    rightTone.connect(rightFeedback);
+    rightFeedback.connect(leftDelay);
+
+    return {
+        input: leftDelay,
+        output: outputGain,
+        nodes: {
+            leftDelay,
+            rightDelay,
+            leftTone,
+            rightTone,
+            leftFeedback,
+            rightFeedback,
+            leftPan,
+            rightPan,
+            outputGain
+        }
+    };
+}
+
 export class ReverbEffect extends AudioEffect {
     constructor(options = {}) {
         super('Reverb');
@@ -91,6 +160,10 @@ export class ReverbEffect extends AudioEffect {
         chain.output.connect(mainGainNode);
         this.nodes = chain.nodes;
         this.reverbInput = chain.input;
+    }
+
+    getTailDuration() {
+        return this.options.preDelay + this.options.duration;
     }
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
@@ -179,40 +252,58 @@ export class EchoEffect extends AudioEffect {
     constructor(options = {}) {
         super('Echo');
         this.options = {
-            delayTime: options.delayTime ?? 0.3,
-            feedback: options.feedback ?? 0.4,
+            delayTime: options.delayTime ?? 0.34,
+            feedback: options.feedback ?? 0.42,
+            wet: options.wet ?? 0.36,
+            dry: options.dry ?? 0.92,
+            lowpass: options.lowpass ?? 5200,
+            stereoWidth: options.stereoWidth ?? 0.55,
             ...options
         };
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
-        const delay = audioContext.createDelay();
-        const feedback = audioContext.createGain();
-        
-        delay.delayTime.value = this.options.delayTime;
-        feedback.gain.value = this.options.feedback;
+        const chain = createEchoChain(audioContext, this.options);
+        wetGainNode.connect(chain.input);
+        chain.output.connect(mainGainNode);
+        this.nodes = chain.nodes;
+        this.echoInput = chain.input;
+    }
 
-        wetGainNode.connect(delay);
-        delay.connect(feedback);
-        feedback.connect(delay);
-        delay.connect(mainGainNode);
-
-        this.nodes = { delay, feedback };
+    getTailDuration() {
+        const feedback = Math.max(0.01, Math.min(0.95, this.options.feedback));
+        const audibleRepeats = Math.max(1, Math.ceil(Math.log(0.015) / Math.log(feedback)));
+        return this.options.delayTime * audibleRepeats;
     }
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
-        const handleTimeUpdate = this.createRegionBasedHandler(
-            audio, audioContext, progressBar, dryGainNode, wetGainNode
-        );
+        const handleTimeUpdate = () => {
+            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
+                return;
+            }
+
+            const inRegion = audio.currentTime >= progressBar.selectedStartTime &&
+                audio.currentTime <= progressBar.selectedEndTime;
+            const now = audioContext.currentTime;
+            const transitionTime = 0.035;
+            dryGainNode.gain.setTargetAtTime(inRegion ? this.options.dry : 1, now, transitionTime);
+            wetGainNode.gain.setTargetAtTime(inRegion ? 1 : 0, now, transitionTime);
+        };
         
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             if (this.nodes) {
-                wetGainNode.disconnect(this.nodes.delay);
+                try {
+                    wetGainNode.disconnect(this.echoInput);
+                } catch {
+                    // Already disconnected during a wider audio cleanup.
+                }
                 Object.values(this.nodes).forEach(node => node.disconnect());
             }
+            this.echoInput = null;
         };
     }
 }
