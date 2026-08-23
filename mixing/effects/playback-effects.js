@@ -1,5 +1,6 @@
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from '../audio-context.js';
 import { AudioEffect } from './base-effect.js';
+import { createReverbChain } from './time-effects.js';
 
 export class LoopEffect extends AudioEffect {
     constructor() {
@@ -288,16 +289,20 @@ export class SmoothLoopEffect extends AudioEffect {
 function buildMirrorEffectNodes(audioContext, key, effectInstance) {
     switch (key) {
         case 'reverb': {
-            const delay = audioContext.createDelay(1.0);
-            const feedback = audioContext.createGain();
+            const chain = createReverbChain(audioContext, effectInstance.options);
+            const input = audioContext.createGain();
+            const dry = audioContext.createGain();
             const output = audioContext.createGain();
-            delay.delayTime.value = effectInstance.options.delayTime;
-            feedback.gain.value = effectInstance.options.feedback;
-            output.gain.value = effectInstance.options.wet;
-            delay.connect(feedback);
-            feedback.connect(delay);
-            delay.connect(output);
-            return { input: delay, output, extraNodes: [delay, feedback, output] };
+            dry.gain.value = effectInstance.options.dry;
+            input.connect(dry);
+            dry.connect(output);
+            input.connect(chain.input);
+            chain.output.connect(output);
+            return {
+                input,
+                output,
+                extraNodes: [input, dry, output, ...Object.values(chain.nodes)]
+            };
         }
         case 'echo': {
             const delay = audioContext.createDelay();
