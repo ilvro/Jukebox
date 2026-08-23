@@ -38,8 +38,8 @@ export class EffectsRegistry {
             reverb: new ReverbEffect(),
             echo: new EchoEffect(),
             tremolo: new TremoloEffect(),
-            highpass: new FilterEffect('Highpass', 'highpass'),
-            lowpass: new FilterEffect('Lowpass', 'lowpass'),
+            highpass: new FilterEffect('highpass'),
+            lowpass: new FilterEffect('lowpass'),
             nightcore: new NightcoreEffect()
         };
     }
@@ -126,5 +126,18 @@ export class EffectsRegistry {
         return Math.max(0, ...Object.values(this.effects)
             .filter(effect => effect.active && typeof effect.getTailDuration === 'function')
             .map(effect => effect.getTailDuration()));
+    }
+
+    getEffectSettings() {
+        return Object.fromEntries(Object.entries(this.effects)
+            .filter(([, effect]) => typeof effect.getSettings === 'function')
+            .map(([key, effect]) => [key, effect.getSettings()]));
+    }
+
+    setEffectSettings(settings = {}) {
+        Object.entries(settings).forEach(([key, value]) => {
+            this.effects[key]?.applySettings?.(value);
+        });
+        return this.getEffectSettings();
     }
 }

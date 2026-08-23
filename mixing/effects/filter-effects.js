@@ -3,13 +3,16 @@ import { AudioEffect } from './base-effect.js';
 
 export class FilterEffect extends AudioEffect {
     constructor(type, options = {}) {
-        super(`${type.charAt(0).toUpperCase() + type.slice(1)} Filter`);
-        this.filterType = type;
+        const normalizedType = String(type).toLowerCase();
+        const filterType = normalizedType === 'highpass' ? 'highpass' : 'lowpass';
+        super(`${filterType.charAt(0).toUpperCase() + filterType.slice(1)} Filter`);
+        this.filterType = filterType;
         this.options = {
-            frequency: type === 'highpass' ? 400 : 2000,
-            Q: 1.0,
+            frequency: filterType === 'highpass' ? 350 : 2400,
+            Q: 0.7,
             ...options
         };
+        this.applySettings(this.options);
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -21,11 +24,6 @@ export class FilterEffect extends AudioEffect {
             f.frequency.value = this.options.frequency;
             f.Q.value = this.options.Q;
 
-            if (audioContext.sampleRate >= 96000) {
-                f.oversample = '4x';
-            } else if (audioContext.sampleRate >= 48000) {
-                f.oversample = '2x';
-            }
         });
     
         wetGainNode.connect(filter1);
@@ -41,6 +39,7 @@ export class FilterEffect extends AudioEffect {
         );
         
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             
@@ -57,18 +56,36 @@ export class FilterEffect extends AudioEffect {
     }
 
     setFrequency(value) {
+        const frequency = Math.max(20, Math.min(20000, Number(value) || this.options.frequency));
+        this.options.frequency = frequency;
         if (this.nodes?.filter1 && this.nodes?.filter2 && this.audioContextData?.audioContext) {
             const time = this.audioContextData.audioContext.currentTime;
-            this.nodes.filter1.frequency.setValueAtTime(value, time);
-            this.nodes.filter2.frequency.setValueAtTime(value, time);
+            [this.nodes.filter1.frequency, this.nodes.filter2.frequency].forEach(param => {
+                param.cancelScheduledValues?.(time);
+                param.setTargetAtTime(frequency, time, 0.015);
+            });
         }
     }
     
     setQ(value) {
+        const Q = Math.max(0.1, Math.min(12, Number(value) || this.options.Q));
+        this.options.Q = Q;
         if (this.nodes?.filter1 && this.nodes?.filter2 && this.audioContextData?.audioContext) {
             const time = this.audioContextData.audioContext.currentTime;
-            this.nodes.filter1.Q.setValueAtTime(value, time);
-            this.nodes.filter2.Q.setValueAtTime(value, time);
+            [this.nodes.filter1.Q, this.nodes.filter2.Q].forEach(param => {
+                param.cancelScheduledValues?.(time);
+                param.setTargetAtTime(Q, time, 0.015);
+            });
         }
+    }
+
+    getSettings() {
+        return { frequency: this.options.frequency, Q: this.options.Q };
+    }
+
+    applySettings(settings = {}) {
+        if (settings.frequency !== undefined) this.setFrequency(settings.frequency);
+        if (settings.Q !== undefined) this.setQ(settings.Q);
+        return this.getSettings();
     }
 }

@@ -16,6 +16,7 @@ function createDefaultState(songId) {
         markerColors: {},
         region: null,
         activeEffects: [],
+        effectSettings: {},
         selectionFadeEnabled: false,
         selectionStopEnabled: false,
         hotkey: {

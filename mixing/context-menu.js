@@ -1,3 +1,113 @@
+const FILTER_CONTROL_CONFIG = {
+    highpass: {
+        min: 40,
+        max: 4000,
+        presets: [
+            ['Subtle', 180, 0.7],
+            ['Thin', 500, 0.9],
+            ['Tiny', 1400, 1.1]
+        ]
+    },
+    lowpass: {
+        min: 250,
+        max: 16000,
+        presets: [
+            ['Warm', 5000, 0.5],
+            ['Wall', 1500, 0.8],
+            ['Underwater', 650, 1.1]
+        ]
+    }
+};
+
+function frequencyToSlider(frequency, min, max) {
+    return Math.log(Math.max(min, Math.min(max, frequency)) / min) / Math.log(max / min) * 1000;
+}
+
+function sliderToFrequency(value, min, max) {
+    return min * Math.pow(max / min, Number(value) / 1000);
+}
+
+function formatFrequency(frequency) {
+    return frequency >= 1000
+        ? `${(frequency / 1000).toFixed(frequency >= 10000 ? 0 : 1)} kHz`
+        : `${Math.round(frequency)} Hz`;
+}
+
+function createFilterControls(effect, key, repositionMenu) {
+    const config = FILTER_CONTROL_CONFIG[key];
+    const controls = document.createElement('div');
+    controls.className = 'filter-effect-controls';
+
+    const cutoffRow = document.createElement('label');
+    cutoffRow.className = 'filter-control-row';
+    const cutoffHeader = document.createElement('span');
+    cutoffHeader.className = 'filter-control-header';
+    const cutoffName = document.createElement('span');
+    cutoffName.textContent = 'Cutoff';
+    const cutoffValue = document.createElement('output');
+    const cutoffSlider = document.createElement('input');
+    cutoffSlider.type = 'range';
+    cutoffSlider.min = '0';
+    cutoffSlider.max = '1000';
+    cutoffSlider.step = '1';
+    cutoffHeader.append(cutoffName, cutoffValue);
+    cutoffRow.append(cutoffHeader, cutoffSlider);
+
+    const resonanceRow = document.createElement('label');
+    resonanceRow.className = 'filter-control-row';
+    const resonanceHeader = document.createElement('span');
+    resonanceHeader.className = 'filter-control-header';
+    const resonanceName = document.createElement('span');
+    resonanceName.textContent = 'Resonance';
+    const resonanceValue = document.createElement('output');
+    const resonanceSlider = document.createElement('input');
+    resonanceSlider.type = 'range';
+    resonanceSlider.min = '0.1';
+    resonanceSlider.max = '12';
+    resonanceSlider.step = '0.1';
+    resonanceHeader.append(resonanceName, resonanceValue);
+    resonanceRow.append(resonanceHeader, resonanceSlider);
+
+    const presetRow = document.createElement('div');
+    presetRow.className = 'filter-preset-row';
+
+    const refresh = () => {
+        const settings = effect.getSettings();
+        cutoffSlider.value = String(frequencyToSlider(settings.frequency, config.min, config.max));
+        resonanceSlider.value = String(settings.Q);
+        cutoffValue.textContent = formatFrequency(settings.frequency);
+        resonanceValue.textContent = settings.Q.toFixed(1);
+    };
+
+    cutoffSlider.addEventListener('input', event => {
+        effect.setFrequency(sliderToFrequency(event.target.value, config.min, config.max));
+        refresh();
+    });
+    resonanceSlider.addEventListener('input', event => {
+        effect.setQ(event.target.value);
+        refresh();
+    });
+
+    config.presets.forEach(([name, frequency, Q]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = name;
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            effect.applySettings({ frequency, Q });
+            refresh();
+        });
+        presetRow.appendChild(button);
+    });
+
+    controls.append(cutoffRow, resonanceRow, presetRow);
+    controls.addEventListener('click', event => event.stopPropagation());
+    controls.addEventListener('pointerdown', event => event.stopPropagation());
+    refresh();
+    requestAnimationFrame(repositionMenu);
+    return controls;
+}
+
 export function createContextMenu(x, y, effectsRegistry, progressBar, updateProgressBarGradient, updateWaveformProgress, actions = {}) {
     const existingMenu = document.querySelector('.waveform-context-menu');
     if (existingMenu) {
@@ -137,6 +247,8 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
         }
     }
 
+    let repositionMenu = () => {};
+
     Object.entries(categories).forEach(([categoryName, effectKeys]) => {
         const categoryHeader = document.createElement('div');
         categoryHeader.textContent = categoryName;
@@ -176,6 +288,18 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                 const isNowActive = effectsRegistry.activateEffect(key);
                 menuItem.textContent = `${isNowActive ? '✓ ' : ''}${effect.name}`;
                 menuItem.style.color = isNowActive ? '#2bdba0' : '#fff';
+
+                if (FILTER_CONTROL_CONFIG[key]) {
+                    const oldControls = menuItem.nextElementSibling?.classList.contains('filter-effect-controls')
+                        ? menuItem.nextElementSibling
+                        : null;
+                    oldControls?.remove();
+                    if (isNowActive) {
+                        menuItem.after(createFilterControls(effect, key, repositionMenu));
+                    }
+                    requestAnimationFrame(repositionMenu);
+                    return;
+                }
                 
                 // special handling for loop effects
                 if (key === 'loop' || key === 'smoothLoop') {
@@ -194,6 +318,9 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             });
 
             menu.appendChild(menuItem);
+            if (effect.active && FILTER_CONTROL_CONFIG[key]) {
+                menu.appendChild(createFilterControls(effect, key, repositionMenu));
+            }
         });
     });
 
@@ -224,6 +351,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
         menu.style.left = `${desiredLeft + anchor.adjustX}px`;
         menu.style.top = `${desiredTop + anchor.adjustY}px`;
     };
+    repositionMenu = () => positionMenu(true);
     const handleAnchorScroll = () => positionMenu();
     const handleAnchorResize = () => positionMenu(true);
     window.addEventListener('scroll', handleAnchorScroll, { capture: true, passive: true });

@@ -1691,6 +1691,7 @@ function createTrackUI(songId, audio, playerContainer) {
         },
         deleteSelectedRegion
     });
+    audioEffects.setEffectSettings(getSongState(songId)?.effectSettings || {});
 
     let waitingForHotkeyMetadata = false;
     const handleHotkeyEffectsMetadata = () => {
@@ -1942,6 +1943,7 @@ function createTrackUI(songId, audio, playerContainer) {
                 progressBar.selectedEndTime = undefined;
             }
 
+            audioEffects.setEffectSettings(sceneState.effectSettings || {});
             audioEffects.setActiveEffectKeys(sceneState.activeEffects || []);
             selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
             selectionStopEnabled = Boolean(sceneState.selectionStopEnabled);
@@ -1972,6 +1974,7 @@ function createTrackUI(songId, audio, playerContainer) {
                     end: progressBar.selectedEndTime
                 } : null,
                 activeEffects: audioEffects.getActiveEffectKeys(),
+                effectSettings: audioEffects.getEffectSettings(),
                 selectionFadeEnabled,
                 selectionStopEnabled
             };
@@ -1996,6 +1999,8 @@ function createTrackUI(songId, audio, playerContainer) {
         // called once, when the track actually stops playing
         cleanup() {
             cancelEffectTail();
+            const state = getSongState(songId);
+            if (state) state.effectSettings = audioEffects.getEffectSettings();
             // remember the region and active effects so they come back if
             // this song starts playing again later, instead of resetting
             if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
@@ -2800,6 +2805,9 @@ export function configureSongForScene(targetSongId, sceneState = {}) {
     state.activeEffects = Array.isArray(sceneState.activeEffects)
         ? [...sceneState.activeEffects]
         : [];
+    state.effectSettings = sceneState.effectSettings && typeof sceneState.effectSettings === 'object'
+        ? structuredClone(sceneState.effectSettings)
+        : {};
     state.selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
     state.selectionStopEnabled = Boolean(sceneState.selectionStopEnabled) && !state.selectionFadeEnabled;
 
@@ -2816,6 +2824,7 @@ export function getSongSceneSnapshot(songId) {
         currentTime: state.audio.currentTime || state.currentTime || 0,
         region: liveTrackState?.region ?? (state.region ? { ...state.region } : null),
         activeEffects: [...(liveTrackState?.activeEffects ?? state.activeEffects ?? [])],
+        effectSettings: structuredClone(liveTrackState?.effectSettings ?? state.effectSettings ?? {}),
         selectionFadeEnabled: liveTrackState?.selectionFadeEnabled ?? state.selectionFadeEnabled,
         selectionStopEnabled: liveTrackState?.selectionStopEnabled ?? state.selectionStopEnabled
     };

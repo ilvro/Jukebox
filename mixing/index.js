@@ -39,6 +39,8 @@ export function setupAudioEffects(audio, progressBar, actions = {}) {
         activateEffect: (key) => effectsRegistry.activateEffect(key),
         getActiveEffectKeys: () => effectsRegistry.getActiveEffectKeys(),
         getActiveTailDuration: () => effectsRegistry.getActiveTailDuration(),
+        getEffectSettings: () => effectsRegistry.getEffectSettings(),
+        setEffectSettings: (settings = {}) => effectsRegistry.setEffectSettings(settings),
         setActiveEffectKeys: (keys = []) => {
             const requestedKeys = new Set(keys);
             effectsRegistry.getActiveEffectKeys().forEach(key => {
