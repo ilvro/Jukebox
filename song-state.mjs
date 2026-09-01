@@ -7,6 +7,7 @@ function createDefaultState(songId) {
         order: nextSongOrder++,
         audio: null,
         audioSource: null,
+        imageSource: null,
         element: null,
         status: 'stopped', // stopped | playing | player-paused
         currentTime: 0,

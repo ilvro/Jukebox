@@ -165,7 +165,7 @@ function addClickListenerToSongItem(songItem, audio) {
     });
 }
 
-function addSongToPlayer(songElement, audioFile) {
+function addSongToPlayer(songElement, audioFile, imageFile = null) {
     const audioUrl = URL.createObjectURL(audioFile);
     songElement.dataset.audioUrl = audioUrl;
     
@@ -176,6 +176,7 @@ function addSongToPlayer(songElement, audioFile) {
     registerSongState(songId, {
         audio,
         audioSource: audioFile,
+        imageSource: imageFile,
         element: songElement,
         volume: 1,
         currentTime: 0

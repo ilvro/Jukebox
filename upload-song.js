@@ -529,6 +529,50 @@ async function writeAudioResponseToFile(audioResponse, audioFileHandle) {
     await writable.close();
 }
 
+async function writeBlobToFile(blob, fileHandle) {
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+}
+
+async function writeSongAudioToFile(songItem, fileHandle) {
+    const source = getSongState(songItem.dataset.songId)?.audioSource;
+    if (source instanceof Blob) {
+        await writeBlobToFile(source, fileHandle);
+        return;
+    }
+    const response = await fetch(songItem.dataset.audioUrl);
+    await writeAudioResponseToFile(response, fileHandle);
+}
+
+async function writeSongImageToFile(songItem, fileHandle) {
+    const source = getSongState(songItem.dataset.songId)?.imageSource;
+    if (source instanceof Blob) {
+        await writeBlobToFile(source, fileHandle);
+        return;
+    }
+    const response = await fetch(songItem.querySelector('img').src);
+    if (!response.ok) throw new Error(`Could not read song image (${response.status})`);
+    await writeBlobToFile(await response.blob(), fileHandle);
+}
+
+async function presetFileExists(directoryHandle, filename) {
+    try {
+        await directoryHandle.getFileHandle(filename);
+        return true;
+    } catch (error) {
+        if (error.name === 'NotFoundError') return false;
+        throw error;
+    }
+}
+
+async function copyPresetFile(directoryHandle, sourceName, targetName) {
+    const sourceHandle = await directoryHandle.getFileHandle(sourceName);
+    const sourceFile = await sourceHandle.getFile();
+    const targetHandle = await directoryHandle.getFileHandle(targetName, { create: true });
+    await writeBlobToFile(sourceFile, targetHandle);
+}
+
 async function savePreset() {
     if (!supportsFileSystemAccess) {
         alert("Your browser doesn't support the File System Access API. Switch to a desktop environment.");
@@ -577,12 +621,25 @@ async function savePreset() {
         }
         deletedSongs.length = 0;
 
-        let updatedData = [];
+        const desiredTitles = new Set();
         for (const songItem of songItems) {
-            const currentTitle = encodeURIComponent(songItem.querySelector('input').value);
-            const originalTitle = encodeURIComponent(songItem.querySelector('input').defaultValue);
-            const audioUrl = songItem.dataset.audioUrl;
-            const imageUrl = songItem.querySelector('img').src;
+            const readableTitle = songItem.querySelector('.title-input')?.value.trim();
+            if (!readableTitle) throw new Error('Every song needs a title before saving.');
+            const encodedTitle = encodeURIComponent(readableTitle);
+            if (desiredTitles.has(encodedTitle)) {
+                throw new Error(`Two songs have the same title: ${readableTitle}`);
+            }
+            desiredTitles.add(encodedTitle);
+        }
+
+        let updatedData = [];
+        const obsoleteFileTitles = new Set();
+        const savedIdentities = [];
+        for (const songItem of songItems) {
+            const titleInput = songItem.querySelector('.title-input');
+            const currentTitle = encodeURIComponent(titleInput.value.trim());
+            const persistedPresetTitle = songItem.dataset.presetTitle || null;
+            const persistedFileTitle = songItem.dataset.fileTitle || persistedPresetTitle;
             const genres = songItem.getAttribute('data-genres').split(',').filter(g => g.trim());
             const tags = songItem.getAttribute('data-tags').split(',').filter(t => t.trim());
             
@@ -591,10 +648,14 @@ async function savePreset() {
             const hotkey = getSongState(songId)?.hotkey.key || null;
             const hotkeyEffects = hotkey ? [...(getSongState(songId)?.hotkey.effects || [])] : [];
 
-            // check for title changes
-            const existingIndex = presetData.findIndex(item => item.currentTitle === originalTitle);
+            // Metadata identity is kept separately from the editable input.
+            // defaultValue is not a safe file identity: several new songs can
+            // legitimately start with the same suggested title.
+            const existingIndex = persistedPresetTitle
+                ? presetData.findIndex(item => item.currentTitle === persistedPresetTitle)
+                : -1;
             if (existingIndex !== -1) {
-                console.log(`updating existing song: ${decodeURIComponent(originalTitle)} to ${decodeURIComponent(currentTitle)}`);
+                console.log(`updating existing song: ${decodeURIComponent(persistedPresetTitle)} to ${decodeURIComponent(currentTitle)}`);
                 const updatedSong = {
                     currentTitle,
                     genres,
@@ -605,34 +666,6 @@ async function savePreset() {
                 };
 
                 presetData[existingIndex] = updatedSong;
-
-                // rename audio and image files if the title changed
-                if (currentTitle !== originalTitle) {
-                    try {
-                        const oldAudioHandle = await directoryHandle.getFileHandle(`${originalTitle}.mp3`);
-                        const newAudioHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`, { create: true });
-                        const writable = await newAudioHandle.createWritable();
-                        const oldFile = await oldAudioHandle.getFile();
-                        await writable.write(await oldFile.arrayBuffer());
-                        await writable.close();
-                        await directoryHandle.removeEntry(`${originalTitle}.mp3`);
-                    } catch (err) {
-                        console.warn(`audio file rename failed for ${decodeURIComponent(originalTitle)}:`, err);
-                    }
-
-                    try {
-                        const oldImageHandle = await directoryHandle.getFileHandle(`${originalTitle}.jpg`);
-                        const newImageHandle = await directoryHandle.getFileHandle(`${currentTitle}.jpg`, { create: true });
-                        const writable = await newImageHandle.createWritable();
-                        const oldFile = await oldImageHandle.getFile();
-                        await writable.write(await oldFile.arrayBuffer());
-                        await writable.close();
-                        await directoryHandle.removeEntry(`${originalTitle}.jpg`);
-                    } catch (err) {
-                        console.warn(`image file rename failed for ${decodeURIComponent(originalTitle)}:`, err);
-                    }
-                }
-
                 updatedData.push(updatedSong);
             } else {
                 console.log(`adding new song: ${decodeURIComponent(currentTitle)}`);
@@ -642,30 +675,40 @@ async function savePreset() {
             }
 
             const shouldOverwriteAudio = songItem.dataset.audioEdited === 'true';
-            try {
-                const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`);
-                if (shouldOverwriteAudio) {
-                    const audioResponse = await fetch(audioUrl);
-                    await writeAudioResponseToFile(audioResponse, audioFileHandle);
-                    delete songItem.dataset.audioEdited;
-                }
-            } catch (err) {
-                const audioResponse = await fetch(audioUrl);
+            const isNewSong = !persistedPresetTitle;
+            const titleChanged = Boolean(persistedFileTitle && persistedFileTitle !== currentTitle);
+            const audioExists = await presetFileExists(directoryHandle, `${currentTitle}.mp3`);
+            if (isNewSong || shouldOverwriteAudio || titleChanged || !audioExists) {
                 const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`, { create: true });
-                await writeAudioResponseToFile(audioResponse, audioFileHandle);
-                delete songItem.dataset.audioEdited;
+                try {
+                    await writeSongAudioToFile(songItem, audioFileHandle);
+                } catch (sourceError) {
+                    if (!persistedFileTitle) throw sourceError;
+                    await copyPresetFile(
+                        directoryHandle,
+                        `${persistedFileTitle}.mp3`,
+                        `${currentTitle}.mp3`
+                    );
+                }
             }
 
-            try {
-                await directoryHandle.getFileHandle(`${currentTitle}.jpg`);
-            } catch (err) {
-                const imageResponse = await fetch(imageUrl);
-                const imageBlob = await imageResponse.blob();
+            const imageExists = await presetFileExists(directoryHandle, `${currentTitle}.jpg`);
+            if (isNewSong || titleChanged || !imageExists) {
                 const imageFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.jpg`, { create: true });
-                const imageWritable = await imageFileHandle.createWritable();
-                await imageWritable.write(imageBlob);
-                await imageWritable.close();
+                try {
+                    await writeSongImageToFile(songItem, imageFileHandle);
+                } catch (sourceError) {
+                    if (!persistedFileTitle) throw sourceError;
+                    await copyPresetFile(
+                        directoryHandle,
+                        `${persistedFileTitle}.jpg`,
+                        `${currentTitle}.jpg`
+                    );
+                }
             }
+
+            if (titleChanged) obsoleteFileTitles.add(persistedFileTitle);
+            savedIdentities.push({ songItem, titleInput, currentTitle });
 
             console.log(`saved ${currentTitle}`);
         }
@@ -674,6 +717,31 @@ async function savePreset() {
         const presetMetadataWritable = await presetMetadataHandle.createWritable();
         await presetMetadataWritable.write(JSON.stringify(updatedData, null, 2));
         await presetMetadataWritable.close();
+
+        // Only advance the in-memory persisted identity after both media and
+        // metadata have been committed successfully.
+        savedIdentities.forEach(({ songItem, titleInput, currentTitle }) => {
+            songItem.dataset.presetTitle = currentTitle;
+            songItem.dataset.fileTitle = currentTitle;
+            titleInput.defaultValue = titleInput.value.trim();
+            delete songItem.dataset.audioEdited;
+        });
+
+        // Delete superseded filenames only after every replacement is safely
+        // written and metadata is committed. This also makes title swaps safe
+        // (A→B and B→A).
+        for (const obsoleteTitle of obsoleteFileTitles) {
+            if (desiredTitles.has(obsoleteTitle)) continue;
+            for (const extension of ['mp3', 'jpg']) {
+                try {
+                    await directoryHandle.removeEntry(`${obsoleteTitle}.${extension}`);
+                } catch (error) {
+                    if (error.name !== 'NotFoundError') {
+                        console.warn(`could not remove old ${extension} file for ${decodeURIComponent(obsoleteTitle)}:`, error);
+                    }
+                }
+            }
+        }
 
         console.log('saved preset');
     } catch (error) {
@@ -756,6 +824,7 @@ async function loadPresetSongFiles(fileHandles, songMetadata) {
         return {
             ...songMetadata,
             ...files,
+            fileTitle,
             genres,
             tags,
             decodedTitle: decodeURIComponent(currentTitle)
@@ -776,6 +845,8 @@ function createPresetSongItem(song) {
     songItem.draggable = true;
     songItem.dataset.genres = song.genres.join(',');
     songItem.dataset.tags = song.tags.join(',');
+    songItem.dataset.presetTitle = song.currentTitle;
+    songItem.dataset.fileTitle = song.fileTitle;
 
     const titleInput = document.createElement('input');
     titleInput.spellcheck = false;
@@ -854,7 +925,7 @@ async function loadPreset() {
                     if (!song) return;
 
                     const songItem = createPresetSongItem(song);
-                    addSongToPlayer(songItem, song.audioFile);
+                    addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
 
                     if (song.markers?.length) {
                         setMarkers(songItem.dataset.songId, song.markers);
@@ -972,7 +1043,9 @@ async function loadSamplePreset() {
                     event.stopPropagation();
                 });
                 
-                addSongToPlayer(songItem, song.audioFile);
+                songItem.dataset.presetTitle = song.currentTitle;
+                songItem.dataset.fileTitle = song.currentTitle;
+                addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
                 
                 if (song.markers && song.markers.length > 0) {
                     setMarkers(songItem.dataset.songId, song.markers);
@@ -1042,7 +1115,9 @@ async function handleFilesFallback(files) {
             event.stopPropagation();
         });
 
-        addSongToPlayer(songItem, audioFile);
+        songItem.dataset.presetTitle = currentTitle;
+        songItem.dataset.fileTitle = currentTitle;
+        addSongToPlayer(songItem, audioFile, thumbnailFile);
         
         if (markers && markers.length > 0) {
             setMarkers(songItem.dataset.songId, markers);
@@ -1139,9 +1214,9 @@ uploadSubmit.addEventListener('click', () => {
     
     let title;
     try {
-        title = decodeURIComponent(thumbnail.name.toString().slice(0, -4));
+        title = decodeURIComponent(audio.name.replace(/\.[^.]+$/, ''));
     } catch {
-        title = thumbnail.name.toString().slice(0, -4);
+        title = audio.name.replace(/\.[^.]+$/, '');
     }
     
     const genres = getSelectedGenres();
@@ -1152,12 +1227,28 @@ uploadSubmit.addEventListener('click', () => {
     songItem.setAttribute('draggable', 'true');
     songItem.setAttribute('data-genres', genres.join(','));
     songItem.setAttribute('data-tags', tags.join(','));
-    songItem.innerHTML = `
-        <input class="title-input" value="${title}"</input>
-        <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-        <img src="${URL.createObjectURL(thumbnail)}" alt="${title}" loading="lazy" decoding="async" fetchpriority="low">
-    `;
-    addSongToPlayer(songItem, audio);
+    const titleInput = document.createElement('input');
+    titleInput.className = 'title-input';
+    titleInput.spellcheck = false;
+    titleInput.value = title;
+    titleInput.defaultValue = title;
+    titleInput.addEventListener('dragover', event => event.preventDefault());
+    titleInput.addEventListener('drop', event => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
+
+    const metadata = document.createElement('p');
+    metadata.textContent = `${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}`;
+
+    const image = document.createElement('img');
+    image.src = URL.createObjectURL(thumbnail);
+    image.alt = title;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.fetchPriority = 'low';
+    songItem.append(titleInput, metadata, image);
+    addSongToPlayer(songItem, audio, thumbnail);
     document.dispatchEvent(new Event('songsUpdated'));
 
     // fade out the ui
@@ -1308,10 +1399,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }));
 
     contextMenu.appendChild(createOption('Delete', (item) => {
-        const titleInput = item.querySelector('.title-input');
-        const title = titleInput ? titleInput.defaultValue : 'Unknown';
         const songId = item.dataset.songId;
-        deletedSongs.push(title);
+        // A song that has never been saved has no files to delete. Using its
+        // suggested/default title here could remove another song that merely
+        // started with the same title.
+        if (item.dataset.fileTitle) {
+            try {
+                deletedSongs.push(decodeURIComponent(item.dataset.fileTitle));
+            } catch {
+                deletedSongs.push(item.dataset.fileTitle);
+            }
+        }
 
         clearHotkey(songId);
         removeSongAudio(songId); // Releases all state, audio nodes and blob URLs.
