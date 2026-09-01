@@ -695,6 +695,13 @@ export class PlaybackSpeedEffect extends AudioEffect {
         super(`Speed ${speedFactor}x`);
         this.speedFactor = Math.max(0.5, Math.min(2, Number(speedFactor) || 1));
         this.applyPlaybackRate = null;
+        this.speedTimeUpdateHandler = null;
+        this.removalFrameId = null;
+    }
+
+    activate(...args) {
+        this.finishPendingDeactivation();
+        super.activate(...args);
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -719,12 +726,14 @@ export class PlaybackSpeedEffect extends AudioEffect {
         };
 
         this.applyPlaybackRate = handleTimeUpdate;
+        this.speedTimeUpdateHandler = handleTimeUpdate;
         audio.addEventListener('timeupdate', handleTimeUpdate);
         requestAnimationFrame(handleTimeUpdate);
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.playbackRate = 1.0;
             this.applyPlaybackRate = null;
+            this.speedTimeUpdateHandler = null;
         };
     }
 
@@ -742,6 +751,50 @@ export class PlaybackSpeedEffect extends AudioEffect {
     applySettings(settings = {}) {
         if (settings.speedFactor !== undefined) this.setSpeedFactor(settings.speedFactor);
         return this.getSettings();
+    }
+
+    deactivate(duration = 0) {
+        if (!this.active) return;
+        if (!(duration > 0) || !this.audio) {
+            super.deactivate();
+            return;
+        }
+
+        const audio = this.audio;
+        if (this.speedTimeUpdateHandler) {
+            audio.removeEventListener('timeupdate', this.speedTimeUpdateHandler);
+        }
+        this.speedTimeUpdateHandler = null;
+        this.applyPlaybackRate = null;
+        this.cleanup = null;
+        this.active = false;
+
+        const startRate = audio.playbackRate;
+        const startedAt = performance.now();
+        const transitionMs = duration * 1000;
+        const animate = timestamp => {
+            const progress = Math.min(1, (timestamp - startedAt) / transitionMs);
+            // Smoothstep avoids an abrupt change in acceleration at either
+            // end while preserving a predictable total transition time.
+            const eased = progress * progress * (3 - 2 * progress);
+            audio.playbackRate = startRate + (1 - startRate) * eased;
+            if (progress < 1) {
+                this.removalFrameId = requestAnimationFrame(animate);
+            } else {
+                audio.playbackRate = 1;
+                this.removalFrameId = null;
+            }
+        };
+        this.removalFrameId = requestAnimationFrame(animate);
+        console.log(`${this.name} effect returning to normal over ${duration}s`);
+    }
+
+    finishPendingDeactivation() {
+        if (this.removalFrameId !== null) {
+            cancelAnimationFrame(this.removalFrameId);
+            this.removalFrameId = null;
+        }
+        if (this.audio) this.audio.playbackRate = 1;
     }
 }
 

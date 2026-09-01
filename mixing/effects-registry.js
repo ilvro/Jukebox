@@ -15,6 +15,7 @@ import { LoopEffect, SmoothLoopEffect, PlaybackSpeedEffect, PitchShiftEffect, Re
 import { ReverbEffect, EchoEffect, TremoloEffect } from './effects/time-effects.js';
 import { FilterEffect } from './effects/filter-effects.js';
 import { NightcoreEffect } from './effects/preset-effects.js';
+import { getEffectRemovalDuration } from '../settings.js';
 
 const LEGACY_SPEED_FACTORS = {
     speed075: 0.75,
@@ -104,23 +105,30 @@ export class EffectsRegistry {
             return false;
         }
         
-        return effect.toggle(
-            context.audioContext,
-            context.sourceNode,
-            context.dryGainNode,
-            context.wetGainNode,
-            context.mainGainNode,
-            this.audio,
-            this.progressBar,
-            this
-        );
+        if (effect.active) {
+            this.deactivateEffect(effectKey, { gradual: true });
+        } else {
+            effect.activate(
+                context.audioContext,
+                context.sourceNode,
+                context.dryGainNode,
+                context.wetGainNode,
+                context.mainGainNode,
+                this.audio,
+                this.progressBar,
+                this
+            );
+        }
+        return effect.active;
     }
     
-    deactivateEffect(effectKey) {
+    deactivateEffect(effectKey, { gradual = false } = {}) {
         effectKey = this.normalizeEffectKey(effectKey);
         const effect = this.effects[effectKey];
         if (effect && effect.active) {
-            effect.deactivate();
+            const supportsRemovalTransition = effectKey === 'speed' || effectKey === 'highpass' || effectKey === 'lowpass';
+            const duration = gradual && supportsRemovalTransition ? getEffectRemovalDuration() : 0;
+            effect.deactivate(duration);
             return true;
         }
         return false;
@@ -128,8 +136,9 @@ export class EffectsRegistry {
 
     deactivateAllEffects() {
         Object.values(this.effects).forEach(effect => {
+            effect.finishPendingDeactivation?.();
             if (effect.active) {
-                effect.deactivate();
+                effect.deactivate(0);
             }
         });
     }

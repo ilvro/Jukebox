@@ -12,7 +12,14 @@ export class FilterEffect extends AudioEffect {
             Q: 0.7,
             ...options
         };
+        this.removalTimer = null;
+        this.pendingRemovalCleanup = null;
         this.applySettings(this.options);
+    }
+
+    activate(...args) {
+        this.finishPendingDeactivation();
+        super.activate(...args);
     }
 
     setupNodes(audioContext, sourceNode, dryGainNode, wetGainNode, mainGainNode) {
@@ -87,5 +94,66 @@ export class FilterEffect extends AudioEffect {
         if (settings.frequency !== undefined) this.setFrequency(settings.frequency);
         if (settings.Q !== undefined) this.setQ(settings.Q);
         return this.getSettings();
+    }
+
+    deactivate(duration = 0) {
+        if (!this.active) return;
+        if (!(duration > 0) || !this.audioContextData?.audioContext) {
+            super.deactivate();
+            return;
+        }
+
+        const { audioContext, dryGainNode, wetGainNode } = this.audioContextData;
+        const now = audioContext.currentTime;
+        const endTime = now + duration;
+        const holdParameter = param => {
+            if (typeof param.cancelAndHoldAtTime === 'function') {
+                param.cancelAndHoldAtTime(now);
+            } else {
+                param.cancelScheduledValues(now);
+                param.setValueAtTime(param.value, now);
+            }
+        };
+
+        // Do not crossfade the dry and filtered paths here. Biquad filters
+        // rotate phase, so summing both versions can cause severe phase
+        // cancellation and an audible volume hole halfway through the fade.
+        // Instead, keep one signal path and move the cutoff to an inaudible,
+        // effectively neutral boundary. The final dry-path switch then has
+        // virtually no tonal difference.
+        holdParameter(dryGainNode.gain);
+        holdParameter(wetGainNode.gain);
+        const neutralFrequency = this.filterType === 'highpass'
+            ? 10
+            : audioContext.sampleRate * 0.49;
+        [this.nodes?.filter1, this.nodes?.filter2].forEach(filter => {
+            if (!filter) return;
+            holdParameter(filter.frequency);
+            filter.frequency.exponentialRampToValueAtTime(neutralFrequency, endTime);
+            holdParameter(filter.Q);
+            filter.Q.linearRampToValueAtTime(0.1, endTime);
+        });
+
+        const cleanup = this.cleanup;
+        this.active = false;
+        this.pendingRemovalCleanup = () => {
+            cleanup?.();
+            this.pendingRemovalCleanup = null;
+            this.removalTimer = null;
+        };
+        this.removalTimer = setTimeout(() => {
+            this.pendingRemovalCleanup?.();
+        }, duration * 1000 + 30);
+        console.log(`${this.name} cutoff returning to neutral over ${duration}s`);
+    }
+
+    finishPendingDeactivation() {
+        if (this.removalTimer !== null) {
+            clearTimeout(this.removalTimer);
+            this.removalTimer = null;
+        }
+        const cleanup = this.pendingRemovalCleanup;
+        this.pendingRemovalCleanup = null;
+        cleanup?.();
     }
 }
