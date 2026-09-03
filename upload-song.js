@@ -573,6 +573,19 @@ async function copyPresetFile(directoryHandle, sourceName, targetName) {
     await writeBlobToFile(sourceFile, targetHandle);
 }
 
+async function runPresetSaveStep(title, step, callback) {
+    try {
+        return await callback();
+    } catch (error) {
+        const readableTitle = (() => {
+            try { return decodeURIComponent(title); } catch { return title; }
+        })();
+        const wrappedError = new Error(`Could not ${step} for "${readableTitle}": ${error.message}`);
+        wrappedError.cause = error;
+        throw wrappedError;
+    }
+}
+
 async function savePreset() {
     if (!supportsFileSystemAccess) {
         alert("Your browser doesn't support the File System Access API. Switch to a desktop environment.");
@@ -677,34 +690,42 @@ async function savePreset() {
             const shouldOverwriteAudio = songItem.dataset.audioEdited === 'true';
             const isNewSong = !persistedPresetTitle;
             const titleChanged = Boolean(persistedFileTitle && persistedFileTitle !== currentTitle);
-            const audioExists = await presetFileExists(directoryHandle, `${currentTitle}.mp3`);
+            const audioExists = await runPresetSaveStep(currentTitle, 'check the audio file', () =>
+                presetFileExists(directoryHandle, `${currentTitle}.mp3`)
+            );
             if (isNewSong || shouldOverwriteAudio || titleChanged || !audioExists) {
-                const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`, { create: true });
-                try {
-                    await writeSongAudioToFile(songItem, audioFileHandle);
-                } catch (sourceError) {
-                    if (!persistedFileTitle) throw sourceError;
-                    await copyPresetFile(
-                        directoryHandle,
-                        `${persistedFileTitle}.mp3`,
-                        `${currentTitle}.mp3`
-                    );
-                }
+                await runPresetSaveStep(currentTitle, 'save the audio file', async () => {
+                    const audioFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.mp3`, { create: true });
+                    try {
+                        await writeSongAudioToFile(songItem, audioFileHandle);
+                    } catch (sourceError) {
+                        if (!persistedFileTitle) throw sourceError;
+                        await copyPresetFile(
+                            directoryHandle,
+                            `${persistedFileTitle}.mp3`,
+                            `${currentTitle}.mp3`
+                        );
+                    }
+                });
             }
 
-            const imageExists = await presetFileExists(directoryHandle, `${currentTitle}.jpg`);
+            const imageExists = await runPresetSaveStep(currentTitle, 'check the image file', () =>
+                presetFileExists(directoryHandle, `${currentTitle}.jpg`)
+            );
             if (isNewSong || titleChanged || !imageExists) {
-                const imageFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.jpg`, { create: true });
-                try {
-                    await writeSongImageToFile(songItem, imageFileHandle);
-                } catch (sourceError) {
-                    if (!persistedFileTitle) throw sourceError;
-                    await copyPresetFile(
-                        directoryHandle,
-                        `${persistedFileTitle}.jpg`,
-                        `${currentTitle}.jpg`
-                    );
-                }
+                await runPresetSaveStep(currentTitle, 'save the image file', async () => {
+                    const imageFileHandle = await directoryHandle.getFileHandle(`${currentTitle}.jpg`, { create: true });
+                    try {
+                        await writeSongImageToFile(songItem, imageFileHandle);
+                    } catch (sourceError) {
+                        if (!persistedFileTitle) throw sourceError;
+                        await copyPresetFile(
+                            directoryHandle,
+                            `${persistedFileTitle}.jpg`,
+                            `${currentTitle}.jpg`
+                        );
+                    }
+                });
             }
 
             if (titleChanged) obsoleteFileTitles.add(persistedFileTitle);
@@ -713,10 +734,12 @@ async function savePreset() {
             console.log(`saved ${currentTitle}`);
         }
 
-        const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
-        const presetMetadataWritable = await presetMetadataHandle.createWritable();
-        await presetMetadataWritable.write(JSON.stringify(updatedData, null, 2));
-        await presetMetadataWritable.close();
+        await runPresetSaveStep('preset_metadata.json', 'save the preset metadata', async () => {
+            const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
+            const presetMetadataWritable = await presetMetadataHandle.createWritable();
+            await presetMetadataWritable.write(JSON.stringify(updatedData, null, 2));
+            await presetMetadataWritable.close();
+        });
 
         // Only advance the in-memory persisted identity after both media and
         // metadata have been committed successfully.

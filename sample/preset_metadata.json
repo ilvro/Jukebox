@@ -6,7 +6,10 @@
     ],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Feast%20of%20Crispian",
@@ -15,7 +18,10 @@
     ],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Little%20Nightmares%202%20%20%20Rainy%20City%20Ambience",
@@ -25,7 +31,10 @@
     ],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Whispering%20Caverns",
@@ -34,7 +43,10 @@
     ],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "DARK%20FOREST%20Ambience%20and%20Music%20-%20sounds%20of%20dark%20misty%20forest%20with%20ambient%20music",
@@ -43,7 +55,10 @@
     ],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "the%20man%20in%20the%20hat%20(slowed%20%2B%20reverb)%20%7C%20Little%20Nightmares%202",
@@ -53,16 +68,20 @@
     ],
     "tags": [
       "event"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Little%20Nightmares%20-%20Ambience%20-%20Hideaway%20-%20Fireplace",
-    "genres": [
-      ""
-    ],
+    "genres": [],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Bloodgate",
@@ -73,35 +92,51 @@
     "tags": [
       "event",
       "battle"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "The%20Stranger",
-    "genres": [
-      ""
-    ],
+    "genres": [],
     "tags": [
       "investigation",
       "event"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Batalha",
-    "genres": [
-      ""
-    ],
+    "genres": [],
     "tags": [
       "battle"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Iniciativa",
+    "genres": [],
+    "tags": [
+      "battle"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Antiquarian%20Study",
-    "genres": [
-      ""
-    ],
+    "genres": [],
     "tags": [
       "ambient"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Stakeout",
@@ -110,16 +145,186 @@
     ],
     "tags": [
       "event"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   },
   {
     "currentTitle": "Uivos%20-%20Ordem%20Paranormal%3A%20Besti%C3%A1rio%20(Uivar)",
-    "genres": [
-      ""
-    ],
+    "genres": [],
     "tags": [
       "event",
       "battle"
-    ]
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Desolate%20Frostlands%20-%20D%26D-TTRPG%20Music%20-%201%20Hour",
+    "genres": [],
+    "tags": [
+      "ambient",
+      "event"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Aurora",
+    "genres": [],
+    "tags": [
+      "event",
+      "emotional"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Mem%C3%B3rias",
+    "genres": [],
+    "tags": [
+      "event",
+      "emotional"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Coura%C3%A7as",
+    "genres": [],
+    "tags": [
+      "battle"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Inten%C3%A7%C3%A3o",
+    "genres": [],
+    "tags": [
+      "event"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Velisar",
+    "genres": [],
+    "tags": [
+      "event",
+      "battle"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Hollow%20Knight-%20Silksong%20-%20OST%20-%20Choral%20Chambers",
+    "genres": [],
+    "tags": [
+      "ambient",
+      "event"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Silksong%20OST%20-%20Bonebottom",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Raziel",
+    "genres": [],
+    "tags": [
+      "battle"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Forest%20-%20D%26D-TTRPG%20Ambience%20-%201%20Hour",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Thunderstorm%20-%20D%26D-TTRPG%20Ambience%20-%201%20Hour",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Forest%20(Night)%20-%20D%26D-TTRPG%20Ambience%20-%201%20Hour",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Rain%20-%20D%26D-TTRPG%20Ambience%20-%201%20Hour",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Becos",
+    "genres": [],
+    "tags": [
+      "ambient"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "O%20Estrangeiro",
+    "genres": [],
+    "tags": [
+      "event",
+      "battle"
+    ],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
+  },
+  {
+    "currentTitle": "Plankton%20Meme%20With%20Sound%20Effect%20in%20HD",
+    "genres": [
+      "sfx"
+    ],
+    "tags": [],
+    "markers": [],
+    "hotkey": null,
+    "hotkeyEffects": []
   }
 ]
