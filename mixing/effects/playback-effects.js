@@ -37,7 +37,7 @@ export class SmoothLoopEffect extends AudioEffect {
         this.crossfadeSource = null;
         this.crossfadeGain = null;
         this.CROSSFADE_DURATION = 2;
-        this.monitorFrameId = null;
+        this.monitorIntervalId = null;
         this.transitionTimeoutId = null;
         this.previousNativeLoop = false;
     }
@@ -53,6 +53,15 @@ export class SmoothLoopEffect extends AudioEffect {
         this.previousNativeLoop = audio.loop;
         this.prepareCrossfadeAudio();
 
+        // requestAnimationFrame is fully suspended by the browser whenever
+        // the document isn't visible (a different tab is active, window is
+        // minimized, etc.) — it doesn't just throttle, it stops firing
+        // entirely. That made the crossfade window get missed every time
+        // regardless of how it was sized. setInterval keeps running while
+        // hidden (only getting throttled after several minutes in the
+        // background), which matches how Loop's own timeupdate-based
+        // monitoring already survives being backgrounded.
+        const MONITOR_INTERVAL_MS = 50;
         const monitorLoop = () => {
             if (!this.active) return;
 
@@ -70,19 +79,19 @@ export class SmoothLoopEffect extends AudioEffect {
                 if (!this.crossfading && timeUntilEnd <= crossfadeDuration && timeUntilEnd > 0) {
                     this.startCrossfade(crossfadeDuration);
                 } else if (!this.crossfading && audio.currentTime >= end) {
-                    // Last-resort protection for a delayed animation frame.
+                    // Last-resort protection for a delayed check (e.g. after
+                    // the interval got throttled while backgrounded).
                     audio.currentTime = start;
                 }
             }
-
-            this.monitorFrameId = requestAnimationFrame(monitorLoop);
         };
-        this.monitorFrameId = requestAnimationFrame(monitorLoop);
-        
+        monitorLoop();
+        this.monitorIntervalId = setInterval(monitorLoop, MONITOR_INTERVAL_MS);
+
         this.cleanup = () => {
-            if (this.monitorFrameId !== null) {
-                cancelAnimationFrame(this.monitorFrameId);
-                this.monitorFrameId = null;
+            if (this.monitorIntervalId !== null) {
+                clearInterval(this.monitorIntervalId);
+                this.monitorIntervalId = null;
             }
             audio.loop = this.previousNativeLoop;
             this.stopCrossfade();
