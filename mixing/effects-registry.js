@@ -14,7 +14,7 @@ import { initializeAudioContext, disconnectAudioContext, getAudioContext } from 
 import { LoopEffect, SmoothLoopEffect, PlaybackSpeedEffect, PitchShiftEffect, ReverseEffect } from './effects/playback-effects.js';
 import { ReverbEffect, EchoEffect, TremoloEffect } from './effects/time-effects.js';
 import { FilterEffect } from './effects/filter-effects.js';
-import { NightcoreEffect } from './effects/preset-effects.js';
+import { HellEffect, NightcoreEffect } from './effects/preset-effects.js';
 import { getEffectRemovalDuration } from '../settings.js';
 
 const LEGACY_SPEED_FACTORS = {
@@ -45,7 +45,8 @@ export class EffectsRegistry {
             tremolo: new TremoloEffect(),
             highpass: new FilterEffect('highpass'),
             lowpass: new FilterEffect('lowpass'),
-            nightcore: new NightcoreEffect()
+            nightcore: new NightcoreEffect(),
+            hell: new HellEffect()
         };
     }
 
@@ -55,7 +56,7 @@ export class EffectsRegistry {
             'Speed & Pitch': ['speed', 'pitchShift'],
             'Effects': ['echo', 'reverb', 'tremolo'],
             'Filters': ['highpass', 'lowpass'],
-            'Presets': ['nightcore']
+            'Presets': ['nightcore', 'hell']
         };
 
         return categories;
@@ -86,6 +87,19 @@ export class EffectsRegistry {
                 if (key !== effectKey && key.startsWith('speed') && candidate.active) {
                     this.deactivateEffect(key);
                 }
+            });
+        }
+
+        // Speed and Nightcore both own playbackRate/pitch. Hell is purely an
+        // audio processor now, but the two full presets remain exclusive.
+        if (['speed', 'nightcore'].includes(effectKey) && !effect.active) {
+            ['speed', 'nightcore'].forEach(key => {
+                if (key !== effectKey && this.effects[key]?.active) this.deactivateEffect(key);
+            });
+        }
+        if (['nightcore', 'hell'].includes(effectKey) && !effect.active) {
+            ['nightcore', 'hell'].forEach(key => {
+                if (key !== effectKey && this.effects[key]?.active) this.deactivateEffect(key);
             });
         }
 

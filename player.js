@@ -44,6 +44,7 @@ let currentGenerations = 0;
 
 const MAX_MARKER_SNAP_TOLERANCE = 2.5;
 const MARKER_HIT_RADIUS_PX = 7;
+const REGION_HANDLE_HIT_RADIUS_PX = 8;
 const MARKER_TIME_EPSILON = 0.001;
 const DEFAULT_MARKER_COLOR = '#ffaa00';
 const SMOOTH_SKIP_DURATION = 2.5;
@@ -1308,13 +1309,38 @@ function createTrackUI(songId, audio, playerContainer) {
     let hoveredBar = -1;
     let hoveredTime = -1;
     let hoveredMarker = -1;
+    let hoveredRegionHandle = null;
     const getCurrentMarkerTolerance = () => getMarkerTolerance(audio.duration, waveformCanvas);
+    const getRegionHandleAtClientX = (clientX) => {
+        const start = progressBar.selectedStartTime;
+        const end = progressBar.selectedEndTime;
+        if (start === undefined || end === undefined || !Number.isFinite(audio.duration) || audio.duration <= 0) {
+            return null;
+        }
+
+        const rect = waveformCanvas.getBoundingClientRect();
+        if (rect.width <= 0) return null;
+        const startX = rect.left + (start / audio.duration) * rect.width;
+        const endX = rect.left + (end / audio.duration) * rect.width;
+        const startDistance = Math.abs(clientX - startX);
+        const endDistance = Math.abs(clientX - endX);
+        const closestDistance = Math.min(startDistance, endDistance);
+        if (closestDistance > REGION_HANDLE_HIT_RADIUS_PX) return null;
+        return startDistance <= endDistance ? 'start' : 'end';
+    };
+
+    const updateRegionHandleCursor = (clientX) => {
+        hoveredRegionHandle = getRegionHandleAtClientX(clientX);
+        progressContainer.classList.toggle('region-handle-hover', hoveredRegionHandle !== null);
+    };
+
     progressContainer.addEventListener('mousemove', (event) => {
         const rect = waveformCanvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
         hoveredTime = (mouseX / rect.width) * audio.duration;
         
         const canvasX = (mouseX / rect.width) * waveformCanvas.width;
+        updateRegionHandleCursor(event.clientX);
         const barWidth = 2;
         const gap = 1;
         const totalBarWidth = barWidth + gap;
@@ -1394,6 +1420,8 @@ function createTrackUI(songId, audio, playerContainer) {
         hoveredBar = -1;
         hoveredTime = -1;
         hoveredMarker = -1;
+        hoveredRegionHandle = null;
+        progressContainer.classList.remove('region-handle-hover');
         timeTooltip.style.display = 'none';
         requestAnimationFrame(() => {
             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
@@ -1766,6 +1794,20 @@ function createTrackUI(songId, audio, playerContainer) {
     
     let rightClickStartPos = null;
     let hasMovedMouse = false;
+    let cancelRegionHandleDrag = null;
+
+    const openSelectedRegionMenu = (pageX, pageY) => {
+        audioEffects.createContextMenu(
+            pageX,
+            pageY,
+            (progressBar, audio) => {
+                updateProgressBarGradient(progressBar, audio);
+            },
+            () => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
+            }
+        );
+    };
     
     progressBar.addEventListener('mousedown', (event) => {
         if (event.button === 2) {
@@ -1776,6 +1818,84 @@ function createTrackUI(songId, audio, playerContainer) {
                 return;
             }
             
+            const selectedHandle = getRegionHandleAtClientX(event.clientX);
+            if (selectedHandle) {
+                isDragging = true;
+                const dragStartX = event.clientX;
+                let activeHandle = selectedHandle;
+                let handleMoved = false;
+                const previousBodyCursor = document.body.style.cursor;
+
+                const closeExistingMenu = () => {
+                    const existingMenu = document.querySelector('.waveform-context-menu');
+                    if (existingMenu) {
+                        existingMenu._destroyWaveformMenu?.();
+                        existingMenu.remove();
+                    }
+                };
+
+                const onHandleMove = (moveEvent) => {
+                    if (!handleMoved && Math.abs(moveEvent.clientX - dragStartX) < 3) return;
+                    if (!handleMoved) {
+                        handleMoved = true;
+                        isDragging = true;
+                        closeExistingMenu();
+                        document.body.style.cursor = 'ew-resize';
+                    }
+
+                    let movedTime = getExactTime(moveEvent, waveformCanvas);
+                    movedTime = Math.max(0, Math.min(audio.duration, movedTime));
+                    movedTime = snapToMarker(songId, movedTime, getCurrentMarkerTolerance());
+
+                    if (activeHandle === 'start') {
+                        if (movedTime <= progressBar.selectedEndTime) {
+                            progressBar.selectedStartTime = movedTime;
+                        } else {
+                            progressBar.selectedStartTime = progressBar.selectedEndTime;
+                            progressBar.selectedEndTime = movedTime;
+                            activeHandle = 'end';
+                        }
+                    } else if (movedTime >= progressBar.selectedStartTime) {
+                        progressBar.selectedEndTime = movedTime;
+                    } else {
+                        progressBar.selectedEndTime = progressBar.selectedStartTime;
+                        progressBar.selectedStartTime = movedTime;
+                        activeHandle = 'start';
+                    }
+
+                    updateProgressBarGradient(progressBar, audio);
+                    requestAnimationFrame(() => {
+                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+                    });
+                };
+
+                const finishHandleDrag = (upEvent, cancelled = false) => {
+                    document.removeEventListener('mousemove', onHandleMove);
+                    document.removeEventListener('mouseup', onHandleUp);
+                    window.removeEventListener('blur', onHandleCancel);
+                    document.body.style.cursor = previousBodyCursor;
+                    isDragging = false;
+                    cancelRegionHandleDrag = null;
+
+                    if (handleMoved) {
+                        songRegions[songId] = {
+                            start: progressBar.selectedStartTime,
+                            end: progressBar.selectedEndTime
+                        };
+                        updateRegionHandleCursor(upEvent?.clientX ?? dragStartX);
+                    } else if (!cancelled) {
+                        openSelectedRegionMenu(upEvent.pageX, upEvent.pageY);
+                    }
+                };
+                const onHandleUp = (upEvent) => finishHandleDrag(upEvent);
+                const onHandleCancel = () => finishHandleDrag(null, true);
+                cancelRegionHandleDrag = onHandleCancel;
+
+                document.addEventListener('mousemove', onHandleMove);
+                document.addEventListener('mouseup', onHandleUp);
+                window.addEventListener('blur', onHandleCancel);
+                return;
+            }
             rightClickStartPos = { x: event.clientX, y: event.clientY, time: selectedTime };
             hasMovedMouse = false;
     
@@ -1792,16 +1912,7 @@ function createTrackUI(songId, audio, playerContainer) {
             // marker is visibly highlighted it owns the right-click; the
             // selected region owns only the remaining space inside it.
             if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
-                audioEffects.createContextMenu(
-                    event.pageX, 
-                    event.pageY,
-                    (progressBar, audio) => {
-                        updateProgressBarGradient(progressBar, audio);
-                    },
-                    () => {
-                        updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
-                    }
-                );
+                openSelectedRegionMenu(event.pageX, event.pageY);
             } else if (isDoubleClick && !isOverMarker) {
                 selectionFadeEnabled = false;
                 selectionStopEnabled = false;
@@ -2000,6 +2111,7 @@ function createTrackUI(songId, audio, playerContainer) {
         // called once, when the track actually stops playing
         cleanup() {
             cancelEffectTail();
+            cancelRegionHandleDrag?.();
             const state = getSongState(songId);
             if (state) state.effectSettings = audioEffects.getEffectSettings();
             // remember the region and active effects so they come back if

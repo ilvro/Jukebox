@@ -33,7 +33,7 @@ const HOTKEY_EFFECT_CATEGORIES = [
     ['Speed & Pitch', [['speed075', 'Speed 0.75x'], ['speed090', 'Speed 0.90x'], ['speed110', 'Speed 1.10x'], ['speed125', 'Speed 1.25x'], ['pitchShift', 'Pitch Shift']]],
     ['Effects', [['echo', 'Echo'], ['reverb', 'Reverb'], ['tremolo', 'Tremolo']]],
     ['Filters', [['highpass', 'Highpass'], ['lowpass', 'Lowpass']]],
-    ['Presets', [['nightcore', 'Nightcore']]]
+    ['Presets', [['nightcore', 'Nightcore'], ['hell', 'Hell']]]
 ];
 const VALID_HOTKEY_EFFECTS = new Set(
     HOTKEY_EFFECT_CATEGORIES.flatMap(([, effects]) => effects.map(([key]) => key))

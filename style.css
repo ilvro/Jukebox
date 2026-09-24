@@ -1166,6 +1166,10 @@ button {
     padding: 0;
 }
 
+.progress-container.region-handle-hover .progress-bar {
+    cursor: ew-resize;
+}
+
 .progress-bar::-webkit-slider-runnable-track {
     background: transparent !important;
     height: 30px;
