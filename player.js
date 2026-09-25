@@ -1,5 +1,5 @@
 import { setupAudioEffects } from './mixing/index.js';
-import { setMasterVolume, createRecordingTap, releaseAudioContext } from './mixing/audio-context.js';
+import { setMasterVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
 import {
     pendingHotkeyEffectsView as pendingHotkeyEffects,
@@ -558,56 +558,165 @@ function waitForAudioMetadata(audio) {
     });
 }
 
-function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
-    const originalVolume = audio.volume;
+const activeSmoothSkips = new WeakSet();
 
-    const crossfadeAudio = new Audio(audio.src);
-    crossfadeAudio.currentTime = targetTime;
-    crossfadeAudio.volume = 0;
-    crossfadeAudio.load();
-
-    // mirror whichever effects are currently active onto the crossfade
-    // audio too, tied to the same selected region — it's the one actually
-    // audible during most of the transition, so it needs the same
-    // speed/pitch/filters/etc. as the main audio, evaluated dynamically at
-    // its own position rather than copied once as a static snapshot
-    const activeKeys = audioEffects ? audioEffects.getActiveEffectKeys() : [];
-    const tempEffects = setupAudioEffects(crossfadeAudio, progressBar);
-    activeKeys.forEach(key => tempEffects.activateEffect(key));
-
-    let animationFrameId;
-    const startTime = performance.now();
-
-    const animate = () => {
-        const elapsed = (performance.now() - startTime) / 1000;
-        const progress = Math.min(elapsed / SMOOTH_SKIP_DURATION, 1);
-
-        const fadeOutCurve = Math.cos(progress * Math.PI * 0.5);
-        const fadeInCurve = Math.sin(progress * Math.PI * 0.5);
-
-        audio.volume = originalVolume * fadeOutCurve;
-        crossfadeAudio.volume = originalVolume * fadeInCurve;
-
-        if (progress < 1) {
-            animationFrameId = requestAnimationFrame(animate);
-        } else {
-            audio.currentTime = targetTime + SMOOTH_SKIP_DURATION;
-            audio.volume = originalVolume;
-            crossfadeAudio.pause();
-            tempEffects.cleanup();
-        }
-    };
-
-    crossfadeAudio.play().then(() => {
-        animationFrameId = requestAnimationFrame(animate);
-    }).catch(error => {
-        console.error("Error playing crossfade audio:", error);
-        audio.volume = originalVolume;
-        tempEffects.cleanup();
-        if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-        }
+function waitForMediaState(audio, eventName, isReady, timeout = 1500) {
+    if (isReady()) return Promise.resolve(true);
+    return new Promise(resolve => {
+        let timeoutId;
+        const finish = (ready) => {
+            clearTimeout(timeoutId);
+            audio.removeEventListener(eventName, handleReady);
+            audio.removeEventListener('error', handleError);
+            resolve(ready);
+        };
+        const handleReady = () => finish(true);
+        const handleError = () => finish(false);
+        audio.addEventListener(eventName, handleReady, { once: true });
+        audio.addEventListener('error', handleError, { once: true });
+        timeoutId = setTimeout(() => finish(isReady()), timeout);
     });
+}
+
+async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
+    if (activeSmoothSkips.has(audio)) return;
+    if (audio.paused) {
+        audio.currentTime = targetTime;
+        return;
+    }
+
+    activeSmoothSkips.add(audio);
+    const crossfadeAudio = new Audio(audio.src);
+    crossfadeAudio.preload = 'auto';
+    crossfadeAudio.volume = audio.volume;
+    crossfadeAudio.playbackRate = audio.playbackRate;
+    crossfadeAudio.preservesPitch = audio.preservesPitch;
+    if (audio.crossOrigin) crossfadeAudio.crossOrigin = audio.crossOrigin;
+
+    let tempEffects = null;
+    let audioContext = null;
+    let mainAudioGainNode = null;
+    let crossfadeGainNode = null;
+    let mainGainBeforeSkip = 1;
+
+    try {
+        crossfadeAudio.load();
+        const metadataReady = await waitForMediaState(
+            crossfadeAudio,
+            'loadedmetadata',
+            () => crossfadeAudio.readyState >= 1
+        );
+        if (!metadataReady || !Number.isFinite(crossfadeAudio.duration)) {
+            throw new Error('Smooth Skip could not load the destination audio.');
+        }
+
+        const safeTarget = Math.max(0, Math.min(targetTime, crossfadeAudio.duration - 0.01));
+        const availableSeconds = (crossfadeAudio.duration - safeTarget) /
+            Math.max(0.01, crossfadeAudio.playbackRate);
+        if (availableSeconds < 0.12) {
+            audio.currentTime = safeTarget;
+            return;
+        }
+
+        crossfadeAudio.currentTime = safeTarget;
+        const seekReady = await waitForMediaState(
+            crossfadeAudio,
+            'seeked',
+            () => !crossfadeAudio.seeking
+        );
+        if (!seekReady) {
+            throw new Error('Smooth Skip could not prepare the destination position.');
+        }
+        await waitForMediaState(
+            crossfadeAudio,
+            'canplay',
+            () => crossfadeAudio.readyState >= 3
+        );
+
+        // Route the temporary element through the same Web Audio graph and
+        // mirror active effects. Crossfading source gains leaves audio.volume
+        // untouched, so the user's volume and slider never become transient.
+        const activeKeys = audioEffects ? audioEffects.getActiveEffectKeys() : [];
+        tempEffects = setupAudioEffects(crossfadeAudio, progressBar);
+        tempEffects.setEffectSettings(audioEffects?.getEffectSettings?.() || {});
+        activeKeys.forEach(key => tempEffects.activateEffect(key));
+
+        const mainContext = getAudioContext(audio);
+        const secondaryContext = getAudioContext(crossfadeAudio);
+        audioContext = mainContext.audioContext;
+        mainAudioGainNode = mainContext.sourceGainNode || mainContext.dryGainNode;
+        crossfadeGainNode = secondaryContext.sourceGainNode || secondaryContext.dryGainNode;
+        if (!audioContext || !mainAudioGainNode || !crossfadeGainNode) {
+            throw new Error('Smooth Skip audio graph is unavailable.');
+        }
+
+        const now = audioContext.currentTime;
+        mainGainBeforeSkip = mainAudioGainNode.gain.value;
+        crossfadeGainNode.gain.cancelScheduledValues(now);
+        crossfadeGainNode.gain.setValueAtTime(0, now);
+
+        await crossfadeAudio.play();
+
+        const duration = Math.min(
+            SMOOTH_SKIP_DURATION,
+            Math.max(0.12, availableSeconds - 0.05)
+        );
+        const curveSteps = 64;
+        const fadeOutCurve = new Float32Array(curveSteps);
+        const fadeInCurve = new Float32Array(curveSteps);
+        for (let index = 0; index < curveSteps; index++) {
+            const ratio = index / (curveSteps - 1);
+            fadeOutCurve[index] = mainGainBeforeSkip * Math.cos(ratio * Math.PI / 2);
+            fadeInCurve[index] = Math.sin(ratio * Math.PI / 2);
+        }
+
+        mainAudioGainNode.gain.cancelScheduledValues(now);
+        mainAudioGainNode.gain.setValueCurveAtTime(fadeOutCurve, now, duration);
+        crossfadeGainNode.gain.setValueCurveAtTime(fadeInCurve, now, duration);
+        await new Promise(resolve => setTimeout(resolve, duration * 1000));
+
+        // Handoff at the position that is actually audible. The old code used
+        // target + fixed duration, which drifted whenever loading or playback
+        // rate differed and exposed the edit.
+        const handoffTime = Math.min(audio.duration - 0.01, crossfadeAudio.currentTime);
+        audio.currentTime = Math.max(0, handoffTime);
+        await waitForMediaState(audio, 'seeked', () => !audio.seeking, 150);
+
+        const handoffDuration = 0.08;
+        const handoffNow = audioContext.currentTime;
+        const handoffInCurve = new Float32Array(curveSteps);
+        const handoffOutCurve = new Float32Array(curveSteps);
+        for (let index = 0; index < curveSteps; index++) {
+            const ratio = index / (curveSteps - 1);
+            handoffInCurve[index] = mainGainBeforeSkip * Math.sin(ratio * Math.PI / 2);
+            handoffOutCurve[index] = Math.cos(ratio * Math.PI / 2);
+        }
+        mainAudioGainNode.gain.cancelScheduledValues(handoffNow);
+        mainAudioGainNode.gain.setValueCurveAtTime(handoffInCurve, handoffNow, handoffDuration);
+        crossfadeGainNode.gain.cancelScheduledValues(handoffNow);
+        crossfadeGainNode.gain.setValueCurveAtTime(handoffOutCurve, handoffNow, handoffDuration);
+        await new Promise(resolve => setTimeout(resolve, handoffDuration * 1000 + 20));
+    } catch (error) {
+        console.error('Smooth Skip error:', error);
+        // If preparation fails, seeking is preferable to playing the wrong
+        // part of the file or leaving either audio path partially faded.
+        if (Number.isFinite(targetTime)) audio.currentTime = targetTime;
+    } finally {
+        if (audioContext && mainAudioGainNode) {
+            const now = audioContext.currentTime;
+            mainAudioGainNode.gain.cancelScheduledValues(now);
+            mainAudioGainNode.gain.setValueAtTime(mainGainBeforeSkip, now);
+        }
+        if (audioContext && crossfadeGainNode) {
+            const now = audioContext.currentTime;
+            crossfadeGainNode.gain.cancelScheduledValues(now);
+            crossfadeGainNode.gain.setValueAtTime(0, now);
+        }
+        crossfadeAudio.pause();
+        tempEffects?.cleanup();
+        releaseAudioContext(crossfadeAudio);
+        activeSmoothSkips.delete(audio);
+    }
 }
 
 function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, audioEffects) {
@@ -1271,7 +1380,7 @@ function createTrackUI(songId, audio, playerContainer) {
     volumeControl.min = 0;
     volumeControl.max = 1;
     volumeControl.step = 0.01;
-    volumeControl.value = audio.volume;
+    volumeControl.value = getSongState(songId)?.volume ?? audio.volume;
     volumeControl.className = 'volume-slider';
     trackDiv.appendChild(volumeControl);
     
@@ -2035,7 +2144,7 @@ function createTrackUI(songId, audio, playerContainer) {
         // deliberately does NOT touch listeners, effects, or the waveform
         refresh() {
             if (!audio.paused) cancelEffectTail();
-            volumeControl.value = audio.volume;
+            volumeControl.value = getSongState(songId)?.volume ?? audio.volume;
             updateVolumeSlider(volumeControl);
             progressBar.max = audio.duration || 100;
             titleSpan.textContent = getSongTitle();
@@ -2555,52 +2664,60 @@ function updateVolumeSlider(slider) {
 // fading in eases in (starts slow, speeds up near the end) and fading out eases out
 // (drops quickly at first, tapers off gently near silence) - this avoids the "sudden jump"
 // feeling you get with a plain linear ramp.
-const activeFadeTargets = new Map(); // audio -> { value: targetVolume }, kept live so a manual volume change mid-fade can redirect it
+const activeFadeTargets = new Map();
 
 function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
-    const startTime = performance.now();
-    const targetRef = { value: endVolume };
+    const targetRef = {
+        value: endVolume,
+        startVolume,
+        startedAt: performance.now(),
+        duration: Math.max(0, duration)
+    };
     activeFadeTargets.set(audio, targetRef);
 
     const step = () => {
-        // if another animateVolume call took over this audio, stop here
         if (activeFadeTargets.get(audio) !== targetRef) return;
 
-        const elapsed = performance.now() - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        const target = targetRef.value; // read live: may have been redirected
-        const isFadingIn = target > startVolume;
-
+        const elapsed = performance.now() - targetRef.startedAt;
+        const progress = targetRef.duration <= 0
+            ? 1
+            : Math.min(elapsed / targetRef.duration, 1);
+        const isFadingIn = targetRef.value > targetRef.startVolume;
         const eased = isFadingIn
             ? progress * progress
             : 1 - Math.pow(1 - progress, 2);
 
-        audio.volume = startVolume + (target - startVolume) * eased;
+        audio.volume = targetRef.startVolume +
+            (targetRef.value - targetRef.startVolume) * eased;
 
         if (progress < 1) {
             requestAnimationFrame(step);
         } else {
-            audio.volume = target;
+            audio.volume = targetRef.value;
             if (activeFadeTargets.get(audio) === targetRef) {
                 activeFadeTargets.delete(audio);
             }
-            if (onComplete) onComplete();
+            onComplete?.();
         }
     };
 
     requestAnimationFrame(step);
 }
 
-// called from the volume slider: if a fade is currently running on this
-// audio, redirect its target instead of letting the fade silently
-// overwrite the manual adjustment on the next animation frame
+// Redirect from the volume currently being heard and use only the time left
+// in the original fade. This prevents a late slider change from jumping back
+// onto the old 0 -> 100% curve on the next animation frame.
 function redirectFadeTarget(audio, newVolume) {
     const targetRef = activeFadeTargets.get(audio);
-    if (targetRef) {
-        targetRef.value = newVolume;
-        return true;
-    }
-    return false;
+    if (!targetRef) return false;
+
+    const now = performance.now();
+    const elapsed = now - targetRef.startedAt;
+    targetRef.startVolume = audio.volume;
+    targetRef.startedAt = now;
+    targetRef.duration = Math.max(0, targetRef.duration - elapsed);
+    targetRef.value = newVolume;
+    return true;
 }
 
 export function fadeOut(targetSongId) {
@@ -2723,7 +2840,7 @@ export function fadeTo(targetSongId) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 
                 targetAudio.muted = false;
-                animateVolume(targetAudio, 0, savedVolume, fadeDuration);
+                animateVolume(targetAudio, 0, targetState.volume ?? savedVolume, fadeDuration);
                 
             } catch (error) {
                 console.error("Error playing audio:", error);
@@ -2782,7 +2899,7 @@ export function fadeIn(targetSongId) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 
                 targetAudio.muted = false;
-                animateVolume(targetAudio, 0, savedVolume, fadeDuration);
+                animateVolume(targetAudio, 0, targetState.volume ?? savedVolume, fadeDuration);
                 
             } catch (error) {
                 console.error("Error playing audio:", error);
