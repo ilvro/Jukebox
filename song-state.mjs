@@ -15,6 +15,7 @@ function createDefaultState(songId) {
         markers: [],
         markerLabels: {},
         markerColors: {},
+        markerEvents: {},
         region: null,
         activeEffects: [],
         effectSettings: {},
@@ -161,6 +162,7 @@ function createFieldView(field, { deletedValue = undefined } = {}) {
 export const songMarkersView = createFieldView('markers', { deletedValue: () => [] });
 export const songMarkerLabelsView = createFieldView('markerLabels', { deletedValue: () => ({}) });
 export const songMarkerColorsView = createFieldView('markerColors', { deletedValue: () => ({}) });
+export const songMarkerEventsView = createFieldView('markerEvents', { deletedValue: () => ({}) });
 export const songRegionsView = createFieldView('region', { deletedValue: null });
 export const songActiveEffectsView = createFieldView('activeEffects', { deletedValue: () => [] });
 export const songSelectionFadeEffectsView = createFieldView('selectionFadeEnabled', { deletedValue: false });

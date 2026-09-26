@@ -559,6 +559,137 @@ button {
     border-color: #2bdba0;
 }
 
+.marker-event-panel {
+    box-sizing: border-box;
+    min-width: 210px;
+    padding: 9px 10px;
+    border: 1px solid rgba(43, 219, 160, 0.22);
+    border-radius: 6px;
+    background: rgba(12, 17, 16, 0.96);
+}
+
+.marker-event-field {
+    display: grid;
+    gap: 5px;
+    margin-bottom: 9px;
+    color: rgba(255, 255, 255, 0.72);
+    font: 12px Arial, sans-serif;
+}
+
+.marker-event-field[hidden] {
+    display: none;
+}
+
+.marker-event-dropdown {
+    width: 100%;
+}
+
+.marker-event-dropdown-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    outline: none;
+    background: rgba(0, 0, 0, 0.32);
+    color: #f2f5f4;
+    text-align: left;
+    cursor: default;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.marker-event-dropdown-button:hover,
+.marker-event-dropdown-button:focus-visible,
+.marker-event-dropdown.open .marker-event-dropdown-button {
+    border-color: rgba(43, 219, 160, 0.55);
+    background: rgba(0, 0, 0, 0.46);
+    color: #2bdba0;
+}
+
+.marker-event-dropdown-arrow {
+    color: rgba(255, 255, 255, 0.74);
+    font-size: 9px;
+    transition: transform 0.2s ease;
+}
+
+.marker-event-dropdown.open .marker-event-dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.marker-event-dropdown-options {
+    margin-top: 3px;
+    max-height: 170px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 5px;
+    background: rgba(8, 8, 8, 0.96);
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.marker-event-dropdown-options[hidden] {
+    display: none;
+}
+
+.marker-event-dropdown-option {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 10px;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 0;
+    outline: none;
+    background: transparent;
+    color: #f2f5f4;
+    text-align: left;
+    cursor: default;
+    transition: background-color 0.2s, border-left-color 0.2s, color 0.2s;
+}
+
+.marker-event-dropdown-option:hover,
+.marker-event-dropdown-option:focus-visible {
+    border-left-color: #2bdba0;
+    background: rgba(43, 219, 160, 0.1);
+}
+
+.marker-event-dropdown-option.selected {
+    color: #2bdba0;
+}
+
+.marker-event-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+}
+
+.marker-event-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.82);
+    font: 12px Arial, sans-serif;
+    cursor: pointer;
+}
+
+.marker-event-checkbox input {
+    margin: 0;
+    accent-color: #2bdba0;
+}
+
+.marker-event-warning {
+    margin-top: 8px;
+    color: #ffb36b;
+    font: 11px/1.35 Arial, sans-serif;
+}
+
+.marker-event-warning[hidden] {
+    display: none;
+}
 .audio-edit-indicator {
     position: fixed;
     left: 50%;

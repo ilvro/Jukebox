@@ -32,6 +32,7 @@ import {
     registerSongState,
     removeSongState,
     songActiveEffectsView as songActiveEffects,
+    songMarkerEventsView as songMarkerEvents,
     songMarkerColorsView as songMarkerColors,
     songMarkerLabelsView as songMarkerLabels,
     songMarkersView as songMarkers,
@@ -57,6 +58,10 @@ const waveformCache = new Map();
 const waveformGenerationQueue = new Map();
 const waveformGenerationControllers = new Map();
 const MAX_WAVEFORM_WIDTH = 500;
+const MARKER_EVENT_TYPES = new Set(['fadeOut', 'stop', 'jump', 'smoothJump']);
+const MARKER_JUMP_EVENT_TYPES = new Set(['jump', 'smoothJump']);
+const MARKER_EVENT_LABELS = { fadeOut: 'Fade Out', stop: 'Stop', jump: 'Skip To', smoothJump: 'Fade To' };
+
 const MAX_WAVEFORM_WIDTH_LONG = 150;
 const MAX_CONCURRENT_GENERATIONS = 1;
 const MAX_SAFE_WAVEFORM_DURATION = 20 * 60;
@@ -256,6 +261,14 @@ function removeMarker(songId, time) {
         const key = markerLabelKey(songMarkers[songId][index]);
         delete songMarkerLabels[songId]?.[key];
         delete songMarkerColors[songId]?.[key];
+        delete songMarkerEvents[songId]?.[key];
+        Object.entries(songMarkerEvents[songId] || {}).forEach(([eventKey, event]) => {
+            if (MARKER_JUMP_EVENT_TYPES.has(event?.type) &&
+                Math.abs(Number(event.targetTime) - time) <= MARKER_TIME_EPSILON) {
+                delete songMarkerEvents[songId][eventKey];
+            }
+        });
+
         songMarkers[songId].splice(index, 1);
         return true;
     }
@@ -267,11 +280,13 @@ function getMarkers(songId) {
         const key = markerLabelKey(time);
         const text = songMarkerLabels[songId]?.[key] || '';
         const color = songMarkerColors[songId]?.[key] || '';
-        if (!text && !color) return time;
+        const event = normalizeMarkerEvent(songMarkerEvents[songId]?.[key]);
+        if (!text && !color && !event) return time;
 
         const marker = { time };
         if (text) marker.text = text;
         if (color) marker.color = color;
+        if (event) marker.event = event;
         return marker;
     });
 }
@@ -279,6 +294,7 @@ function getMarkers(songId) {
 function setMarkers(songId, markers) {
     songMarkerLabels[songId] = {};
     songMarkerColors[songId] = {};
+    songMarkerEvents[songId] = {};
     songMarkers[songId] = (markers || []).map(marker => {
         if (typeof marker === 'number') return marker;
         const time = Number(marker.time);
@@ -286,12 +302,73 @@ function setMarkers(songId, markers) {
         if (isValidMarkerColor(marker.color)) {
             songMarkerColors[songId][markerLabelKey(time)] = marker.color.toLowerCase();
         }
+        const event = normalizeMarkerEvent(marker.event);
+        if (event) {
+            songMarkerEvents[songId][markerLabelKey(time)] = event;
+        }
         return time;
     }).filter(Number.isFinite).sort((a, b) => a - b);
 }
 
 function markerLabelKey(time) {
     return Number(time).toFixed(3);
+}
+function normalizeMarkerEvent(event) {
+    if (!event || !MARKER_EVENT_TYPES.has(event.type)) return null;
+    const normalized = {
+        type: event.type,
+        enabled: event.enabled !== false,
+        once: event.once !== false
+    };
+    if (MARKER_JUMP_EVENT_TYPES.has(event.type)) {
+        const targetTime = Number(event.targetTime);
+        if (!Number.isFinite(targetTime)) return null;
+        normalized.targetTime = targetTime;
+    }
+    return normalized;
+}
+
+function getMarkerEvent(songId, markerTime) {
+    return normalizeMarkerEvent(songMarkerEvents[songId]?.[markerLabelKey(markerTime)]);
+}
+
+function setMarkerEvent(songId, markerTime, event) {
+    songMarkerEvents[songId] ||= {};
+    const key = markerLabelKey(markerTime);
+    const normalized = normalizeMarkerEvent(event);
+    if (normalized) songMarkerEvents[songId][key] = normalized;
+    else delete songMarkerEvents[songId][key];
+}
+
+function findMarkerAtTime(songId, time) {
+    if (!Number.isFinite(Number(time))) return null;
+    return (songMarkers[songId] || []).find(marker =>
+        Math.abs(marker - Number(time)) <= MARKER_TIME_EPSILON
+    ) ?? null;
+}
+
+function wouldCreateMarkerEventCycle(songId, sourceTime, targetTime) {
+    const sourceKey = markerLabelKey(sourceTime);
+    let current = findMarkerAtTime(songId, targetTime);
+    const visited = new Set();
+
+    while (current !== null) {
+        const key = markerLabelKey(current);
+        if (key === sourceKey || visited.has(key)) return true;
+        visited.add(key);
+        const event = getMarkerEvent(songId, current);
+        if (!event?.enabled || !MARKER_JUMP_EVENT_TYPES.has(event.type)) return false;
+        current = findMarkerAtTime(songId, event.targetTime);
+    }
+    return false;
+}
+
+function getMarkerDisplayName(songId, markerTime) {
+    const label = songMarkerLabels[songId]?.[markerLabelKey(markerTime)];
+    const minutes = Math.floor(markerTime / 60);
+    const seconds = Math.floor(markerTime % 60);
+    const time = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    return label ? `${label} (${time})` : time;
 }
 
 function isValidMarkerColor(color) {
@@ -1118,6 +1195,202 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
     syncColorControls(initialColor);
     colorControl.append(colorButton, colorValue, resetColorButton);
     menu.append(colorControl, colorPicker);
+    const eventHeader = document.createElement('div');
+    eventHeader.textContent = 'Marker event';
+    eventHeader.className = 'marker-option-header';
+
+    const eventPanel = document.createElement('div');
+    eventPanel.className = 'marker-event-panel';
+    const savedMarkerEvent = getMarkerEvent(songId, markerTime);
+
+    const createMarkerEventDropdown = (choices, initialValue, ariaLabel) => {
+        const dropdown = document.createElement('div');
+        dropdown.className = 'marker-event-dropdown';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'marker-event-dropdown-button';
+        button.setAttribute('aria-label', ariaLabel);
+        button.setAttribute('aria-haspopup', 'listbox');
+        button.setAttribute('aria-expanded', 'false');
+
+        const valueText = document.createElement('span');
+        const arrow = document.createElement('span');
+        arrow.className = 'marker-event-dropdown-arrow';
+        arrow.textContent = '▼';
+        button.append(valueText, arrow);
+
+        const optionsMenu = document.createElement('div');
+        optionsMenu.className = 'marker-event-dropdown-options';
+        optionsMenu.setAttribute('role', 'listbox');
+        optionsMenu.hidden = true;
+
+        let currentValue = '';
+        const optionButtons = new Map();
+        const closeDropdown = () => {
+            dropdown.classList.remove('open');
+            optionsMenu.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+        };
+        const setValue = (value, emit = false) => {
+            const normalizedValue = String(value ?? '');
+            if (!optionButtons.has(normalizedValue)) return false;
+            currentValue = normalizedValue;
+            optionButtons.forEach((optionButton, optionValue) => {
+                const selected = optionValue === currentValue;
+                optionButton.classList.toggle('selected', selected);
+                optionButton.setAttribute('aria-selected', String(selected));
+            });
+            valueText.textContent = optionButtons.get(currentValue).textContent;
+            if (emit) dropdown.dispatchEvent(new Event('change'));
+            return true;
+        };
+
+        choices.forEach(([value, text]) => {
+            const normalizedValue = String(value);
+            const optionButton = document.createElement('button');
+            optionButton.type = 'button';
+            optionButton.className = 'marker-event-dropdown-option';
+            optionButton.textContent = text;
+            optionButton.setAttribute('role', 'option');
+            optionButton.addEventListener('click', event => {
+                event.stopPropagation();
+                setValue(normalizedValue, true);
+                closeDropdown();
+                button.focus();
+            });
+            optionButtons.set(normalizedValue, optionButton);
+            optionsMenu.appendChild(optionButton);
+        });
+
+        Object.defineProperty(dropdown, 'value', {
+            get: () => currentValue,
+            set: value => { setValue(value); }
+        });
+        dropdown.closeDropdown = closeDropdown;
+
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            const willOpen = optionsMenu.hidden;
+            eventPanel.querySelectorAll('.marker-event-dropdown.open').forEach(openDropdown => {
+                if (openDropdown !== dropdown) openDropdown.closeDropdown?.();
+            });
+            dropdown.classList.toggle('open', willOpen);
+            optionsMenu.hidden = !willOpen;
+            button.setAttribute('aria-expanded', String(willOpen));
+        });
+        button.addEventListener('keydown', event => {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                if (optionsMenu.hidden) button.click();
+                (optionButtons.get(currentValue) || optionButtons.values().next().value)?.focus();
+            }
+        });
+        optionsMenu.addEventListener('keydown', event => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeDropdown();
+                button.focus();
+            }
+        });
+
+        dropdown.append(button, optionsMenu);
+        setValue(initialValue) || setValue(choices[0]?.[0] ?? '');
+        return dropdown;
+    };
+
+    const eventTypeLabel = document.createElement('div');
+    eventTypeLabel.className = 'marker-event-field';
+    eventTypeLabel.append('When reached');
+    const eventTypeSelect = createMarkerEventDropdown([
+        ['', 'Do nothing'],
+        ['fadeOut', 'Fade Out'],
+        ['stop', 'Stop'],
+        ['jump', 'Skip To'],
+        ['smoothJump', 'Fade To']
+    ], savedMarkerEvent?.type || '', 'Marker event');
+    eventTypeLabel.appendChild(eventTypeSelect);
+
+    const targetLabel = document.createElement('div');
+    targetLabel.className = 'marker-event-field';
+    targetLabel.append('Destination');
+    const targetChoices = (songMarkers[songId] || [])
+        .filter(time => Math.abs(time - markerTime) > MARKER_TIME_EPSILON)
+        .map(time => [String(time), getMarkerDisplayName(songId, time)]);
+    const savedTarget = savedMarkerEvent && MARKER_JUMP_EVENT_TYPES.has(savedMarkerEvent.type)
+        ? String(findMarkerAtTime(songId, savedMarkerEvent.targetTime) ?? '')
+        : '';
+    const targetSelect = createMarkerEventDropdown(
+        targetChoices.length ? targetChoices : [['', 'No other markers']],
+        savedTarget,
+        'Destination marker'
+    );
+    targetLabel.appendChild(targetSelect);
+
+    const toggleRow = document.createElement('div');
+    toggleRow.className = 'marker-event-toggles';
+    const createEventCheckbox = (text, checked) => {
+        const label = document.createElement('label');
+        label.className = 'marker-event-checkbox';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = checked;
+        label.append(input, document.createTextNode(text));
+        return { label, input };
+    };
+    const enabledControl = createEventCheckbox('Enabled', savedMarkerEvent?.enabled !== false);
+    const onceControl = createEventCheckbox('Once per play', savedMarkerEvent?.once !== false);
+    toggleRow.append(enabledControl.label, onceControl.label);
+
+    const eventWarning = document.createElement('div');
+    eventWarning.className = 'marker-event-warning';
+    eventWarning.hidden = true;
+
+    let lastValidTarget = savedMarkerEvent?.targetTime;
+    const syncMarkerEventControls = () => {
+        const type = eventTypeSelect.value;
+        const requiresTarget = MARKER_JUMP_EVENT_TYPES.has(type);
+        targetLabel.hidden = !requiresTarget;
+        eventWarning.hidden = true;
+
+        if (!type) {
+            setMarkerEvent(songId, markerTime, null);
+        } else {
+            const nextEvent = {
+                type,
+                enabled: enabledControl.input.checked,
+                once: onceControl.input.checked
+            };
+            if (requiresTarget) {
+                const targetTime = Number(targetSelect.value);
+                if (targetSelect.value === '' || !Number.isFinite(targetTime)) {
+                    setMarkerEvent(songId, markerTime, null);
+                    eventWarning.textContent = 'Add another marker to use as the destination.';
+                    eventWarning.hidden = false;
+                    updateWaveformProgress(audio, progressBar.previousElementSibling, progressBar);
+                    return;
+                }
+                if (wouldCreateMarkerEventCycle(songId, markerTime, targetTime)) {
+                    eventWarning.textContent = 'This jump would create a marker cycle.';
+                    eventWarning.hidden = false;
+                    if (Number.isFinite(lastValidTarget)) targetSelect.value = String(lastValidTarget);
+                    return;
+                }
+                nextEvent.targetTime = targetTime;
+                lastValidTarget = targetTime;
+            }
+            setMarkerEvent(songId, markerTime, nextEvent);
+        }
+        updateWaveformProgress(audio, progressBar.previousElementSibling, progressBar);
+    };
+
+    eventTypeSelect.addEventListener('change', syncMarkerEventControls);
+    targetSelect.addEventListener('change', syncMarkerEventControls);
+    enabledControl.input.addEventListener('change', syncMarkerEventControls);
+    onceControl.input.addEventListener('change', syncMarkerEventControls);
+    eventPanel.append(eventTypeLabel, targetLabel, toggleRow, eventWarning);
+    menu.append(eventHeader, eventPanel);
+    syncMarkerEventControls();
     
     document.body.appendChild(menu);
 
@@ -1619,11 +1892,19 @@ function createTrackUI(songId, audio, playerContainer) {
             }
         }
 
-        const markerLabel = newHoveredMarker >= 0
-            ? songMarkerLabels[songId]?.[markerLabelKey(markers[newHoveredMarker])]
+        const hoveredMarkerTime = newHoveredMarker >= 0 ? markers[newHoveredMarker] : null;
+        const markerLabel = hoveredMarkerTime !== null
+            ? songMarkerLabels[songId]?.[markerLabelKey(hoveredMarkerTime)]
             : '';
-        timeTooltip.textContent = markerLabel || formatTime(hoveredTime);
-        timeTooltip.classList.toggle('marker-label-tooltip', Boolean(markerLabel));
+        const markerEvent = hoveredMarkerTime !== null
+            ? getMarkerEvent(songId, hoveredMarkerTime)
+            : null;
+        const eventLabel = markerEvent
+            ? `${MARKER_EVENT_LABELS[markerEvent.type]}${markerEvent.enabled ? '' : ' (disabled)'}`
+            : '';
+        const tooltipBase = markerLabel || formatTime(hoveredMarkerTime ?? hoveredTime);
+        timeTooltip.textContent = eventLabel ? `${tooltipBase} • ${eventLabel}` : tooltipBase;
+        timeTooltip.classList.toggle('marker-label-tooltip', Boolean(markerLabel || markerEvent));
         timeTooltip.style.display = 'block';
 
         const tooltipWidth = timeTooltip.offsetWidth;
@@ -1715,14 +1996,101 @@ function createTrackUI(songId, audio, playerContainer) {
         audio.addEventListener('loadedmetadata', handleWaveformMetadata, { once: true });
     }
     
+    // Marker events are detected by crossing a marker during normal playback.
+    // Explicit seeks reset the scan origin, so clicking or dragging the
+    // timeline never fires an automation accidentally.
+    const firedMarkerEvents = new Set();
+    const recentMarkerActions = [];
+    let previousMarkerScanTime = audio.currentTime;
+    let markerEventRunning = false;
+    let suppressMarkerScanUntil = 0;
+
+    const handleMarkerSeeking = () => {
+        previousMarkerScanTime = audio.currentTime;
+        suppressMarkerScanUntil = performance.now() + 180;
+    };
+
+    const runMarkerEvent = async (markerTime, markerEvent) => {
+        const markerKey = markerLabelKey(markerTime);
+        if (markerEvent.once && firedMarkerEvents.has(markerKey)) return;
+
+        const now = performance.now();
+        while (recentMarkerActions.length && recentMarkerActions[0] < now - 4000) {
+            recentMarkerActions.shift();
+        }
+        if (recentMarkerActions.length >= 8) {
+            console.warn('Marker automation paused: too many actions in a short interval.');
+            suppressMarkerScanUntil = now + 4000;
+            return;
+        }
+
+        recentMarkerActions.push(now);
+        if (markerEvent.once) firedMarkerEvents.add(markerKey);
+        markerEventRunning = true;
+        try {
+            if (markerEvent.type === 'fadeOut') {
+                fadeOut(songId);
+            } else if (markerEvent.type === 'stop') {
+                stopSong(songId);
+            } else if (markerEvent.type === 'jump') {
+                const target = findMarkerAtTime(songId, markerEvent.targetTime);
+                if (target !== null) audio.currentTime = target;
+            } else if (markerEvent.type === 'smoothJump') {
+                const target = findMarkerAtTime(songId, markerEvent.targetTime);
+                if (target !== null) {
+                    await smoothSkipToMarker(audio, target, progressBar, audioEffects);
+                }
+            }
+        } finally {
+            previousMarkerScanTime = audio.currentTime;
+            suppressMarkerScanUntil = performance.now() + 180;
+            markerEventRunning = false;
+        }
+    };
+
+    const scanMarkerEvents = () => {
+        const currentTime = audio.currentTime;
+        if (markerEventRunning || audio.paused || performance.now() < suppressMarkerScanUntil) {
+            previousMarkerScanTime = currentTime;
+            return;
+        }
+        if (currentTime < previousMarkerScanTime - MARKER_TIME_EPSILON) {
+            previousMarkerScanTime = currentTime;
+            return;
+        }
+
+        const crossedMarker = (songMarkers[songId] || []).find(markerTime =>
+            markerTime > previousMarkerScanTime + MARKER_TIME_EPSILON &&
+            markerTime <= currentTime + 0.03 &&
+            getMarkerEvent(songId, markerTime)?.enabled
+        );
+        previousMarkerScanTime = currentTime;
+        if (crossedMarker === undefined) return;
+
+        const markerEvent = getMarkerEvent(songId, crossedMarker);
+        if (!markerEvent || (markerEvent.once && firedMarkerEvents.has(markerLabelKey(crossedMarker)))) return;
+        void runMarkerEvent(crossedMarker, markerEvent);
+    };
+
+    const handleMarkerPlaybackStart = () => {
+        previousMarkerScanTime = audio.currentTime;
+        if (audio.currentTime <= 0.05) {
+            firedMarkerEvents.clear();
+            recentMarkerActions.length = 0;
+        }
+    };
+
     // stored so we can remove it in cleanup() instead of stacking a new one every render
     const handleTimeUpdate = () => {
         progressBar.value = audio.currentTime;
         updateTimeDisplay();
+        scanMarkerEvents();
         requestAnimationFrame(() => {
             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
         });
     };
+    audio.addEventListener('seeking', handleMarkerSeeking);
+    audio.addEventListener('play', handleMarkerPlaybackStart);
     audio.addEventListener('timeupdate', handleTimeUpdate);
 
     progressBar.addEventListener('contextmenu', (event) => {
@@ -1921,6 +2289,7 @@ function createTrackUI(songId, audio, playerContainer) {
             const adjustedMarkers = [];
             const adjustedLabels = {};
             const adjustedColors = {};
+            const adjustedEvents = {};
             (songMarkers[songId] || []).forEach(markerTime => {
                 if (markerTime >= edit.start && markerTime < edit.end) return;
                 const newTime = markerTime >= edit.end
@@ -1931,10 +2300,25 @@ function createTrackUI(songId, audio, playerContainer) {
                 if (label) adjustedLabels[markerLabelKey(newTime)] = label;
                 const color = songMarkerColors[songId]?.[markerLabelKey(markerTime)];
                 if (color) adjustedColors[markerLabelKey(newTime)] = color;
+
+                const markerEvent = getMarkerEvent(songId, markerTime);
+                if (markerEvent) {
+                    const adjustedEvent = { ...markerEvent };
+                    if (MARKER_JUMP_EVENT_TYPES.has(adjustedEvent.type)) {
+                        if (adjustedEvent.targetTime >= edit.start && adjustedEvent.targetTime < edit.end) {
+                            return;
+                        }
+                        if (adjustedEvent.targetTime >= edit.end) {
+                            adjustedEvent.targetTime -= edit.removedDuration;
+                        }
+                    }
+                    adjustedEvents[markerLabelKey(newTime)] = adjustedEvent;
+                }
             });
             songMarkers[songId] = adjustedMarkers;
             songMarkerLabels[songId] = adjustedLabels;
             songMarkerColors[songId] = adjustedColors;
+            songMarkerEvents[songId] = adjustedEvents;
 
             cancelWaveformGeneration(songId);
             waveformCache.delete(songId);
@@ -2638,6 +3022,8 @@ function createTrackUI(songId, audio, playerContainer) {
             }
 
             audio.removeEventListener('timeupdate', handleTimeUpdate);
+            audio.removeEventListener('seeking', handleMarkerSeeking);
+            audio.removeEventListener('play', handleMarkerPlaybackStart);
             audio.removeEventListener('play', startRegionEffectMonitor);
             audio.removeEventListener('timeupdate', syncRegionAudioEffects);
             audio.removeEventListener('seeking', syncRegionAudioEffects);
@@ -3061,10 +3447,26 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         songMarkers[songId].forEach((markerTime, index) => {
             const markerX = (markerTime / audio.duration) * width;
             const markerColor = songMarkerColors[songId]?.[markerLabelKey(markerTime)] || DEFAULT_MARKER_COLOR;
-            ctx.fillStyle = index === hoveredMarker
+            const renderedMarkerColor = index === hoveredMarker
                 ? lightenMarkerColor(markerColor)
                 : markerColor;
+            ctx.fillStyle = renderedMarkerColor;
             ctx.fillRect(markerX - 1.5, 0, 3, height);
+            const markerEvent = getMarkerEvent(songId, markerTime);
+            if (markerEvent) {
+                const indicatorColor = markerEvent.enabled ? '#f4f7f6' : 'rgba(244, 247, 246, 0.45)';
+                ctx.fillStyle = indicatorColor;
+                ctx.beginPath();
+                ctx.moveTo(markerX, 1);
+                ctx.lineTo(markerX + 4, 5);
+                ctx.lineTo(markerX, 9);
+                ctx.lineTo(markerX - 4, 5);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
 
         });
     }
