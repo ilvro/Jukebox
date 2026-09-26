@@ -34,6 +34,179 @@ function formatFrequency(frequency) {
         ? `${(frequency / 1000).toFixed(frequency >= 10000 ? 0 : 1)} kHz`
         : `${Math.round(frequency)} Hz`;
 }
+function isValidHexColor(color) {
+    return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
+}
+
+function hexToHsl(color) {
+    const value = Number.parseInt(color.slice(1), 16);
+    const r = (value >> 16) / 255;
+    const g = ((value >> 8) & 255) / 255;
+    const b = (value & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const lightness = (max + min) / 2;
+    const delta = max - min;
+    let hue = 0;
+    let saturation = 0;
+
+    if (delta !== 0) {
+        saturation = delta / (1 - Math.abs(2 * lightness - 1));
+        if (max === r) hue = 60 * (((g - b) / delta) % 6);
+        else if (max === g) hue = 60 * ((b - r) / delta + 2);
+        else hue = 60 * ((r - g) / delta + 4);
+    }
+
+    return {
+        h: Math.round((hue + 360) % 360),
+        s: Math.round(saturation * 100),
+        l: Math.round(lightness * 100)
+    };
+}
+
+function hslToHex(hue, saturation, lightness) {
+    const h = ((Number(hue) % 360) + 360) % 360;
+    const s = Number(saturation) / 100;
+    const l = Number(lightness) / 100;
+    const chroma = (1 - Math.abs(2 * l - 1)) * s;
+    const section = h / 60;
+    const secondary = chroma * (1 - Math.abs((section % 2) - 1));
+    let [r, g, b] = section < 1 ? [chroma, secondary, 0]
+        : section < 2 ? [secondary, chroma, 0]
+        : section < 3 ? [0, chroma, secondary]
+        : section < 4 ? [0, secondary, chroma]
+        : section < 5 ? [secondary, 0, chroma]
+        : [chroma, 0, secondary];
+    const offset = l - chroma / 2;
+    return `#${[r, g, b]
+        .map(channel => Math.round((channel + offset) * 255).toString(16).padStart(2, '0'))
+        .join('')}`;
+}
+
+function createRegionColorControls(initialColor, defaultColor, onChange, repositionMenu) {
+    const normalizedDefault = isValidHexColor(defaultColor) ? defaultColor.toLowerCase() : '#4a9eff';
+    let currentColor = isValidHexColor(initialColor) ? initialColor.toLowerCase() : normalizedDefault;
+
+    const control = document.createElement('div');
+    control.className = 'marker-color-control region-color-control';
+
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'marker-color-swatch';
+    swatch.title = 'Choose region color';
+    swatch.setAttribute('aria-label', 'Choose region color');
+    swatch.setAttribute('aria-expanded', 'false');
+
+    const valueLabel = document.createElement('span');
+    valueLabel.className = 'marker-color-value';
+
+    const resetButton = document.createElement('button');
+    resetButton.type = 'button';
+    resetButton.className = 'marker-color-reset';
+    resetButton.textContent = 'Default';
+
+    const picker = document.createElement('div');
+    picker.className = 'marker-color-picker region-color-picker';
+    picker.hidden = true;
+
+    const createSlider = (labelText, min, max) => {
+        const row = document.createElement('label');
+        row.className = 'marker-color-slider-row';
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.className = 'marker-color-slider';
+        slider.min = String(min);
+        slider.max = String(max);
+        slider.step = '1';
+        row.append(label, slider);
+        picker.appendChild(row);
+        return slider;
+    };
+
+    const hueSlider = createSlider('Hue', 0, 359);
+    hueSlider.classList.add('marker-color-hue');
+    const saturationSlider = createSlider('Saturation', 0, 100);
+    const lightnessSlider = createSlider('Lightness', 0, 100);
+
+    const hexRow = document.createElement('label');
+    hexRow.className = 'marker-color-hex-row';
+    const hexLabel = document.createElement('span');
+    hexLabel.textContent = 'Hex';
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.className = 'marker-color-hex';
+    hexInput.maxLength = 7;
+    hexInput.spellcheck = false;
+    hexRow.append(hexLabel, hexInput);
+    picker.appendChild(hexRow);
+
+    const updateSliderBackgrounds = () => {
+        const h = hueSlider.value;
+        const s = saturationSlider.value;
+        const l = lightnessSlider.value;
+        saturationSlider.style.background =
+            `linear-gradient(to right, hsl(${h} 0% ${l}%), hsl(${h} 100% ${l}%))`;
+        lightnessSlider.style.background =
+            `linear-gradient(to right, #000, hsl(${h} ${s}% 50%), #fff)`;
+    };
+
+    const syncControls = color => {
+        const hsl = hexToHsl(color);
+        hueSlider.value = String(hsl.h);
+        saturationSlider.value = String(hsl.s);
+        lightnessSlider.value = String(hsl.l);
+        hexInput.value = color.toUpperCase();
+        updateSliderBackgrounds();
+    };
+
+    const applyColor = (color, sync = true) => {
+        if (!isValidHexColor(color)) return;
+        currentColor = color.toLowerCase();
+        swatch.style.backgroundColor = currentColor;
+        valueLabel.textContent = currentColor.toUpperCase();
+        if (sync) syncControls(currentColor);
+        else hexInput.value = currentColor.toUpperCase();
+        onChange(currentColor);
+    };
+
+    swatch.addEventListener('click', event => {
+        event.stopPropagation();
+        picker.hidden = !picker.hidden;
+        swatch.setAttribute('aria-expanded', String(!picker.hidden));
+        requestAnimationFrame(repositionMenu);
+    });
+    [hueSlider, saturationSlider, lightnessSlider].forEach(slider => {
+        slider.addEventListener('input', () => {
+            updateSliderBackgrounds();
+            applyColor(hslToHex(hueSlider.value, saturationSlider.value, lightnessSlider.value), false);
+        });
+    });
+    hexInput.addEventListener('input', () => {
+        const value = hexInput.value.startsWith('#') ? hexInput.value : `#${hexInput.value}`;
+        if (isValidHexColor(value)) applyColor(value);
+    });
+    hexInput.addEventListener('blur', () => {
+        if (!isValidHexColor(hexInput.value)) hexInput.value = currentColor.toUpperCase();
+    });
+    hexInput.addEventListener('keydown', event => event.stopPropagation());
+    resetButton.addEventListener('click', event => {
+        event.stopPropagation();
+        applyColor(normalizedDefault);
+    });
+
+    [control, picker].forEach(element => {
+        element.addEventListener('click', event => event.stopPropagation());
+        element.addEventListener('pointerdown', event => event.stopPropagation());
+    });
+    syncControls(currentColor);
+    swatch.style.backgroundColor = currentColor;
+    valueLabel.textContent = currentColor.toUpperCase();
+    control.append(swatch, valueLabel, resetButton);
+    return { control, picker };
+}
+
 
 function createFilterControls(effect, key, repositionMenu, onChange) {
     const config = FILTER_CONTROL_CONFIG[key];
@@ -330,6 +503,19 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
     }
 
     let repositionMenu = () => {};
+    if (typeof actions.setRegionColor === 'function') {
+        const colorHeader = document.createElement('div');
+        colorHeader.textContent = 'Region color';
+        colorHeader.className = 'marker-option-header';
+        const { control, picker } = createRegionColorControls(
+            actions.getRegionColor?.(),
+            actions.defaultRegionColor,
+            color => actions.setRegionColor(color),
+            repositionMenu
+        );
+        menu.append(colorHeader, control, picker);
+    }
+
 
     Object.entries(categories).forEach(([categoryName, effectKeys]) => {
         const categoryHeader = document.createElement('div');

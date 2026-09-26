@@ -2,6 +2,7 @@ import { setupAudioEffects } from './mixing/index.js';
 import { setMasterVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
 import {
+    DEFAULT_REGION_COLOR,
     addSelectedRegion,
     clearSelectedRegions,
     findSelectedRegionAtTime,
@@ -19,7 +20,8 @@ import {
     setRegionEffectKeys,
     setRegionEffectSettings,
     toggleRegionEffect,
-    updateSelectedRegion
+    updateSelectedRegion,
+    setRegionColor
 } from './mixing/selection-regions.js';
 import {
     pendingHotkeyEffectsView as pendingHotkeyEffects,
@@ -303,6 +305,16 @@ function lightenMarkerColor(color, amount = 0.35) {
         .map(channel => Math.round(channel + (255 - channel) * amount));
     return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
 }
+function darkenRegionColor(color, amount = 0.25) {
+    const normalized = typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)
+        ? color
+        : DEFAULT_REGION_COLOR;
+    const value = Number.parseInt(normalized.slice(1), 16);
+    const channels = [value >> 16, (value >> 8) & 255, value & 255]
+        .map(channel => Math.round(channel * (1 - amount)));
+    return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
 
 function hexToHsl(color) {
     const value = Number.parseInt(color.slice(1), 16);
@@ -2004,6 +2016,19 @@ function createTrackUI(songId, audio, playerContainer) {
             persistRegionConfiguration();
             syncRegionAudioEffects(true);
         },
+        getRegionColor: () => getActiveSelectedRegion(progressBar)?.color || DEFAULT_REGION_COLOR,
+        setRegionColor: color => {
+            const region = getActiveSelectedRegion(progressBar);
+            if (!region) return DEFAULT_REGION_COLOR;
+            const updatedColor = setRegionColor(progressBar, region, color);
+            persistRegionConfiguration();
+            updateProgressBarGradient(progressBar, audio);
+            requestAnimationFrame(() => {
+                updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+            });
+            return updatedColor;
+        },
+        defaultRegionColor: DEFAULT_REGION_COLOR,
         deleteSelectedRegion,
         removeSelectedRegion: removeCurrentSelectedRegion
     });
@@ -2541,7 +2566,10 @@ function updateProgressBarGradient(progressBar, audio) {
     regions.forEach(region => {
         const startPercent = (region.start / audio.duration * 100).toFixed(4);
         const endPercent = (region.end / audio.duration * 100).toFixed(4);
-        const color = region.id === progressBar.activeRegionId ? '#2bdbb0' : '#247f95';
+        const baseColor = region.color || DEFAULT_REGION_COLOR;
+        const color = region.id === progressBar.activeRegionId
+            ? lightenMarkerColor(baseColor, 0.2)
+            : baseColor;
         stops.push(
             `#333 ${startPercent}%`,
             `${color} ${startPercent}%`,
@@ -2882,13 +2910,17 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
                 mainColor = '#2bdbb0';
                 peakColor = '#1a9977';
             } else {
-                const selectedRegion = selectedRegionPixels.find(region =>
+                const matchingRegions = selectedRegionPixels.filter(region =>
                     x >= region.startPixel && x <= region.endPixel
                 );
+                const selectedRegion = matchingRegions.find(region =>
+                    region.id === progressBar.activeRegionId
+                ) || matchingRegions.at(-1);
                 if (selectedRegion) {
                     const isActive = selectedRegion.id === progressBar.activeRegionId;
-                    mainColor = isActive ? '#4a9eff' : '#3676a8';
-                    peakColor = isActive ? '#3a7ecc' : '#2b5f88';
+                    const baseColor = selectedRegion.color || DEFAULT_REGION_COLOR;
+                    mainColor = isActive ? lightenMarkerColor(baseColor, 0.18) : baseColor;
+                    peakColor = darkenRegionColor(mainColor, 0.25);
                 } else {
                     mainColor = '#333';
                     peakColor = '#444';
@@ -2912,7 +2944,8 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
 
     selectedRegionPixels.forEach(region => {
         const isActive = region.id === progressBar.activeRegionId;
-        ctx.fillStyle = isActive ? '#72b8ff' : '#3676a8';
+        const baseColor = region.color || DEFAULT_REGION_COLOR;
+        ctx.fillStyle = isActive ? lightenMarkerColor(baseColor, 0.3) : baseColor;
         const lineWidth = isActive ? 3 : 2;
         ctx.fillRect(region.startPixel - lineWidth / 2, 0, lineWidth, height);
         ctx.fillRect(region.endPixel - lineWidth / 2, 0, lineWidth, height);

@@ -1,3 +1,5 @@
+export const DEFAULT_REGION_COLOR = '#4a9eff';
+
 let nextRegionId = 1;
 
 function validRegion(region) {
@@ -17,12 +19,19 @@ function cloneEffectSettings(settings) {
     ]));
 }
 
+function normalizeRegionColor(color) {
+    return typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)
+        ? color.toLowerCase()
+        : DEFAULT_REGION_COLOR;
+}
+
 function createRegion(region) {
     return {
         id: region.id || `region-${Date.now().toString(36)}-${nextRegionId++}`,
         start: region.start,
         end: region.end,
         active: Boolean(region.active),
+        color: normalizeRegionColor(region.color),
         effects: normalizeEffectKeys(region.effects),
         effectSettings: cloneEffectSettings(region.effectSettings),
         playAndFadeOut: Boolean(region.playAndFadeOut),
@@ -196,6 +205,14 @@ export function setRegionEffectSettings(progressBar, regionOrId, effectKey, sett
     return region.effectSettings[effectKey];
 }
 
+export function setRegionColor(progressBar, regionOrId, color) {
+    const id = typeof regionOrId === 'string' ? regionOrId : regionOrId?.id;
+    const region = getSelectedRegions(progressBar).find(candidate => candidate.id === id);
+    if (!region) return null;
+    region.color = normalizeRegionColor(color);
+    return region.color;
+}
+
 export function getAllRegionEffectKeys(progressBar) {
     return [...new Set(getSelectedRegions(progressBar).flatMap(region => region.effects))];
 }
@@ -205,6 +222,7 @@ export function serializeSelectedRegions(progressBar) {
         id,
         start,
         end,
+        color,
         effects,
         effectSettings,
         playAndFadeOut,
@@ -214,6 +232,7 @@ export function serializeSelectedRegions(progressBar) {
         start,
         end,
         active: id === progressBar.activeRegionId,
+        color: normalizeRegionColor(color),
         effects: [...effects],
         effectSettings: cloneEffectSettings(effectSettings),
         playAndFadeOut,
