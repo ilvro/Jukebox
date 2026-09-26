@@ -2,6 +2,26 @@ import { setupAudioEffects } from './mixing/index.js';
 import { setMasterVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
 import {
+    addSelectedRegion,
+    clearSelectedRegions,
+    findSelectedRegionAtTime,
+    getActiveSelectedRegion,
+    getAllRegionEffectKeys,
+    getRegionEffectKeys,
+    getRegionEffectSettings,
+    getRegionsAtTime,
+    getSelectedRegions,
+    initializeSelectedRegions,
+    normalizeSelectedRegions,
+    removeSelectedRegion,
+    serializeSelectedRegions,
+    setActiveSelectedRegion,
+    setRegionEffectKeys,
+    setRegionEffectSettings,
+    toggleRegionEffect,
+    updateSelectedRegion
+} from './mixing/selection-regions.js';
+import {
     pendingHotkeyEffectsView as pendingHotkeyEffects,
     getAllSongStates,
     getPlayingSongStates,
@@ -1121,12 +1141,6 @@ playerContainer.addEventListener('mouseout', () => {
     }
 });
 
-function isPointInSelectedRegion(time, progressBar) {
-    return progressBar.selectedStartTime !== undefined && 
-           progressBar.selectedEndTime !== undefined &&
-           time >= progressBar.selectedStartTime && 
-           time <= progressBar.selectedEndTime;
-}
 
 playerContainer.addEventListener('contextmenu', (event) => {
     event.preventDefault();
@@ -1365,12 +1379,32 @@ function createTrackUI(songId, audio, playerContainer) {
         setTimelineZoom(event.deltaY < 0 ? timelineZoom * 1.5 : timelineZoom / 1.5, focusTime);
     }, { passive: false });
 
-    // restore a previously selected region, otherwise a paused/resumed song
-    // silently loses its effect region every time it starts playing again
-    const savedRegion = songRegions[songId];
-    if (savedRegion) {
-        progressBar.selectedStartTime = savedRegion.start;
-        progressBar.selectedEndTime = savedRegion.end;
+    // Older presets stored one { start, end } object. Initialization accepts
+    // that shape and transparently migrates it to the multi-region list.
+    const savedRegions = initializeSelectedRegions(progressBar, songRegions[songId]);
+    // Migrate the previous song-wide effect model only when the saved
+    // regions do not already carry their own configuration.
+    const legacyEffectKeys = Array.isArray(songActiveEffects[songId])
+        ? songActiveEffects[songId]
+        : [];
+    const legacyEffectSettings = getSongState(songId)?.effectSettings || {};
+    if (savedRegions.length > 0 && savedRegions.every(region => region.effects.length === 0) &&
+        legacyEffectKeys.length > 0) {
+        savedRegions.forEach(region => {
+            region.effects = [...legacyEffectKeys];
+            region.effectSettings = structuredClone(legacyEffectSettings);
+        });
+    }
+    if (savedRegions.length > 0 &&
+        !savedRegions.some(region => region.playAndFadeOut || region.playAndStop)) {
+        const legacyFade = Boolean(songSelectionFadeEffects[songId]);
+        const legacyStop = Boolean(songSelectionStopEffects[songId]) && !legacyFade;
+        if (legacyFade || legacyStop) {
+            savedRegions.forEach(region => {
+                region.playAndFadeOut = legacyFade;
+                region.playAndStop = legacyStop;
+            });
+        }
     }
 
     trackDiv.appendChild(progressContainer);
@@ -1421,21 +1455,24 @@ function createTrackUI(songId, audio, playerContainer) {
     let hoveredRegionHandle = null;
     const getCurrentMarkerTolerance = () => getMarkerTolerance(audio.duration, waveformCanvas);
     const getRegionHandleAtClientX = (clientX) => {
-        const start = progressBar.selectedStartTime;
-        const end = progressBar.selectedEndTime;
-        if (start === undefined || end === undefined || !Number.isFinite(audio.duration) || audio.duration <= 0) {
-            return null;
-        }
-
+        if (!Number.isFinite(audio.duration) || audio.duration <= 0) return null;
         const rect = waveformCanvas.getBoundingClientRect();
         if (rect.width <= 0) return null;
-        const startX = rect.left + (start / audio.duration) * rect.width;
-        const endX = rect.left + (end / audio.duration) * rect.width;
-        const startDistance = Math.abs(clientX - startX);
-        const endDistance = Math.abs(clientX - endX);
-        const closestDistance = Math.min(startDistance, endDistance);
-        if (closestDistance > REGION_HANDLE_HIT_RADIUS_PX) return null;
-        return startDistance <= endDistance ? 'start' : 'end';
+        let closest = null;
+        let closestDistance = REGION_HANDLE_HIT_RADIUS_PX;
+        getSelectedRegions(progressBar).forEach(region => {
+            ['start', 'end'].forEach(edge => {
+                const edgeX = rect.left + (region[edge] / audio.duration) * rect.width;
+                const distance = Math.abs(clientX - edgeX);
+                if (distance < closestDistance ||
+                    (!closest && distance <= closestDistance) ||
+                    (distance === closestDistance && region.id === progressBar.activeRegionId)) {
+                    closest = { region, edge };
+                    closestDistance = distance;
+                }
+            });
+        });
+        return closest;
     };
 
     const updateRegionHandleCursor = (clientX) => {
@@ -1579,10 +1616,15 @@ function createTrackUI(songId, audio, playerContainer) {
     // Optional selection effect. It never seeks or starts playback. The fade
     // only begins when the playhead enters the final Settings-defined fade
     // window of the region (6.5 seconds by default).
-    let selectionFadeEnabled = Boolean(songSelectionFadeEffects[songId]);
-    let selectionStopEnabled = Boolean(songSelectionStopEffects[songId]);
+    let selectionFadeEnabled = savedRegions.some(region => region.playAndFadeOut);
+    let selectionStopEnabled = savedRegions.some(region => region.playAndStop);
+    const refreshSelectionActionFlags = () => {
+        selectionFadeEnabled = getSelectedRegions(progressBar).some(region => region.playAndFadeOut);
+        selectionStopEnabled = getSelectedRegions(progressBar).some(region => region.playAndStop);
+    };
     let selectionStopArmed = false;
     let selectionFadeState = null;
+    let selectionStopRegion = null;
     let selectionFadeFrameId = null;
 
     const restoreSelectionFadeVolume = () => {
@@ -1596,42 +1638,26 @@ function createTrackUI(songId, audio, playerContainer) {
         selectionFadeFrameId = null;
         if ((!selectionFadeEnabled && !selectionStopEnabled) || audio.paused) return;
 
-        const start = progressBar.selectedStartTime;
-        const end = progressBar.selectedEndTime;
-        if (start === undefined || end === undefined || end <= start) {
+        if (getSelectedRegions(progressBar).length === 0) {
             restoreSelectionFadeVolume();
             selectionStopArmed = false;
+            selectionStopRegion = null;
             return;
         }
 
         const currentTime = audio.currentTime;
-        const configuredFadeDuration = Math.max(0, getFadeDuration());
-        const fadeStart = Math.max(start, end - configuredFadeDuration);
-        if (selectionFadeState &&
-            (selectionFadeState.regionStart !== start || selectionFadeState.regionEnd !== end)) {
-            restoreSelectionFadeVolume();
-            selectionStopArmed = false;
-        }
-
-        if (selectionStopEnabled && currentTime >= start && currentTime < end) {
-            selectionStopArmed = true;
-        }
-
-        const reachedSelectionEnd = currentTime >= end &&
-            (selectionFadeState || (selectionStopEnabled && selectionStopArmed));
-        if (reachedSelectionEnd) {
+        const trackedRegion = selectionFadeState || selectionStopRegion;
+        if (trackedRegion && currentTime >= trackedRegion.regionEnd) {
             const restoredVolume = selectionFadeState?.startVolume ?? audio.volume;
+            const end = trackedRegion.regionEnd;
             selectionFadeState = null;
             selectionStopArmed = false;
+            selectionStopRegion = null;
             const state = getSongState(songId);
             if (state) state.status = 'stopped';
             songElement?.classList.remove('playing');
             audio.pause();
 
-            // Do not leave the saved playhead exactly on the effect boundary.
-            // Some media formats seek a fraction backwards to the nearest
-            // frame, which would immediately re-enter the fade and stop again
-            // on the next play. At the actual end of the file, restart at 0.
             const duration = audio.duration;
             const resumeTime = Number.isFinite(duration) && end >= duration - 0.1
                 ? 0
@@ -1643,25 +1669,60 @@ function createTrackUI(songId, audio, playerContainer) {
             return;
         }
 
-        if (currentTime < start) selectionStopArmed = false;
+        if (trackedRegion && currentTime < trackedRegion.regionStart) {
+            restoreSelectionFadeVolume();
+            selectionStopArmed = false;
+            selectionStopRegion = null;
+        }
 
-        if (!selectionFadeEnabled || currentTime < fadeStart || currentTime >= end) {
+        const chooseActionRegion = property => {
+            const matches = getRegionsAtTime(progressBar, currentTime)
+                .filter(region => region[property]);
+            return matches.find(region => region.id === progressBar.activeRegionId) ||
+                matches.sort((left, right) => (left.end - left.start) - (right.end - right.start))[0] ||
+                null;
+        };
+        const currentStopRegion = chooseActionRegion('playAndStop');
+        if (currentStopRegion && currentTime < currentStopRegion.end) {
+            selectionStopArmed = true;
+            selectionStopRegion = {
+                regionId: currentStopRegion.id,
+                regionStart: currentStopRegion.start,
+                regionEnd: currentStopRegion.end
+            };
+        }
+
+        const currentFadeRegion = chooseActionRegion('playAndFadeOut');
+        if (!currentFadeRegion) {
             restoreSelectionFadeVolume();
         } else {
-            if (!selectionFadeState) {
-                selectionFadeState = {
-                    startTime: currentTime,
-                    startVolume: audio.volume,
-                    regionStart: start,
-                    regionEnd: end
-                };
+            const fadeStart = Math.max(
+                currentFadeRegion.start,
+                currentFadeRegion.end - Math.max(0, getFadeDuration())
+            );
+            if (selectionFadeState?.regionId !== currentFadeRegion.id) {
+                restoreSelectionFadeVolume();
             }
 
-            const remainingDuration = end - selectionFadeState.startTime;
-            const progress = remainingDuration > 0
-                ? Math.min(1, Math.max(0, (currentTime - selectionFadeState.startTime) / remainingDuration))
-                : 1;
-            audio.volume = selectionFadeState.startVolume * Math.pow(1 - progress, 2);
+            if (currentTime >= fadeStart && currentTime < currentFadeRegion.end) {
+                if (!selectionFadeState) {
+                    selectionFadeState = {
+                        startTime: currentTime,
+                        startVolume: audio.volume,
+                        regionId: currentFadeRegion.id,
+                        regionStart: currentFadeRegion.start,
+                        regionEnd: currentFadeRegion.end
+                    };
+                }
+
+                const remainingDuration = currentFadeRegion.end - selectionFadeState.startTime;
+                const progress = remainingDuration > 0
+                    ? Math.min(1, Math.max(0, (currentTime - selectionFadeState.startTime) / remainingDuration))
+                    : 1;
+                audio.volume = selectionFadeState.startVolume * Math.pow(1 - progress, 2);
+            } else {
+                restoreSelectionFadeVolume();
+            }
         }
 
         selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
@@ -1683,6 +1744,8 @@ function createTrackUI(songId, audio, playerContainer) {
         const selectedStart = progressBar.selectedStartTime;
         const selectedEnd = progressBar.selectedEndTime;
         if (selectedStart === undefined || selectedEnd === undefined || selectedEnd <= selectedStart) return;
+        const activeRegionBeforeEdit = getActiveSelectedRegion(progressBar);
+        const regionsBeforeEdit = serializeSelectedRegions(progressBar);
 
         const selectedDuration = selectedEnd - selectedStart;
         const confirmed = await confirmRegionDeletion(selectedDuration, formatTime);
@@ -1714,6 +1777,7 @@ function createTrackUI(songId, audio, playerContainer) {
             selectionFadeEnabled = false;
             selectionStopEnabled = false;
             selectionStopArmed = false;
+            selectionStopRegion = null;
             delete songSelectionFadeEffects[songId];
             delete songSelectionStopEffects[songId];
             if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
@@ -1759,8 +1823,33 @@ function createTrackUI(songId, audio, playerContainer) {
             cancelWaveformGeneration(songId);
             waveformCache.delete(songId);
             waveformGenerationQueue.delete(songId);
-            delete songRegions[songId];
-            delete songActiveEffects[songId];
+            const adjustedRegions = regionsBeforeEdit
+                .filter(region => region.id !== activeRegionBeforeEdit?.id)
+                .map(region => {
+                    if (region.end <= edit.start) return region;
+                    if (region.start >= edit.end) {
+                        return {
+                            ...region,
+                            start: region.start - edit.removedDuration,
+                            end: region.end - edit.removedDuration
+                        };
+                    }
+                    return {
+                        ...region,
+                        start: Math.min(region.start, edit.start),
+                        end: Math.max(edit.start, region.end - edit.removedDuration)
+                    };
+                })
+                .filter(region => region.end - region.start > 0.001);
+            initializeSelectedRegions(progressBar, adjustedRegions);
+            if (adjustedRegions.length > 0) {
+                persistRegionConfiguration();
+            } else {
+                delete songRegions[songId];
+                delete songActiveEffects[songId];
+            }
+            refreshSelectionActionFlags();
+            syncRegionAudioEffects(true);
 
             if (oldAudioUrl.startsWith('blob:')) {
                 URL.revokeObjectURL(oldAudioUrl);
@@ -1788,48 +1877,232 @@ function createTrackUI(songId, audio, playerContainer) {
         }
     };
 
+    const removeCurrentSelectedRegion = () => {
+        const removed = removeSelectedRegion(progressBar);
+        if (!removed) return false;
+        if (selectionFadeState?.regionId === removed.id) restoreSelectionFadeVolume();
+        if (selectionStopRegion?.regionId === removed.id) {
+            selectionStopArmed = false;
+            selectionStopRegion = null;
+        }
+
+        const remainingRegions = serializeSelectedRegions(progressBar);
+        if (remainingRegions.length > 0) {
+            persistRegionConfiguration();
+        } else {
+            delete songRegions[songId];
+            delete songActiveEffects[songId];
+            selectionStopArmed = false;
+            selectionStopRegion = null;
+            delete songSelectionFadeEffects[songId];
+            delete songSelectionStopEffects[songId];
+            restoreSelectionFadeVolume();
+        }
+        refreshSelectionActionFlags();
+        syncRegionAudioEffects(true);
+
+        updateProgressBarGradient(progressBar, audio);
+        requestAnimationFrame(() => {
+            updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+        });
+        return true;
+    };
+
+    let syncRegionAudioEffects = () => {};
+    let defaultEffectSettings = {};
+
+    const persistRegionConfiguration = () => {
+        refreshSelectionActionFlags();
+        songSelectionFadeEffects[songId] = selectionFadeEnabled;
+        songSelectionStopEffects[songId] = selectionStopEnabled;
+        songRegions[songId] = serializeSelectedRegions(progressBar);
+        songActiveEffects[songId] = getAllRegionEffectKeys(progressBar);
+    };
+
+    const isActiveRegionEffectEnabled = key =>
+        getRegionEffectKeys(progressBar).includes(key);
+
+    const toggleActiveRegionEffect = key => {
+        const region = getActiveSelectedRegion(progressBar);
+        if (!region) return false;
+
+        const conflicts = {
+            loop: ['smoothLoop'],
+            smoothLoop: ['loop'],
+            speed: ['nightcore'],
+            nightcore: ['speed', 'hell'],
+            hell: ['nightcore']
+        };
+        const willEnable = !region.effects.includes(key);
+        if (willEnable) {
+            region.effects = region.effects.filter(candidate => !conflicts[key]?.includes(candidate));
+            if (region.effectSettings[key] === undefined && defaultEffectSettings[key] !== undefined) {
+                region.effectSettings[key] = structuredClone(defaultEffectSettings[key]);
+            }
+        }
+
+        const enabled = toggleRegionEffect(progressBar, region, key);
+        persistRegionConfiguration();
+        syncRegionAudioEffects(true);
+        return enabled;
+    };
+
     const audioEffects = setupAudioEffects(audio, progressBar, {
-        isPlayAndFadeOutActive: () => selectionFadeEnabled,
+        isPlayAndFadeOutActive: () => Boolean(getActiveSelectedRegion(progressBar)?.playAndFadeOut),
         togglePlayAndFadeOut: () => {
-            selectionFadeEnabled = !selectionFadeEnabled;
-            songSelectionFadeEffects[songId] = selectionFadeEnabled;
-            if (selectionFadeEnabled) {
-                selectionStopEnabled = false;
+            const region = getActiveSelectedRegion(progressBar);
+            if (!region) return false;
+            region.playAndFadeOut = !region.playAndFadeOut;
+            if (region.playAndFadeOut) {
+                region.playAndStop = false;
                 selectionStopArmed = false;
-                songSelectionStopEffects[songId] = false;
+                selectionStopRegion = null;
                 startSelectionFadeMonitor();
             } else {
                 restoreSelectionFadeVolume();
-                if (!selectionStopEnabled) {
-                    if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-                    selectionFadeFrameId = null;
-                }
             }
-            return selectionFadeEnabled;
-        },
-        isPlayAndStopActive: () => selectionStopEnabled,
-        togglePlayAndStop: () => {
-            selectionStopEnabled = !selectionStopEnabled;
+            refreshSelectionActionFlags();
+            songSelectionFadeEffects[songId] = selectionFadeEnabled;
             songSelectionStopEffects[songId] = selectionStopEnabled;
-            if (selectionStopEnabled) {
-                selectionFadeEnabled = false;
-                songSelectionFadeEffects[songId] = false;
+            persistRegionConfiguration();
+            return region.playAndFadeOut;
+        },
+        isPlayAndStopActive: () => Boolean(getActiveSelectedRegion(progressBar)?.playAndStop),
+        togglePlayAndStop: () => {
+            const region = getActiveSelectedRegion(progressBar);
+            if (!region) return false;
+            region.playAndStop = !region.playAndStop;
+            if (region.playAndStop) {
+                region.playAndFadeOut = false;
                 restoreSelectionFadeVolume();
             }
-            selectionStopArmed = selectionStopEnabled &&
-                audio.currentTime >= progressBar.selectedStartTime &&
-                audio.currentTime < progressBar.selectedEndTime;
-            if (selectionStopEnabled) {
-                startSelectionFadeMonitor();
-            } else if (!selectionFadeEnabled) {
-                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-                selectionFadeFrameId = null;
-            }
-            return selectionStopEnabled;
+
+            const currentRegion = findSelectedRegionAtTime(progressBar, audio.currentTime);
+            selectionStopArmed = region.playAndStop && currentRegion?.id === region.id;
+            selectionStopRegion = selectionStopArmed ? {
+                regionId: region.id,
+                regionStart: region.start,
+                regionEnd: region.end
+            } : null;
+            refreshSelectionActionFlags();
+            songSelectionFadeEffects[songId] = selectionFadeEnabled;
+            songSelectionStopEffects[songId] = selectionStopEnabled;
+            persistRegionConfiguration();
+            if (region.playAndStop) startSelectionFadeMonitor();
+            return region.playAndStop;
         },
-        deleteSelectedRegion
+        isRegionEffectActive: isActiveRegionEffectEnabled,
+        toggleRegionEffect: toggleActiveRegionEffect,
+        loadRegionEffectSettings: (key, effect) => {
+            const settings = getRegionEffectSettings(progressBar)[key] ?? defaultEffectSettings[key];
+            if (settings !== undefined) effect.applySettings?.(settings);
+        },
+        saveRegionEffectSettings: (key, settings) => {
+            const region = getActiveSelectedRegion(progressBar);
+            if (!region) return;
+            setRegionEffectSettings(progressBar, region, key, settings);
+            persistRegionConfiguration();
+            syncRegionAudioEffects(true);
+        },
+        deleteSelectedRegion,
+        removeSelectedRegion: removeCurrentSelectedRegion
     });
-    audioEffects.setEffectSettings(getSongState(songId)?.effectSettings || {});
+    defaultEffectSettings = structuredClone(audioEffects.getEffectSettings());
+
+    const effectConflicts = {
+        loop: new Set(['smoothLoop']),
+        smoothLoop: new Set(['loop']),
+        speed: new Set(['nightcore']),
+        nightcore: new Set(['speed', 'hell']),
+        hell: new Set(['nightcore'])
+    };
+    const legacySpeedFactors = {
+        speed075: 0.75,
+        speed090: 0.9,
+        speed110: 1.1,
+        speed125: 1.25
+    };
+    let runtimeEffectSignature = '';
+    let regionEffectFrameId = null;
+
+    syncRegionAudioEffects = (force = false) => {
+        const regions = getRegionsAtTime(progressBar, audio.currentTime)
+            .sort((left, right) => {
+                if (left.id === progressBar.activeRegionId) return -1;
+                if (right.id === progressBar.activeRegionId) return 1;
+                return (left.end - left.start) - (right.end - right.start);
+            });
+        const assignments = new Map();
+
+        regions.forEach(region => {
+            region.effects.forEach(storedKey => {
+                const key = legacySpeedFactors[storedKey] !== undefined ? 'speed' : storedKey;
+                if (!audioEffects.hasEffect(key) || assignments.has(key)) return;
+                const conflicts = effectConflicts[key];
+                if ([...assignments.keys()].some(activeKey => conflicts?.has(activeKey))) return;
+                assignments.set(key, region);
+            });
+        });
+        ['loop', 'smoothLoop'].forEach(key => {
+            if (assignments.has(key)) return;
+            const previousRegionId = progressBar.runtimeEffectRegionIds?.[key];
+            const previousRegion = getSelectedRegions(progressBar)
+                .find(region => region.id === previousRegionId && region.effects.includes(key));
+            if (previousRegion && audio.currentTime >= previousRegion.start &&
+                audio.currentTime <= previousRegion.end + 0.5) {
+                assignments.set(key, previousRegion);
+            }
+        });
+
+
+        const keys = [...assignments.keys()];
+        const settings = {};
+        const runtimeRegionIds = {};
+        assignments.forEach((region, key) => {
+            runtimeRegionIds[key] = region.id;
+            const configured = region.effectSettings[key];
+            if (configured !== undefined) {
+                settings[key] = configured;
+            } else if (key === 'speed') {
+                const legacyKey = region.effects.find(candidate => legacySpeedFactors[candidate] !== undefined);
+                settings.speed = legacyKey
+                    ? { speedFactor: legacySpeedFactors[legacyKey] }
+                    : defaultEffectSettings.speed;
+            } else if (defaultEffectSettings[key] !== undefined) {
+                settings[key] = defaultEffectSettings[key];
+            }
+        });
+
+        const signature = JSON.stringify([keys, runtimeRegionIds, settings]);
+        if (!force && signature === runtimeEffectSignature) return;
+        runtimeEffectSignature = signature;
+        progressBar.runtimeEffectRegionIds = runtimeRegionIds;
+        audioEffects.setEffectSettings(settings);
+        audioEffects.setActiveEffectKeys(keys);
+    };
+
+    const monitorRegionEffects = () => {
+        regionEffectFrameId = null;
+        syncRegionAudioEffects();
+        if (!audio.paused) {
+            regionEffectFrameId = requestAnimationFrame(monitorRegionEffects);
+        }
+    };
+    const startRegionEffectMonitor = () => {
+        syncRegionAudioEffects(true);
+        if (!audio.paused && regionEffectFrameId === null) {
+            regionEffectFrameId = requestAnimationFrame(monitorRegionEffects);
+        }
+    };
+    const stopRegionEffectMonitor = () => {
+        if (regionEffectFrameId !== null) cancelAnimationFrame(regionEffectFrameId);
+        regionEffectFrameId = null;
+    };
+    audio.addEventListener('play', startRegionEffectMonitor);
+    audio.addEventListener('timeupdate', syncRegionAudioEffects);
+    audio.addEventListener('seeking', syncRegionAudioEffects);
+    audio.addEventListener('pause', stopRegionEffectMonitor);
+    syncRegionAudioEffects(true);
 
     let waitingForHotkeyMetadata = false;
     const handleHotkeyEffectsMetadata = () => {
@@ -1853,30 +2126,27 @@ function createTrackUI(songId, audio, playerContainer) {
         selectionFadeEnabled = false;
         selectionStopEnabled = false;
         selectionStopArmed = false;
+        selectionStopRegion = null;
         delete songSelectionFadeEffects[songId];
         delete songSelectionStopEffects[songId];
 
         if (requestedEffects.length === 0) {
-            progressBar.selectedStartTime = undefined;
-            progressBar.selectedEndTime = undefined;
+            clearSelectedRegions(progressBar);
             delete songRegions[songId];
             delete songActiveEffects[songId];
-            audioEffects.setActiveEffectKeys([]);
+            syncRegionAudioEffects(true);
             progressBar.style.background = '#333';
         } else {
             // Keep a small gap before the real media end. This prevents the
             // browser's natural ended event from racing a loop at the exact
             // same timestamp, while still selecting 98%+ of short sounds.
             const endPadding = Math.min(0.1, audio.duration * 0.02);
-            const region = {
-                start: 0,
-                end: Math.max(0.001, audio.duration - endPadding)
-            };
-            progressBar.selectedStartTime = region.start;
-            progressBar.selectedEndTime = region.end;
-            songRegions[songId] = region;
-            const activatedEffects = audioEffects.setActiveEffectKeys(requestedEffects);
-            songActiveEffects[songId] = activatedEffects;
+            clearSelectedRegions(progressBar);
+            const hotkeyRegion = addSelectedRegion(progressBar, 0, Math.max(0.001, audio.duration - endPadding));
+            setRegionEffectKeys(progressBar, hotkeyRegion, requestedEffects);
+            hotkeyRegion.effectSettings = structuredClone(defaultEffectSettings);
+            persistRegionConfiguration();
+            syncRegionAudioEffects(true);
             updateProgressBarGradient(progressBar, audio);
         }
 
@@ -1887,14 +2157,11 @@ function createTrackUI(songId, audio, playerContainer) {
     };
     startSelectionFadeMonitor();
 
-    if (savedRegion) {
+    if (savedRegions.length > 0) {
         updateProgressBarGradient(progressBar, audio);
         requestAnimationFrame(() => {
             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
         });
-
-        const savedEffectKeys = songActiveEffects[songId] || [];
-        savedEffectKeys.forEach(key => audioEffects.activateEffect(key));
     }
 
     if (pendingHotkeyEffects.has(songId)) {
@@ -1930,8 +2197,13 @@ function createTrackUI(songId, audio, playerContainer) {
             const selectedHandle = getRegionHandleAtClientX(event.clientX);
             if (selectedHandle) {
                 isDragging = true;
+                setActiveSelectedRegion(progressBar, selectedHandle.region);
+                syncRegionAudioEffects(true);
+                const resizedRegionId = selectedHandle.region.id;
+                const fixedBoundary = selectedHandle.edge === 'start'
+                    ? selectedHandle.region.end
+                    : selectedHandle.region.start;
                 const dragStartX = event.clientX;
-                let activeHandle = selectedHandle;
                 let handleMoved = false;
                 const previousBodyCursor = document.body.style.cursor;
 
@@ -1956,21 +2228,12 @@ function createTrackUI(songId, audio, playerContainer) {
                     movedTime = Math.max(0, Math.min(audio.duration, movedTime));
                     movedTime = snapToMarker(songId, movedTime, getCurrentMarkerTolerance());
 
-                    if (activeHandle === 'start') {
-                        if (movedTime <= progressBar.selectedEndTime) {
-                            progressBar.selectedStartTime = movedTime;
-                        } else {
-                            progressBar.selectedStartTime = progressBar.selectedEndTime;
-                            progressBar.selectedEndTime = movedTime;
-                            activeHandle = 'end';
-                        }
-                    } else if (movedTime >= progressBar.selectedStartTime) {
-                        progressBar.selectedEndTime = movedTime;
-                    } else {
-                        progressBar.selectedEndTime = progressBar.selectedStartTime;
-                        progressBar.selectedStartTime = movedTime;
-                        activeHandle = 'start';
-                    }
+                    updateSelectedRegion(
+                        progressBar,
+                        resizedRegionId,
+                        fixedBoundary,
+                        movedTime
+                    );
 
                     updateProgressBarGradient(progressBar, audio);
                     requestAnimationFrame(() => {
@@ -1987,10 +2250,8 @@ function createTrackUI(songId, audio, playerContainer) {
                     cancelRegionHandleDrag = null;
 
                     if (handleMoved) {
-                        songRegions[songId] = {
-                            start: progressBar.selectedStartTime,
-                            end: progressBar.selectedEndTime
-                        };
+                        persistRegionConfiguration();
+                        syncRegionAudioEffects(true);
                         updateRegionHandleCursor(upEvent?.clientX ?? dragStartX);
                     } else if (!cancelled) {
                         openSelectedRegionMenu(upEvent.pageX, upEvent.pageY);
@@ -2017,26 +2278,34 @@ function createTrackUI(songId, audio, playerContainer) {
                 selectedTime,
                 getCurrentMarkerTolerance()
             ) !== null;
-            // Hover and click use the exact same pixel-based tolerance. If a
-            // marker is visibly highlighted it owns the right-click; the
-            // selected region owns only the remaining space inside it.
-            if (isPointInSelectedRegion(selectedTime, progressBar) && !isOverMarker) {
+            const clickedRegion = findSelectedRegionAtTime(progressBar, selectedTime);
+            // A highlighted marker still owns the click. Otherwise the region
+            // under the pointer becomes active before its menu is opened.
+            if (clickedRegion && !isOverMarker) {
+                setActiveSelectedRegion(progressBar, clickedRegion);
+                syncRegionAudioEffects(true);
+                lastRightClickTime = 0;
+                updateProgressBarGradient(progressBar, audio);
+                requestAnimationFrame(() => {
+                    updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
+                });
                 openSelectedRegionMenu(event.pageX, event.pageY);
             } else if (isDoubleClick && !isOverMarker) {
                 selectionFadeEnabled = false;
                 selectionStopEnabled = false;
                 selectionStopArmed = false;
+                selectionStopRegion = null;
                 delete songSelectionFadeEffects[songId];
                 delete songSelectionStopEffects[songId];
                 if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
                 selectionFadeFrameId = null;
                 restoreSelectionFadeVolume();
                 audioEffects.cleanup();
+                clearSelectedRegions(progressBar);
                 delete songRegions[songId];
                 delete songActiveEffects[songId];
+                updateProgressBarGradient(progressBar, audio);
                 setTimeout(() => {
-                    progressBar.selectedStartTime = undefined;
-                    progressBar.selectedEndTime = undefined;
                     progressBar.style.background = '#333';
                     const existingMenu = document.querySelector('.waveform-context-menu');
                     if (existingMenu) {
@@ -2047,14 +2316,11 @@ function createTrackUI(songId, audio, playerContainer) {
                         updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
                     });
                 }, 50);
-            } else if ((progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) || isOverMarker) {
-                // don't commit to a new selection on mousedown alone — a plain
-                // right-click on a marker (no movement) should only open the
-                // marker menu and must NOT wipe out the existing region.
-                // the previous selection is only overwritten once real
-                // dragging is detected below.
+            } else {
+                // A drag on empty space adds another selection. A plain
+                // right-click on a marker still opens only the marker menu.
                 const pendingStartTime = selectedTime;
-                let dragCommitted = false;
+                let pendingRegion = null;
                 
                 const onMouseMove = (moveEvent) => {
                     const moveDistance = Math.sqrt(
@@ -2068,21 +2334,15 @@ function createTrackUI(songId, audio, playerContainer) {
                     
                     if (!hasMovedMouse) return;
                     
-                    if (!dragCommitted) {
-                        dragCommitted = true;
-                        isDragging = true;
-                        progressBar.selectedStartTime = pendingStartTime;
-                    }
-                    
                     let movedTime = getExactTime(moveEvent, waveformCanvas);
+                    movedTime = Math.max(0, Math.min(audio.duration, movedTime));
                     movedTime = snapToMarker(songId, movedTime, getCurrentMarkerTolerance());
-                    progressBar.selectedEndTime = movedTime;
-    
-                    if (progressBar.selectedStartTime > progressBar.selectedEndTime) {
-                        [progressBar.selectedStartTime, progressBar.selectedEndTime] = [
-                            progressBar.selectedEndTime,
-                            progressBar.selectedStartTime,
-                        ];
+
+                    if (!pendingRegion) {
+                        isDragging = true;
+                        pendingRegion = addSelectedRegion(progressBar, pendingStartTime, movedTime);
+                    } else {
+                        updateSelectedRegion(progressBar, pendingRegion.id, pendingStartTime, movedTime);
                     }
     
                     updateProgressBarGradient(progressBar, audio);
@@ -2096,7 +2356,10 @@ function createTrackUI(songId, audio, playerContainer) {
                     document.removeEventListener('mousemove', onMouseMove);
                     document.removeEventListener('mouseup', onMouseUp);
                     
-                    if (!hasMovedMouse && rightClickStartPos) {
+                    if (pendingRegion) {
+                        persistRegionConfiguration();
+                        syncRegionAudioEffects(true);
+                    } else if (!hasMovedMouse && rightClickStartPos) {
                         const clickedMarker = findClosestMarker(
                             songId,
                             rightClickStartPos.time,
@@ -2122,12 +2385,6 @@ function createTrackUI(songId, audio, playerContainer) {
     
                 document.addEventListener('mousemove', onMouseMove);
                 document.addEventListener('mouseup', onMouseUp);
-            } else {
-                const existingMenu = document.querySelector('.waveform-context-menu');
-                if (existingMenu) {
-                    existingMenu._destroyWaveformMenu?.();
-                    existingMenu.remove();
-                }
             }
         }
     });
@@ -2155,23 +2412,36 @@ function createTrackUI(songId, audio, playerContainer) {
             applyHotkeyEffectSelection(effectKeys);
         },
         applySceneState(sceneState = {}) {
-            const region = sceneState.region;
-            if (region && Number.isFinite(region.start) && Number.isFinite(region.end) && region.end > region.start) {
-                progressBar.selectedStartTime = region.start;
-                progressBar.selectedEndTime = region.end;
-            } else {
-                progressBar.selectedStartTime = undefined;
-                progressBar.selectedEndTime = undefined;
+            const sceneRegions = initializeSelectedRegions(
+                progressBar,
+                sceneState.regions || sceneState.region || []
+            );
+            const legacySceneEffects = Array.isArray(sceneState.activeEffects)
+                ? sceneState.activeEffects
+                : [];
+            if (sceneRegions.every(region => region.effects.length === 0) && legacySceneEffects.length > 0) {
+                sceneRegions.forEach(region => {
+                    region.effects = [...legacySceneEffects];
+                    region.effectSettings = structuredClone(sceneState.effectSettings || {});
+                });
+            }
+            if (!sceneRegions.some(region => region.playAndFadeOut || region.playAndStop)) {
+                const sceneFade = Boolean(sceneState.selectionFadeEnabled);
+                const sceneStop = Boolean(sceneState.selectionStopEnabled) && !sceneFade;
+                sceneRegions.forEach(region => {
+                    region.playAndFadeOut = sceneFade;
+                    region.playAndStop = sceneStop;
+                });
             }
 
-            audioEffects.setEffectSettings(sceneState.effectSettings || {});
-            audioEffects.setActiveEffectKeys(sceneState.activeEffects || []);
-            selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
-            selectionStopEnabled = Boolean(sceneState.selectionStopEnabled);
-            if (selectionFadeEnabled && selectionStopEnabled) selectionStopEnabled = false;
-            selectionStopArmed = selectionStopEnabled &&
-                audio.currentTime >= (progressBar.selectedStartTime ?? Infinity) &&
-                audio.currentTime < (progressBar.selectedEndTime ?? -Infinity);
+            refreshSelectionActionFlags();
+            const currentRegion = findSelectedRegionAtTime(progressBar, audio.currentTime);
+            selectionStopArmed = Boolean(currentRegion?.playAndStop);
+            selectionStopRegion = selectionStopArmed ? {
+                regionId: currentRegion.id,
+                regionStart: currentRegion.start,
+                regionEnd: currentRegion.end
+            } : null;
 
             if (selectionFadeEnabled || selectionStopEnabled) {
                 startSelectionFadeMonitor();
@@ -2180,6 +2450,8 @@ function createTrackUI(songId, audio, playerContainer) {
                 if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
                 selectionFadeFrameId = null;
             }
+            persistRegionConfiguration();
+            syncRegionAudioEffects(true);
 
             updateProgressBarGradient(progressBar, audio);
             requestAnimationFrame(() => {
@@ -2187,15 +2459,17 @@ function createTrackUI(songId, audio, playerContainer) {
             });
         },
         getSceneState() {
-            const hasRegion = progressBar.selectedStartTime !== undefined &&
-                progressBar.selectedEndTime !== undefined;
+            const regions = serializeSelectedRegions(progressBar);
+            const activeRegion = getActiveSelectedRegion(progressBar);
             return {
-                region: hasRegion ? {
-                    start: progressBar.selectedStartTime,
-                    end: progressBar.selectedEndTime
+                regions,
+                // Kept for scenes created by older builds.
+                region: activeRegion ? {
+                    start: activeRegion.start,
+                    end: activeRegion.end
                 } : null,
-                activeEffects: audioEffects.getActiveEffectKeys(),
-                effectSettings: audioEffects.getEffectSettings(),
+                activeEffects: getAllRegionEffectKeys(progressBar),
+                effectSettings: getRegionEffectSettings(progressBar),
                 selectionFadeEnabled,
                 selectionStopEnabled
             };
@@ -2222,21 +2496,24 @@ function createTrackUI(songId, audio, playerContainer) {
             cancelEffectTail();
             cancelRegionHandleDrag?.();
             const state = getSongState(songId);
-            if (state) state.effectSettings = audioEffects.getEffectSettings();
+            if (state) state.effectSettings = getRegionEffectSettings(progressBar);
             // remember the region and active effects so they come back if
             // this song starts playing again later, instead of resetting
-            if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
-                songRegions[songId] = {
-                    start: progressBar.selectedStartTime,
-                    end: progressBar.selectedEndTime
-                };
-                songActiveEffects[songId] = audioEffects.getActiveEffectKeys();
+            const regions = serializeSelectedRegions(progressBar);
+            if (regions.length > 0) {
+                songRegions[songId] = regions;
+                songActiveEffects[songId] = getAllRegionEffectKeys(progressBar);
             } else {
                 delete songRegions[songId];
                 delete songActiveEffects[songId];
             }
 
             audio.removeEventListener('timeupdate', handleTimeUpdate);
+            audio.removeEventListener('play', startRegionEffectMonitor);
+            audio.removeEventListener('timeupdate', syncRegionAudioEffects);
+            audio.removeEventListener('seeking', syncRegionAudioEffects);
+            audio.removeEventListener('pause', stopRegionEffectMonitor);
+            stopRegionEffectMonitor();
             audio.removeEventListener('play', handleSelectionFadePlay);
             audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
             audio.removeEventListener('loadedmetadata', handleHotkeyEffectsMetadata);
@@ -2254,19 +2531,26 @@ function createTrackUI(songId, audio, playerContainer) {
 }
 
 function updateProgressBarGradient(progressBar, audio) {
-    if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
+    const regions = getSelectedRegions(progressBar);
+    if (regions.length === 0 || !Number.isFinite(audio.duration) || audio.duration <= 0) {
         progressBar.style.background = '#333';
         return;
     }
 
-    const startPercent = (progressBar.selectedStartTime / audio.duration * 100).toFixed(4);
-    const endPercent = (progressBar.selectedEndTime / audio.duration * 100).toFixed(4);
-    
-    progressBar.style.background = `linear-gradient(to right, 
-        #333 ${startPercent}%, 
-        #2bdbb0 ${startPercent}%, 
-        #2bdbb0 ${endPercent}%, 
-        #333 ${endPercent}%)`;
+    const stops = ['#333 0%'];
+    regions.forEach(region => {
+        const startPercent = (region.start / audio.duration * 100).toFixed(4);
+        const endPercent = (region.end / audio.duration * 100).toFixed(4);
+        const color = region.id === progressBar.activeRegionId ? '#2bdbb0' : '#247f95';
+        stops.push(
+            `#333 ${startPercent}%`,
+            `${color} ${startPercent}%`,
+            `${color} ${endPercent}%`,
+            `#333 ${endPercent}%`
+        );
+    });
+    stops.push('#333 100%');
+    progressBar.style.background = `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
 async function generateWaveformDirect(audio, canvas, songId) {
@@ -2562,12 +2846,11 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     const centerY = height / 2;
     const progress = audio.currentTime / audio.duration;
     const progressPixel = Math.floor(width * progress);
-    const selectedStartPixel = progressBar.selectedStartTime !== undefined
-        ? Math.floor((progressBar.selectedStartTime / audio.duration) * width)
-        : -1;
-    const selectedEndPixel = progressBar.selectedEndTime !== undefined
-        ? Math.floor((progressBar.selectedEndTime / audio.duration) * width)
-        : -1;
+    const selectedRegionPixels = getSelectedRegions(progressBar).map(region => ({
+        ...region,
+        startPixel: Math.floor((region.start / audio.duration) * width),
+        endPixel: Math.floor((region.end / audio.duration) * width)
+    }));
 
     if (hoveredTime >= 0) {
         const hoverPixel = Math.floor((hoveredTime / audio.duration) * width);
@@ -2598,13 +2881,18 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
             } else if (x <= progressPixel) {
                 mainColor = '#2bdbb0';
                 peakColor = '#1a9977';
-            } else if (selectedStartPixel !== -1 && selectedEndPixel !== -1 && 
-                      x >= selectedStartPixel && x <= selectedEndPixel) {
-                mainColor = '#4a9eff';
-                peakColor = '#3a7ecc';
             } else {
-                mainColor = '#333';
-                peakColor = '#444';
+                const selectedRegion = selectedRegionPixels.find(region =>
+                    x >= region.startPixel && x <= region.endPixel
+                );
+                if (selectedRegion) {
+                    const isActive = selectedRegion.id === progressBar.activeRegionId;
+                    mainColor = isActive ? '#4a9eff' : '#3676a8';
+                    peakColor = isActive ? '#3a7ecc' : '#2b5f88';
+                } else {
+                    mainColor = '#333';
+                    peakColor = '#444';
+                }
             }
             
             const avgHeight = point.average * height * 0.8;
@@ -2622,14 +2910,13 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
         }
     }
 
-    if (progressBar.selectedStartTime !== undefined && progressBar.selectedEndTime !== undefined) {
-        ctx.fillStyle = '#4a9eff';
-        const startX = (progressBar.selectedStartTime / audio.duration) * width;
-        const endX = (progressBar.selectedEndTime / audio.duration) * width;
-        
-        ctx.fillRect(startX - 1, 0, 2, height);
-        ctx.fillRect(endX - 1, 0, 2, height);
-    }
+    selectedRegionPixels.forEach(region => {
+        const isActive = region.id === progressBar.activeRegionId;
+        ctx.fillStyle = isActive ? '#72b8ff' : '#3676a8';
+        const lineWidth = isActive ? 3 : 2;
+        ctx.fillRect(region.startPixel - lineWidth / 2, 0, lineWidth, height);
+        ctx.fillRect(region.endPixel - lineWidth / 2, 0, lineWidth, height);
+    });
 
     const trackDiv = canvas.closest('.track-item');
     const songId = trackDiv?.dataset.songId;
@@ -3028,18 +3315,32 @@ export function configureSongForScene(targetSongId, sceneState = {}) {
         }
     }
 
-    const region = sceneState.region;
-    state.region = region && Number.isFinite(region.start) && Number.isFinite(region.end)
-        ? { start: region.start, end: region.end }
-        : null;
-    state.activeEffects = Array.isArray(sceneState.activeEffects)
-        ? [...sceneState.activeEffects]
-        : [];
-    state.effectSettings = sceneState.effectSettings && typeof sceneState.effectSettings === 'object'
-        ? structuredClone(sceneState.effectSettings)
+    const regions = normalizeSelectedRegions(sceneState.regions || sceneState.region || []);
+    const legacyEffects = Array.isArray(sceneState.activeEffects) ? sceneState.activeEffects : [];
+    const legacySettings = sceneState.effectSettings && typeof sceneState.effectSettings === 'object'
+        ? sceneState.effectSettings
         : {};
-    state.selectionFadeEnabled = Boolean(sceneState.selectionFadeEnabled);
-    state.selectionStopEnabled = Boolean(sceneState.selectionStopEnabled) && !state.selectionFadeEnabled;
+    if (regions.every(region => region.effects.length === 0) && legacyEffects.length > 0) {
+        regions.forEach(region => {
+            region.effects = [...legacyEffects];
+            region.effectSettings = structuredClone(legacySettings);
+        });
+    }
+    if (!regions.some(region => region.playAndFadeOut || region.playAndStop)) {
+        const legacyFade = Boolean(sceneState.selectionFadeEnabled);
+        const legacyStop = Boolean(sceneState.selectionStopEnabled) && !legacyFade;
+        regions.forEach(region => {
+            region.playAndFadeOut = legacyFade;
+            region.playAndStop = legacyStop;
+        });
+    }
+
+    state.region = regions;
+    state.activeEffects = [...new Set(regions.flatMap(region => region.effects))];
+    const activeRegion = regions.find(region => region.active) || regions.at(-1);
+    state.effectSettings = structuredClone(activeRegion?.effectSettings || legacySettings);
+    state.selectionFadeEnabled = regions.some(region => region.playAndFadeOut);
+    state.selectionStopEnabled = regions.some(region => region.playAndStop);
 
     renderedTracks.get(targetSongId)?.applySceneState(state);
     return true;
@@ -3049,10 +3350,13 @@ export function getSongSceneSnapshot(songId) {
     const state = getSongState(songId);
     if (!state?.audio) return null;
     const liveTrackState = renderedTracks.get(songId)?.getSceneState();
+    const storedRegions = normalizeSelectedRegions(state.region);
+    const storedActiveRegion = storedRegions.find(region => region.active) || storedRegions.at(-1) || null;
     return {
         volume: state.volume ?? state.audio.volume,
         currentTime: state.audio.currentTime || state.currentTime || 0,
-        region: liveTrackState?.region ?? (state.region ? { ...state.region } : null),
+        regions: liveTrackState?.regions ?? storedRegions,
+        region: liveTrackState?.region ?? storedActiveRegion,
         activeEffects: [...(liveTrackState?.activeEffects ?? state.activeEffects ?? [])],
         effectSettings: structuredClone(liveTrackState?.effectSettings ?? state.effectSettings ?? {}),
         selectionFadeEnabled: liveTrackState?.selectionFadeEnabled ?? state.selectionFadeEnabled,

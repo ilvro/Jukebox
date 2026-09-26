@@ -1,4 +1,5 @@
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from '../audio-context.js';
+import { isTimeInSelectedRegions } from '../selection-regions.js';
 import { AudioEffect } from './base-effect.js';
 
 const reverbImpulseCache = new WeakMap();
@@ -168,12 +169,9 @@ export class ReverbEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
-                return;
-            }
+            if (!this.active) return;
 
-            const inRegion = audio.currentTime >= progressBar.selectedStartTime &&
-                audio.currentTime <= progressBar.selectedEndTime;
+            const inRegion = isTimeInSelectedRegions(progressBar, audio.currentTime);
             const now = audioContext.currentTime;
             const transitionTime = 0.045;
 
@@ -236,6 +234,7 @@ export class TremoloEffect extends AudioEffect {
         );
         
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
@@ -278,12 +277,9 @@ export class EchoEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
-                return;
-            }
+            if (!this.active) return;
 
-            const inRegion = audio.currentTime >= progressBar.selectedStartTime &&
-                audio.currentTime <= progressBar.selectedEndTime;
+            const inRegion = isTimeInSelectedRegions(progressBar, audio.currentTime);
             const now = audioContext.currentTime;
             const transitionTime = 0.035;
             dryGainNode.gain.setTargetAtTime(inRegion ? this.options.dry : 1, now, transitionTime);

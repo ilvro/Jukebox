@@ -1,5 +1,6 @@
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from '../audio-context.js';
 import { AudioEffect } from './base-effect.js';
+import { getRuntimeEffectRegion, getSelectedRegions, isTimeInSelectedRegions } from '../selection-regions.js';
 import { createEchoChain, createReverbChain } from './time-effects.js';
 
 export class LoopEffect extends AudioEffect {
@@ -13,17 +14,19 @@ export class LoopEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (this.active && progressBar.selectedStartTime !== undefined && 
-                progressBar.selectedEndTime !== undefined) {
+            const region = getRuntimeEffectRegion(progressBar, 'loop');
+            if (this.active && region) {
                 const precision = 0.01;
-                if (audio.currentTime >= progressBar.selectedEndTime - precision) {
-                    audio.currentTime = progressBar.selectedStartTime;
+                if (audio.currentTime >= region.end - precision) {
+                    audio.currentTime = region.start;
                 }
             }
         };
     
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        const monitorIntervalId = setInterval(handleTimeUpdate, 25);
         this.cleanup = () => {
+            clearInterval(monitorIntervalId);
             audio.removeEventListener('timeupdate', handleTimeUpdate);
         };
     }
@@ -65,8 +68,9 @@ export class SmoothLoopEffect extends AudioEffect {
         const monitorLoop = () => {
             if (!this.active) return;
 
-            const start = progressBar.selectedStartTime;
-            const end = progressBar.selectedEndTime;
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            const start = region?.start;
+            const end = region?.end;
             if (start !== undefined && end !== undefined && end > start) {
                 this.updateNativeLoopSafety(start, end);
                 const regionDuration = end - start;
@@ -143,10 +147,13 @@ export class SmoothLoopEffect extends AudioEffect {
         }
 
         try {
-            secondaryAudio.currentTime = progressBar.selectedStartTime;
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            if (!region) throw new Error('Smooth Loop region is no longer available');
+            secondaryAudio.currentTime = region.start;
         } catch (error) {
             console.error('Could not seek smooth-loop standby audio:', error);
-            audio.currentTime = progressBar.selectedStartTime;
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            if (region) audio.currentTime = region.start;
             this.stopCrossfadeLogic();
             this.crossfading = false;
             this.prepareCrossfadeAudio();
@@ -177,9 +184,15 @@ export class SmoothLoopEffect extends AudioEffect {
         }
 
         const now = audioContext.currentTime;
-        const remaining = progressBar.selectedEndTime - audio.currentTime;
+        const activeRegion = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+        if (!activeRegion) {
+            this.stopCrossfadeLogic();
+            this.crossfading = false;
+            return;
+        }
+        const remaining = activeRegion.end - audio.currentTime;
         if (remaining <= 0.03) {
-            audio.currentTime = progressBar.selectedStartTime;
+            audio.currentTime = activeRegion.start;
             this.stopCrossfadeLogic();
             this.crossfading = false;
             this.prepareCrossfadeAudio();
@@ -222,9 +235,11 @@ export class SmoothLoopEffect extends AudioEffect {
         // Seek the silent main element to the exact position currently heard
         // from the secondary element. Keep the secondary audible until the
         // seek completes, which removes the buffering gap from the handoff.
+        const activeRegion = getRuntimeEffectRegion(this.progressBar, 'smoothLoop');
+        if (!activeRegion) return;
         const targetTime = Math.min(
-            this.progressBar.selectedEndTime,
-            this.crossfadeAudio.currentTime || this.progressBar.selectedStartTime + duration
+            activeRegion.end,
+            this.crossfadeAudio.currentTime || activeRegion.start + duration
         );
         this.audio.currentTime = targetTime;
 
@@ -395,9 +410,8 @@ export class ReverseEffect extends AudioEffect {
         this.fetchAudioData(audio.src);
 
         const handleTimeUpdate = () => {
-            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined || !this.audioBuffer) {
-                return;
-            }
+            const region = getRuntimeEffectRegion(progressBar, 'reverse');
+            if (!this.active || !region || !this.audioBuffer) return;
 
             // audio keeps genuinely playing (muted) the whole time reverse is
             // active — we deliberately never pause it, since pause() fires
@@ -408,8 +422,7 @@ export class ReverseEffect extends AudioEffect {
             // own onended, not by watching this (muted) forward drift
             if (!this.isReversePlaying) {
                 const currentTime = audio.currentTime;
-                const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                           currentTime <= progressBar.selectedEndTime;
+                const isInSelectedRegion = currentTime >= region.start && currentTime <= region.end;
                 if (isInSelectedRegion) {
                     this.startReversePlayback();
                 }
@@ -421,8 +434,8 @@ export class ReverseEffect extends AudioEffect {
             // seeking is skipping to a specific part in the track
             if (this.isReversePlaying && this.active) {
                 const currentTime = audio.currentTime;
-                if (currentTime >= progressBar.selectedStartTime && 
-                    currentTime <= progressBar.selectedEndTime) {
+                const region = getRuntimeEffectRegion(progressBar, 'reverse');
+                if (region && currentTime >= region.start && currentTime <= region.end) {
                     // user seeked within the selected region
                     this.seekPosition = currentTime;
                     this.stopReversePlayback();
@@ -475,8 +488,10 @@ export class ReverseEffect extends AudioEffect {
         if (!this.audioBuffer || this.isReversePlaying) return;
         
         // calculate region properties
-        const regionStart = this.progressBar.selectedStartTime;
-        const regionEnd = this.progressBar.selectedEndTime;
+        const region = getRuntimeEffectRegion(this.progressBar, 'reverse');
+        if (!region) return;
+        const regionStart = region.start;
+        const regionEnd = region.end;
         const regionDuration = regionEnd - regionStart;
         
         // determine where to start in the reversed buffer
@@ -719,19 +734,9 @@ export class PlaybackSpeedEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (progressBar.selectedStartTime !== undefined && 
-                progressBar.selectedEndTime !== undefined) {
-                
-                const currentTime = audio.currentTime;
-                const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                         currentTime <= progressBar.selectedEndTime;
-                
-                if (isInSelectedRegion) {
-                    audio.playbackRate = this.speedFactor;
-                } else {
-                    audio.playbackRate = 1.0;
-                }
-            }
+            const isInSelectedRegion = getSelectedRegions(progressBar).length > 0 &&
+                isTimeInSelectedRegions(progressBar, audio.currentTime);
+            audio.playbackRate = isInSelectedRegion ? this.speedFactor : 1.0;
         };
 
         this.applyPlaybackRate = handleTimeUpdate;
@@ -823,18 +828,13 @@ export class PitchShiftEffect extends AudioEffect {
         audio.preservesPitch = false;
         
         const handleTimeUpdate = () => {
-            if (progressBar.selectedStartTime !== undefined && 
-                progressBar.selectedEndTime !== undefined) {
-                
-                const currentTime = audio.currentTime;
-                const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                         currentTime <= progressBar.selectedEndTime;
-                
-                audio.preservesPitch = !isInSelectedRegion;
-            }
+            const isInSelectedRegion = getSelectedRegions(progressBar).length > 0 &&
+                isTimeInSelectedRegions(progressBar, audio.currentTime);
+            audio.preservesPitch = !isInSelectedRegion;
         };
     
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.preservesPitch = true;

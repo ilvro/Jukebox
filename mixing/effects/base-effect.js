@@ -1,3 +1,5 @@
+import { getSelectedRegions, isTimeInSelectedRegions } from '../selection-regions.js';
+
 export class AudioEffect {
     constructor(name, category) {
         this.name = name;
@@ -68,13 +70,14 @@ export class AudioEffect {
     // handler to make effects region-based
     createRegionBasedHandler(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         return () => {
-            if (!this.active || progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
+            if (!this.active || getSelectedRegions(progressBar).length === 0) {
+                wetGainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
+                dryGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.05);
                 return;
             }
-            
+
             const currentTime = audio.currentTime;
-            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                     currentTime <= progressBar.selectedEndTime;
+            const isInSelectedRegion = isTimeInSelectedRegions(progressBar, currentTime);
             
             const transitionTime = 0.05;
             
@@ -108,6 +111,7 @@ export class RegionBasedEffect extends AudioEffect {
         );
         
         audio.addEventListener('timeupdate', handleTimeUpdate);
+        requestAnimationFrame(handleTimeUpdate);
         
         this.cleanup = () => {
             audio.removeEventListener('timeupdate', handleTimeUpdate);

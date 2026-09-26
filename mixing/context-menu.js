@@ -35,7 +35,7 @@ function formatFrequency(frequency) {
         : `${Math.round(frequency)} Hz`;
 }
 
-function createFilterControls(effect, key, repositionMenu) {
+function createFilterControls(effect, key, repositionMenu, onChange) {
     const config = FILTER_CONTROL_CONFIG[key];
     const controls = document.createElement('div');
     controls.className = 'filter-effect-controls';
@@ -80,6 +80,7 @@ function createFilterControls(effect, key, repositionMenu) {
         cutoffValue.textContent = formatFrequency(settings.frequency);
         resonanceValue.textContent = settings.Q.toFixed(1);
     };
+        onChange?.(settings);
 
     cutoffSlider.addEventListener('input', event => {
         effect.setFrequency(sliderToFrequency(event.target.value, config.min, config.max));
@@ -275,6 +276,32 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             menu.appendChild(playAndStopItem);
         }
 
+        if (typeof actions.removeSelectedRegion === 'function') {
+            const removeSelectionItem = document.createElement('div');
+            removeSelectionItem.className = 'context-menu-item';
+            removeSelectionItem.textContent = 'Remove This Selection';
+            Object.assign(removeSelectionItem.style, {
+                cursor: 'default',
+                padding: '5px 5px 5px 15px',
+                transition: 'all 0.3s ease',
+                borderLeft: '2px solid transparent',
+                color: '#ffc46b'
+            });
+            removeSelectionItem.addEventListener('mouseover', () => {
+                removeSelectionItem.style.borderLeft = '2px solid #ffaa00';
+                removeSelectionItem.style.backgroundColor = 'rgba(255, 170, 0, 0.12)';
+            });
+            removeSelectionItem.addEventListener('mouseout', () => {
+                removeSelectionItem.style.borderLeft = '2px solid transparent';
+                removeSelectionItem.style.backgroundColor = 'transparent';
+            });
+            removeSelectionItem.addEventListener('click', () => {
+                actions.removeSelectedRegion();
+                destroyMenu();
+            });
+            menu.appendChild(removeSelectionItem);
+        }
+
         if (typeof actions.deleteSelectedRegion === 'function') {
             const deleteRegionItem = document.createElement('div');
             deleteRegionItem.className = 'context-menu-item';
@@ -317,17 +344,20 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
         effectKeys.forEach(key => {
             const effect = effectsRegistry.effects[key];
             if (!effect) return;
+            const isRegionEffectActive = () =>
+                actions.isRegionEffectActive?.(key) ?? effect.active;
+            actions.loadRegionEffectSettings?.(key, effect);
 
             const menuItem = document.createElement('div');
             menuItem.className = 'context-menu-item';
             menuItem.dataset.effectKey = key;
-            menuItem.textContent = `${effect.active ? '✓ ' : ''}${effect.name}`;
+            menuItem.textContent = `${isRegionEffectActive() ? '✓ ' : ''}${effect.name}`;
             Object.assign(menuItem.style, {
                 cursor: 'default',
                 padding: '5px 5px 5px 15px',
                 transition: 'all 0.3s ease',
                 borderLeft: '2px solid transparent',
-                color: effect.active ? '#2bdba0' : '#fff'
+                color: isRegionEffectActive() ? '#2bdba0' : '#fff'
             });
 
             menuItem.addEventListener('mouseover', () => {
@@ -341,7 +371,8 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             });
 
             menuItem.addEventListener('click', () => {
-                const isNowActive = effectsRegistry.activateEffect(key);
+                const isNowActive = actions.toggleRegionEffect
+                    ? actions.toggleRegionEffect(key) : effectsRegistry.activateEffect(key);
                 menuItem.textContent = `${isNowActive ? '✓ ' : ''}${effect.name}`;
                 menuItem.style.color = isNowActive ? '#2bdba0' : '#fff';
 
@@ -351,7 +382,9 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                         : null;
                     oldControls?.remove();
                     if (isNowActive) {
-                        menuItem.after(createFilterControls(effect, key, repositionMenu));
+                        menuItem.after(createFilterControls(effect, key, repositionMenu, settings => {
+                            actions.saveRegionEffectSettings?.(key, settings);
+                        }));
                     }
                     requestAnimationFrame(repositionMenu);
                     return;
@@ -361,7 +394,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                     menu.querySelectorAll('.context-menu-item[data-effect-key^="speed"]').forEach(speedItem => {
                         const speedKey = speedItem.dataset.effectKey;
                         const speedEffect = effectsRegistry.effects[speedKey];
-                        const active = Boolean(speedEffect?.active);
+                        const active = actions.isRegionEffectActive?.(speedKey) ?? Boolean(speedEffect?.active);
                         speedItem.textContent = `${active ? '✓ ' : ''}${speedEffect.name}`;
                         speedItem.style.color = active ? '#2bdba0' : '#fff';
                         if (!active && speedItem.nextElementSibling?.classList.contains('speed-effect-controls')) {
@@ -372,6 +405,7 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
                     if (isNowActive && !menuItem.nextElementSibling?.classList.contains('speed-effect-controls')) {
                         menuItem.after(createSpeedControls(effect, repositionMenu, () => {
                             menuItem.textContent = `✓ ${effect.name}`;
+                            actions.saveRegionEffectSettings?.(key, effect.getSettings?.() || {});
                         }));
                     }
                     requestAnimationFrame(repositionMenu);
@@ -395,11 +429,14 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
             });
 
             menu.appendChild(menuItem);
-            if (effect.active && FILTER_CONTROL_CONFIG[key]) {
-                menu.appendChild(createFilterControls(effect, key, repositionMenu));
-            } else if (effect.active && isSpeedEffectKey(key)) {
+            if (isRegionEffectActive() && FILTER_CONTROL_CONFIG[key]) {
+                menu.appendChild(createFilterControls(effect, key, repositionMenu, settings => {
+                    actions.saveRegionEffectSettings?.(key, settings);
+                }));
+            } else if (isRegionEffectActive() && isSpeedEffectKey(key)) {
                 menu.appendChild(createSpeedControls(effect, repositionMenu, () => {
                     menuItem.textContent = `✓ ${effect.name}`;
+                    actions.saveRegionEffectSettings?.(key, effect.getSettings?.() || {});
                 }));
             }
         });

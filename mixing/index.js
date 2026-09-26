@@ -37,6 +37,7 @@ export function setupAudioEffects(audio, progressBar, actions = {}) {
         cleanup,
         isLooping: () => effectsRegistry.isLooping(),
         activateEffect: (key) => effectsRegistry.activateEffect(key),
+        hasEffect: (key) => Boolean(effectsRegistry.effects[effectsRegistry.normalizeEffectKey(key)]),
         getActiveEffectKeys: () => effectsRegistry.getActiveEffectKeys(),
         getActiveTailDuration: () => effectsRegistry.getActiveTailDuration(),
         getEffectSettings: () => effectsRegistry.getEffectSettings(),

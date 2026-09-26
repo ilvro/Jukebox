@@ -1,4 +1,5 @@
 import { initializeAudioContext, disconnectAudioContext, getAudioContext } from '../audio-context.js';
+import { isTimeInSelectedRegions } from '../selection-regions.js';
 import { AudioEffect } from './base-effect.js';
 
 export class NightcoreEffect extends AudioEffect {
@@ -14,15 +15,11 @@ export class NightcoreEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
     const handleTimeUpdate = () => {
-        if (progressBar.selectedStartTime !== undefined && 
-            progressBar.selectedEndTime !== undefined) {
-            
             const currentTime = audio.currentTime;
-            const isInSelectedRegion = currentTime >= progressBar.selectedStartTime && 
-                                    currentTime <= progressBar.selectedEndTime;
-            
+            const isInSelectedRegion = isTimeInSelectedRegions(progressBar, currentTime);
+
             audio.preservesPitch = false; // important for nightcore effect
-            
+
             const transitionTime = 0.1;
             if (isInSelectedRegion) {
                 wetGainNode.gain.setTargetAtTime(0.9, audioContext.currentTime, transitionTime);
@@ -37,10 +34,10 @@ export class NightcoreEffect extends AudioEffect {
                     audio.playbackRate = 1.0;
                 }
             }
-        }
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
+    requestAnimationFrame(handleTimeUpdate);
     this.cleanup = () => {
         audio.removeEventListener('timeupdate', handleTimeUpdate);
         if (this.processor) {
@@ -228,9 +225,7 @@ export class HellEffect extends AudioEffect {
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
         const handleTimeUpdate = () => {
-            if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) return;
-            const inRegion = audio.currentTime >= progressBar.selectedStartTime &&
-                audio.currentTime <= progressBar.selectedEndTime;
+            const inRegion = isTimeInSelectedRegions(progressBar, audio.currentTime);
             const now = audioContext.currentTime;
 
             dryGainNode.gain.setTargetAtTime(inRegion ? 0 : 1, now, 0.045);
