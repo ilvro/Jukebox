@@ -2707,7 +2707,17 @@ function createTrackUI(songId, audio, playerContainer) {
                 return;
             }
             
-            const selectedHandle = getRegionHandleAtClientX(event.clientX);
+            const markerAtPointer = findClosestMarker(
+                songId,
+                selectedTime,
+                getCurrentMarkerTolerance()
+            );
+            // A marker and a region edge can occupy the exact same pixel.
+            // In that case the marker owns the right-click; region resizing
+            // remains available anywhere the handle is not covered by it.
+            const selectedHandle = markerAtPointer === null
+                ? getRegionHandleAtClientX(event.clientX)
+                : null;
             if (selectedHandle) {
                 isDragging = true;
                 setActiveSelectedRegion(progressBar, selectedHandle.region);
@@ -2786,11 +2796,7 @@ function createTrackUI(songId, audio, playerContainer) {
             const isDoubleClick = (currentTime - lastRightClickTime) < doubleClickDelay;
             lastRightClickTime = currentTime;
 
-            const isOverMarker = findClosestMarker(
-                songId,
-                selectedTime,
-                getCurrentMarkerTolerance()
-            ) !== null;
+            const isOverMarker = markerAtPointer !== null;
             const clickedRegion = findSelectedRegionAtTime(progressBar, selectedTime);
             // A highlighted marker still owns the click. Otherwise the region
             // under the pointer becomes active before its menu is opened.
