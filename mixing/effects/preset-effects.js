@@ -113,7 +113,9 @@ export function createNightcoreProcessor(audioContext, wetGainNode, mainGainNode
     return processor;
 }
 
-function createSaturationCurve(drive = 5.5, bias = 0.08, sampleCount = 8192) {
+const HELL_PLAYBACK_RATE = 0.86;
+
+function createSaturationCurve(drive = 3.2, bias = 0.025, sampleCount = 8192) {
     const curve = new Float32Array(sampleCount);
     const center = Math.tanh(bias * drive);
     const normalization = Math.max(
@@ -133,6 +135,7 @@ export function createHellProcessor(audioContext, inputNode, outputNode) {
         subBass: audioContext.createBiquadFilter(),
         lowMidControl: audioContext.createBiquadFilter(),
         bodyGain: audioContext.createGain(),
+        distortionCompressor: audioContext.createDynamicsCompressor(),
         distortionDrive: audioContext.createGain(),
         saturation: audioContext.createWaveShaper(),
         distortionHighpass: audioContext.createBiquadFilter(),
@@ -143,55 +146,56 @@ export function createHellProcessor(audioContext, inputNode, outputNode) {
         outputGain: audioContext.createGain()
     };
 
-    // Compared with the clean excerpt, the target carries about 6 dB more
-    // energy below 120 Hz but only about 1 dB more in the 120-500 Hz band.
+    // The reference keeps almost the same loudness as the clean recording.
+    // Its weight comes from low-frequency emphasis, not from clipping the
+    // complete signal.
     processor.subBass.type = 'lowshelf';
     processor.subBass.frequency.value = 105;
-    processor.subBass.gain.value = 7;
+    processor.subBass.gain.value = 1.75;
     processor.lowMidControl.type = 'peaking';
     processor.lowMidControl.frequency.value = 820;
     processor.lowMidControl.Q.value = 0.75;
-    processor.lowMidControl.gain.value = -2.5;
+    processor.lowMidControl.gain.value = -1.5;
 
-    // Keep a mostly clean, immediate body so attacks and the source dynamics
-    // survive. A separate driven branch adds upper harmonics: this sounds raw
-    // and stressed without smearing notes into a reverb-like wash.
-    processor.bodyGain.gain.value = 0.45;
-    // These recordings peak around 0.025 (-32 dBFS). The old 4.5x drive did
-    // not push a source this quiet far enough into the non-linear part of the
-    // curve, so Hell was effectively just EQ. 24x makes the saturation clear;
-    // the branch is attenuated again below to preserve the original loudness.
-    processor.distortionDrive.gain.value = 24;
+    // Preserve most of the clean attack and dynamics. Distortion lives in a
+    // separate, quiet branch so piano notes gain texture without turning into
+    // a square wave.
+    processor.bodyGain.gain.value = 0.88;
+
+    // Compress only the distortion feed. Loud/mastered songs are attenuated
+    // before the waveshaper, while quiet ambience still receives audible
+    // harmonics. This makes the preset much less dependent on source level.
+    processor.distortionCompressor.threshold.value = -20;
+    processor.distortionCompressor.knee.value = 8;
+    processor.distortionCompressor.ratio.value = 4;
+    processor.distortionCompressor.attack.value = 0.003;
+    processor.distortionCompressor.release.value = 0.12;
+    processor.distortionDrive.gain.value = 6;
 
     processor.saturation.curve = createSaturationCurve();
     processor.saturation.oversample = '4x';
 
+    // Keep the distorted layer focused in the mids. The previous +9 dB shelf
+    // and 14 kHz ceiling created the brittle, blown-out fizz.
     processor.distortionHighpass.type = 'highpass';
-    processor.distortionHighpass.frequency.value = 250;
-    processor.distortionHighpass.Q.value = 0.45;
+    processor.distortionHighpass.frequency.value = 190;
+    processor.distortionHighpass.Q.value = 0.4;
     processor.distortionBite.type = 'highshelf';
-    processor.distortionBite.frequency.value = 1800;
-    processor.distortionBite.gain.value = 9;
+    processor.distortionBite.frequency.value = 2200;
+    processor.distortionBite.gain.value = 3;
     processor.distortionLowpass.type = 'lowpass';
-    processor.distortionLowpass.frequency.value = 14000;
-    processor.distortionLowpass.Q.value = 0.4;
-    // The aggressive branch is deliberately quiet after the waveshaper. It
-    // contributes texture and sharp transients without turning the preset
-    // into a volume boost or flattening the clean dynamics.
-    processor.distortionGain.gain.value = 0.03;
+    processor.distortionLowpass.frequency.value = 9000;
+    processor.distortionLowpass.Q.value = 0.35;
+    processor.distortionGain.gain.value = 0.018;
 
-    // This compressor is only a peak guard. The target retains almost exactly
-    // the clean recording's crest factor, so normal material should not be
-    // continuously compressed as it was in the first implementation.
-    processor.safetyCompressor.threshold.value = -5;
-    processor.safetyCompressor.knee.value = 2;
-    processor.safetyCompressor.ratio.value = 8;
-    processor.safetyCompressor.attack.value = 0.002;
-    processor.safetyCompressor.release.value = 0.08;
-    // The stronger distortion branch raises the internal RMS by roughly
-    // 7 dB. Compensating here keeps comparisons honest: Hell should sound
-    // different, not merely louder.
-    processor.outputGain.gain.value = 0.58;
+    // A fast peak guard catches only overs created by the bass shelf and the
+    // parallel sum. It is deliberately close to 0 dB so normal dynamics pass.
+    processor.safetyCompressor.threshold.value = -2.5;
+    processor.safetyCompressor.knee.value = 1;
+    processor.safetyCompressor.ratio.value = 16;
+    processor.safetyCompressor.attack.value = 0.001;
+    processor.safetyCompressor.release.value = 0.1;
+    processor.outputGain.gain.value = 0.82;
 
     inputNode.connect(processor.input);
     processor.input.connect(processor.subBass);
@@ -199,7 +203,8 @@ export function createHellProcessor(audioContext, inputNode, outputNode) {
     processor.lowMidControl.connect(processor.bodyGain);
     processor.bodyGain.connect(processor.safetyCompressor);
 
-    processor.lowMidControl.connect(processor.distortionDrive);
+    processor.lowMidControl.connect(processor.distortionCompressor);
+    processor.distortionCompressor.connect(processor.distortionDrive);
     processor.distortionDrive.connect(processor.saturation);
     processor.saturation.connect(processor.distortionHighpass);
     processor.distortionHighpass.connect(processor.distortionBite);
@@ -224,12 +229,26 @@ export class HellEffect extends AudioEffect {
     }
 
     setupTimeUpdate(audio, audioContext, progressBar, dryGainNode, wetGainNode) {
+        const originalPlaybackRate = audio.playbackRate || 1;
+        const originalPreservesPitch = audio.preservesPitch;
+        let wasInRegion = null;
+
         const handleTimeUpdate = () => {
             const inRegion = isTimeInSelectedRegions(progressBar, audio.currentTime);
             const now = audioContext.currentTime;
 
             dryGainNode.gain.setTargetAtTime(inRegion ? 0 : 1, now, 0.045);
             wetGainNode.gain.setTargetAtTime(inRegion ? 1 : 0, now, 0.06);
+
+            if (inRegion !== wasInRegion) {
+                // Tape-style slowdown: lowering playbackRate with pitch
+                // preservation disabled lowers tempo and pitch together.
+                audio.preservesPitch = inRegion ? false : originalPreservesPitch;
+                audio.playbackRate = inRegion
+                    ? originalPlaybackRate * HELL_PLAYBACK_RATE
+                    : originalPlaybackRate;
+                wasInRegion = inRegion;
+            }
         };
 
         audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -241,6 +260,8 @@ export class HellEffect extends AudioEffect {
                 Object.values(this.processor).forEach(node => node.disconnect?.());
                 this.processor = null;
             }
+            audio.playbackRate = originalPlaybackRate;
+            audio.preservesPitch = originalPreservesPitch;
             wetGainNode.gain.setValueAtTime(0, audioContext.currentTime);
             dryGainNode.gain.setValueAtTime(1, audioContext.currentTime);
         };

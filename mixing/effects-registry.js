@@ -90,15 +90,10 @@ export class EffectsRegistry {
             });
         }
 
-        // Speed and Nightcore both own playbackRate/pitch. Hell is purely an
-        // audio processor now, but the two full presets remain exclusive.
-        if (['speed', 'nightcore'].includes(effectKey) && !effect.active) {
-            ['speed', 'nightcore'].forEach(key => {
-                if (key !== effectKey && this.effects[key]?.active) this.deactivateEffect(key);
-            });
-        }
-        if (['nightcore', 'hell'].includes(effectKey) && !effect.active) {
-            ['nightcore', 'hell'].forEach(key => {
+        // Only one effect may own playbackRate/pitch at a time.
+        const playbackOwners = ['speed', 'nightcore', 'hell'];
+        if (playbackOwners.includes(effectKey) && !effect.active) {
+            playbackOwners.forEach(key => {
                 if (key !== effectKey && this.effects[key]?.active) this.deactivateEffect(key);
             });
         }
