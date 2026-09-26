@@ -609,6 +609,83 @@ function waitForMediaState(audio, eventName, isReady, timeout = 1500) {
         timeoutId = setTimeout(() => finish(isReady()), timeout);
     });
 }
+const SMOOTH_SKIP_UNSAFE_EFFECTS = new Set(['loop', 'smoothLoop', 'reverse']);
+
+function getSmoothSkipDestinationState(progressBar, targetTime) {
+    const conflicts = {
+        speed: new Set(['nightcore']),
+        nightcore: new Set(['speed', 'hell']),
+        hell: new Set(['nightcore'])
+    };
+    const legacySpeedFactors = {
+        speed075: 0.75,
+        speed090: 0.9,
+        speed110: 1.1,
+        speed125: 1.25
+    };
+    const regions = getRegionsAtTime(progressBar, targetTime)
+        .sort((left, right) => {
+            if (left.id === progressBar.activeRegionId) return -1;
+            if (right.id === progressBar.activeRegionId) return 1;
+            return (left.end - left.start) - (right.end - right.start);
+        });
+    const assignments = new Map();
+
+    regions.forEach(region => {
+        region.effects.forEach(storedKey => {
+            const key = legacySpeedFactors[storedKey] !== undefined ? 'speed' : storedKey;
+            if (SMOOTH_SKIP_UNSAFE_EFFECTS.has(key) || assignments.has(key)) return;
+            if ([...assignments.keys()].some(activeKey => conflicts[key]?.has(activeKey))) return;
+            assignments.set(key, { region, storedKey });
+        });
+    });
+
+    const settings = {};
+    assignments.forEach(({ region, storedKey }, key) => {
+        if (region.effectSettings[key] !== undefined) {
+            settings[key] = region.effectSettings[key];
+        } else if (key === 'speed' && legacySpeedFactors[storedKey] !== undefined) {
+            settings.speed = { speedFactor: legacySpeedFactors[storedKey] };
+        }
+    });
+    return { keys: [...assignments.keys()], settings };
+}
+
+async function alignAudioForSmoothHandoff(mainAudio, secondaryAudio) {
+    let predictedSeekDelay = 0;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const startedAt = performance.now();
+        const duration = Number.isFinite(mainAudio.duration) ? mainAudio.duration : secondaryAudio.duration;
+        const target = Math.max(0, Math.min(
+            secondaryAudio.currentTime + predictedSeekDelay * secondaryAudio.playbackRate,
+            duration - 0.01
+        ));
+        mainAudio.currentTime = target;
+
+        const seekReady = await waitForMediaState(
+            mainAudio,
+            'seeked',
+            () => !mainAudio.seeking,
+            1200
+        );
+        if (!seekReady) return false;
+        await waitForMediaState(
+            mainAudio,
+            'canplay',
+            () => mainAudio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA,
+            2500
+        );
+
+        const elapsed = (performance.now() - startedAt) / 1000;
+        const drift = secondaryAudio.currentTime - mainAudio.currentTime;
+        if (Math.abs(drift) <= 0.045) return true;
+        predictedSeekDelay = Math.min(0.3, Math.max(0, elapsed + drift / secondaryAudio.playbackRate));
+    }
+
+    return Math.abs(secondaryAudio.currentTime - mainAudio.currentTime) <= 0.1;
+}
+
 
 async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
     if (activeSmoothSkips.has(audio)) return;
@@ -630,6 +707,8 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
     let mainAudioGainNode = null;
     let crossfadeGainNode = null;
     let mainGainBeforeSkip = 1;
+    const mainMutedBeforeSkip = audio.muted;
+    let mutedForHandoff = false;
 
     try {
         crossfadeAudio.load();
@@ -654,24 +733,31 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
         const seekReady = await waitForMediaState(
             crossfadeAudio,
             'seeked',
-            () => !crossfadeAudio.seeking
+            () => !crossfadeAudio.seeking,
+            3000
         );
         if (!seekReady) {
             throw new Error('Smooth Skip could not prepare the destination position.');
         }
-        await waitForMediaState(
+        const canPlayReady = await waitForMediaState(
             crossfadeAudio,
             'canplay',
-            () => crossfadeAudio.readyState >= 3
+            () => crossfadeAudio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA,
+            5000
         );
+        if (!canPlayReady) {
+            throw new Error('Smooth Skip destination did not buffer in time.');
+        }
 
-        // Route the temporary element through the same Web Audio graph and
-        // mirror active effects. Crossfading source gains leaves audio.volume
-        // untouched, so the user's volume and slider never become transient.
-        const activeKeys = audioEffects ? audioEffects.getActiveEffectKeys() : [];
+        // Process the incoming audio with the effects configured at the
+        // marker destination. Using the source region's effects here caused a
+        // second audible timbre jump when the main player completed handoff.
+        const destinationState = getSmoothSkipDestinationState(progressBar, safeTarget);
         tempEffects = setupAudioEffects(crossfadeAudio, progressBar);
-        tempEffects.setEffectSettings(audioEffects?.getEffectSettings?.() || {});
-        activeKeys.forEach(key => tempEffects.activateEffect(key));
+        tempEffects.setEffectSettings(destinationState.settings);
+        tempEffects.setActiveEffectKeys(
+            destinationState.keys.filter(key => tempEffects.hasEffect(key))
+        );
 
         const mainContext = getAudioContext(audio);
         const secondaryContext = getAudioContext(crossfadeAudio);
@@ -682,18 +768,23 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
             throw new Error('Smooth Skip audio graph is unavailable.');
         }
 
-        const now = audioContext.currentTime;
+        const preparationNow = audioContext.currentTime;
         mainGainBeforeSkip = mainAudioGainNode.gain.value;
-        crossfadeGainNode.gain.cancelScheduledValues(now);
-        crossfadeGainNode.gain.setValueAtTime(0, now);
+        crossfadeGainNode.gain.cancelScheduledValues(preparationNow);
+        crossfadeGainNode.gain.setValueAtTime(0, preparationNow);
 
         await crossfadeAudio.play();
 
+        // play() may wait for decoding. Scheduling with the timestamp captured
+        // before that await put part (or all) of the curve in the past.
+        const fadeNow = audioContext.currentTime + 0.02;
+        const destinationSeconds = (crossfadeAudio.duration - crossfadeAudio.currentTime) /
+            Math.max(0.01, crossfadeAudio.playbackRate);
         const duration = Math.min(
             SMOOTH_SKIP_DURATION,
-            Math.max(0.12, availableSeconds - 0.05)
+            Math.max(0.12, destinationSeconds - 0.05)
         );
-        const curveSteps = 64;
+        const curveSteps = 128;
         const fadeOutCurve = new Float32Array(curveSteps);
         const fadeInCurve = new Float32Array(curveSteps);
         for (let index = 0; index < curveSteps; index++) {
@@ -702,20 +793,21 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
             fadeInCurve[index] = Math.sin(ratio * Math.PI / 2);
         }
 
-        mainAudioGainNode.gain.cancelScheduledValues(now);
-        mainAudioGainNode.gain.setValueCurveAtTime(fadeOutCurve, now, duration);
-        crossfadeGainNode.gain.setValueCurveAtTime(fadeInCurve, now, duration);
-        await new Promise(resolve => setTimeout(resolve, duration * 1000));
+        mainAudioGainNode.gain.cancelScheduledValues(fadeNow);
+        mainAudioGainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeNow, duration);
+        crossfadeGainNode.gain.setValueCurveAtTime(fadeInCurve, fadeNow, duration);
+        await new Promise(resolve => setTimeout(resolve, (duration + 0.03) * 1000));
 
-        // Handoff at the position that is actually audible. The old code used
-        // target + fixed duration, which drifted whenever loading or playback
-        // rate differed and exposed the edit.
-        const handoffTime = Math.min(audio.duration - 0.01, crossfadeAudio.currentTime);
-        audio.currentTime = Math.max(0, handoffTime);
-        await waitForMediaState(audio, 'seeked', () => !audio.seeking, 150);
-
-        const handoffDuration = 0.08;
-        const handoffNow = audioContext.currentTime;
+        // Keep the secondary path fully audible while the main element seeks,
+        // buffers and compensates for time spent decoding. Only cross back
+        // once both media clocks are close enough to hide the handoff.
+        audio.muted = true;
+        mutedForHandoff = true;
+        const aligned = await alignAudioForSmoothHandoff(audio, crossfadeAudio);
+        const remainingDrift = Math.abs(crossfadeAudio.currentTime - audio.currentTime);
+        const handoffDuration = aligned
+            ? Math.max(0.1, Math.min(0.18, 0.1 + remainingDrift))
+            : 0.22;
         const handoffInCurve = new Float32Array(curveSteps);
         const handoffOutCurve = new Float32Array(curveSteps);
         for (let index = 0; index < curveSteps; index++) {
@@ -723,11 +815,19 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
             handoffInCurve[index] = mainGainBeforeSkip * Math.sin(ratio * Math.PI / 2);
             handoffOutCurve[index] = Math.cos(ratio * Math.PI / 2);
         }
-        mainAudioGainNode.gain.cancelScheduledValues(handoffNow);
+
+        const silenceNow = audioContext.currentTime;
+        mainAudioGainNode.gain.cancelScheduledValues(silenceNow);
+        mainAudioGainNode.gain.setValueAtTime(0, silenceNow);
+        const destinationUsesReverse = audioEffects?.getActiveEffectKeys().includes('reverse');
+        audio.muted = mainMutedBeforeSkip || destinationUsesReverse;
+        mutedForHandoff = false;
+
+        const handoffNow = audioContext.currentTime + 0.015;
         mainAudioGainNode.gain.setValueCurveAtTime(handoffInCurve, handoffNow, handoffDuration);
         crossfadeGainNode.gain.cancelScheduledValues(handoffNow);
         crossfadeGainNode.gain.setValueCurveAtTime(handoffOutCurve, handoffNow, handoffDuration);
-        await new Promise(resolve => setTimeout(resolve, handoffDuration * 1000 + 20));
+        await new Promise(resolve => setTimeout(resolve, (handoffDuration + 0.04) * 1000));
     } catch (error) {
         console.error('Smooth Skip error:', error);
         // If preparation fails, seeking is preferable to playing the wrong
@@ -743,6 +843,10 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
             const now = audioContext.currentTime;
             crossfadeGainNode.gain.cancelScheduledValues(now);
             crossfadeGainNode.gain.setValueAtTime(0, now);
+        }
+        if (mutedForHandoff) {
+            const destinationUsesReverse = audioEffects?.getActiveEffectKeys().includes('reverse');
+            audio.muted = mainMutedBeforeSkip || destinationUsesReverse;
         }
         crossfadeAudio.pause();
         tempEffects?.cleanup();
