@@ -252,8 +252,8 @@ function createFilterControls(effect, key, repositionMenu, onChange) {
         resonanceSlider.value = String(settings.Q);
         cutoffValue.textContent = formatFrequency(settings.frequency);
         resonanceValue.textContent = settings.Q.toFixed(1);
-    };
         onChange?.(settings);
+    };
 
     cutoffSlider.addEventListener('input', event => {
         effect.setFrequency(sliderToFrequency(event.target.value, config.min, config.max));
