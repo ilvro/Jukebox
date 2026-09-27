@@ -1972,6 +1972,16 @@ function createTrackUI(songId, audio, playerContainer) {
     });
     
     let waveformSetupStarted = false;
+    const refreshWaveformOverlay = () => {
+        updateWaveformProgress(
+            audio,
+            waveformCanvas,
+            progressBar,
+            hoveredBar,
+            hoveredTime,
+            hoveredMarker
+        );
+    };
     const setupTrackWaveform = () => {
         if (waveformSetupStarted || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
         waveformSetupStarted = true;
@@ -1980,10 +1990,13 @@ function createTrackUI(songId, audio, playerContainer) {
 
         if (audio.duration > MAX_SAFE_WAVEFORM_DURATION) {
             createLightweightWaveform(waveformCanvas);
+            refreshWaveformOverlay();
         } else {
             // Every real waveform goes through one bounded queue. Rapidly
             // opening several songs can no longer start many full decoders.
-            generateWaveformLazy(audio, waveformCanvas, songId);
+            // A lightweight waveform makes regions and markers available
+            // immediately; this redraws them when the real data is ready.
+            generateWaveformLazy(audio, waveformCanvas, songId, refreshWaveformOverlay);
         }
     };
     const handleWaveformMetadata = () => {
@@ -3151,14 +3164,18 @@ async function generateWaveformDirect(audio, canvas, songId) {
     }
 }
 
-function createLightweightWaveform(canvas) {
+function createLightweightWaveform(canvas, { permanent = true } = {}) {
     canvas.width = MAX_WAVEFORM_WIDTH_LONG;
     const waveformData = Array.from({ length: MAX_WAVEFORM_WIDTH_LONG }, (_, index) => ({
         average: 0.08 + (index % 5) * 0.006,
         peak: 0.14 + (index % 7) * 0.005
     }));
     canvas.waveformData = waveformData;
-    canvas.dataset.lightweightWaveform = 'true';
+    if (permanent) {
+        canvas.dataset.lightweightWaveform = 'true';
+    } else {
+        delete canvas.dataset.lightweightWaveform;
+    }
     drawWaveform(canvas, waveformData);
 }
 
@@ -3172,25 +3189,25 @@ function cancelWaveformGeneration(songId, canvas = null) {
     if (active && (canvas === null || active.canvas === canvas)) active.controller.abort();
 }
 
-function generateWaveformLazy(audio, canvas, songId) {
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#222';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#666';
-    ctx.font = '10px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('Loading...', canvas.width / 2, canvas.height / 2);
-    
+function generateWaveformLazy(audio, canvas, songId, onWaveformChange) {
     if (waveformCache.has(songId)) {
         const cachedData = waveformCache.get(songId);
         canvas.waveformData = cachedData;
         drawWaveform(canvas, cachedData);
+        onWaveformChange?.();
         return;
     }
+
+    // Regions and markers do not depend on the expensive audio decoding.
+    // Give them drawable data immediately instead of leaving an empty canvas.
+    createLightweightWaveform(canvas, { permanent: false });
+    canvas.dataset.waveformLoading = 'true';
+    canvas.setAttribute('aria-busy', 'true');
+    onWaveformChange?.();
     
     // Keep the newest canvas as a follow-up when this song is reopened while
     // an older, now-cancelled generation is still unwinding.
-    waveformGenerationQueue.set(songId, { audio, canvas });
+    waveformGenerationQueue.set(songId, { audio, canvas, onWaveformChange });
     processWaveformQueue();
 }
 
@@ -3204,14 +3221,14 @@ async function processWaveformQueue() {
         return;
     }
     
-    const [songId, { audio, canvas }] = nextEntry;
+    const [songId, { audio, canvas, onWaveformChange }] = nextEntry;
     waveformGenerationQueue.delete(songId);
     currentGenerations++;
     const controller = new AbortController();
     waveformGenerationControllers.set(songId, { controller, canvas });
     
     try {
-        await generateWaveformActual(audio, canvas, songId, controller.signal);
+        await generateWaveformActual(audio, canvas, songId, controller.signal, onWaveformChange);
     } catch (error) {
         if (error.name !== 'AbortError') console.error('Waveform generation failed:', error);
     } finally {
@@ -3224,13 +3241,16 @@ async function processWaveformQueue() {
     }
 }
 
-async function generateWaveformActual(audio, canvas, songId, signal) {
+async function generateWaveformActual(audio, canvas, songId, signal, onWaveformChange) {
     try {
         if (waveformCache.has(songId)) {
             const cachedData = waveformCache.get(songId);
             if (!signal.aborted && canvas.isConnected) {
                 canvas.waveformData = cachedData;
                 drawWaveform(canvas, cachedData);
+                delete canvas.dataset.waveformLoading;
+                canvas.removeAttribute('aria-busy');
+                onWaveformChange?.();
             }
             return;
         }
@@ -3300,15 +3320,19 @@ async function generateWaveformActual(audio, canvas, songId, signal) {
         if (canvas.isConnected) {
             canvas.waveformData = waveformData;
             drawWaveform(canvas, waveformData);
+            delete canvas.dataset.waveformLoading;
+            canvas.removeAttribute('aria-busy');
+            onWaveformChange?.();
         }
 
     } catch (error) {
         if (error.name === 'AbortError') return;
         console.error("Waveform generation error:", error);
         if (canvas.isConnected) {
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#333';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // Keep the usable lightweight timeline when decoding fails.
+            delete canvas.dataset.waveformLoading;
+            canvas.removeAttribute('aria-busy');
+            onWaveformChange?.();
         }
     }
 }
