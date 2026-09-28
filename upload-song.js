@@ -772,20 +772,25 @@ async function savePreset() {
     }
 }
 
-function createPresetLoadIndicator(totalSongs) {
+function createPresetLoadIndicator(totalSongs = null, initialLabel = 'Loading preset…') {
     document.querySelector('.preset-load-indicator')?.remove();
+    const hasKnownTotal = Number.isFinite(totalSongs);
 
     const indicator = document.createElement('div');
     indicator.className = 'preset-load-indicator';
     indicator.setAttribute('role', 'status');
     indicator.setAttribute('aria-live', 'polite');
+    indicator.setAttribute('aria-busy', 'true');
 
     const label = document.createElement('div');
     label.className = 'preset-load-label';
-    label.textContent = `Loading songs… 0 / ${totalSongs}`;
+    label.textContent = hasKnownTotal
+        ? `Loading songs… 0 / ${totalSongs}`
+        : initialLabel;
 
     const progress = document.createElement('div');
     progress.className = 'preset-load-progress';
+    progress.classList.toggle('indeterminate', !hasKnownTotal);
     const progressFill = document.createElement('div');
     progressFill.className = 'preset-load-progress-fill';
     progress.appendChild(progressFill);
@@ -799,6 +804,7 @@ function updatePresetLoadIndicator(indicator, loaded, total) {
     const label = indicator.querySelector('.preset-load-label');
     const progressFill = indicator.querySelector('.preset-load-progress-fill');
     if (label) label.textContent = `Loading songs… ${loaded} / ${total}`;
+    progressFill?.parentElement?.classList.remove('indeterminate');
     if (progressFill) progressFill.style.width = `${total > 0 ? (loaded / total) * 100 : 100}%`;
 }
 
@@ -976,6 +982,18 @@ async function loadPreset() {
 }
 
 async function loadSamplePreset() {
+    if (loadSampleBtn.classList.contains('is-loading')) return;
+
+    const buttonLabel = loadSampleBtn.querySelector('label');
+    const originalButtonLabel = buttonLabel?.textContent || 'Load Sample Preset';
+    const loadIndicator = createPresetLoadIndicator(null, 'Loading default preset…');
+    let keepErrorVisible = false;
+
+    loadSampleBtn.classList.add('is-loading');
+    loadSampleBtn.setAttribute('aria-disabled', 'true');
+    loadSampleBtn.setAttribute('aria-busy', 'true');
+    if (buttonLabel) buttonLabel.textContent = 'Loading…';
+
     try {
         console.log('Loading sample preset...');
 
@@ -987,6 +1005,7 @@ async function loadSamplePreset() {
         
         const presetMetadata = await metadataResponse.json();
         console.log('Loaded preset metadata:', presetMetadata);
+        updatePresetLoadIndicator(loadIndicator, 0, presetMetadata.length);
 
         clearAllSongs();
         expandedHotkeyEffectsSongId = null;
@@ -1040,6 +1059,7 @@ async function loadSamplePreset() {
         // processes batches of song to avoid overwhelming the browser (way faster this way)
         const BATCH_SIZE = 5;
         const totalSongs = presetMetadata.length;
+        let loadedCount = 0;
         
         for (let i = 0; i < totalSongs; i += BATCH_SIZE) {
             const batch = presetMetadata.slice(i, i + BATCH_SIZE);
@@ -1075,6 +1095,9 @@ async function loadSamplePreset() {
                 }
                 if (song.hotkey) assignHotkey(song.hotkey, songItem, song.hotkeyEffects);
             });
+
+            loadedCount += songBatch.length;
+            updatePresetLoadIndicator(loadIndicator, loadedCount, totalSongs);
             
             // give the browser a break
             await new Promise(resolve => setTimeout(resolve, 0));
@@ -1083,7 +1106,26 @@ async function loadSamplePreset() {
         console.log('Loaded sample preset');
         document.dispatchEvent(new Event('songsUpdated'));
     } catch (error) {
+        keepErrorVisible = true;
         console.error('Error loading sample preset:', error);
+        loadIndicator.classList.add('error');
+        loadIndicator.setAttribute('aria-busy', 'false');
+        const label = loadIndicator.querySelector('.preset-load-label');
+        const progress = loadIndicator.querySelector('.preset-load-progress');
+        const progressFill = loadIndicator.querySelector('.preset-load-progress-fill');
+        if (label) label.textContent = 'Could not load the default preset.';
+        progress?.classList.remove('indeterminate');
+        if (progressFill) progressFill.style.width = '100%';
+        setTimeout(() => loadIndicator.remove(), 4000);
+    } finally {
+        loadSampleBtn.classList.remove('is-loading');
+        loadSampleBtn.removeAttribute('aria-disabled');
+        loadSampleBtn.removeAttribute('aria-busy');
+        if (buttonLabel) buttonLabel.textContent = originalButtonLabel;
+        if (!keepErrorVisible) {
+            loadIndicator.setAttribute('aria-busy', 'false');
+            loadIndicator.remove();
+        }
     }
 }
 

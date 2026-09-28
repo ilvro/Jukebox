@@ -197,6 +197,12 @@ button {
     position: relative;
 }
 
+.upload-container.is-loading {
+    pointer-events: none;
+    opacity: 0.65;
+    border-bottom: 1px solid rgb(43, 219, 160);
+}
+
 .upload-container:hover {
     border-bottom: 1px solid rgb(43, 219, 160);
 }
@@ -741,6 +747,34 @@ button {
     border-radius: inherit;
     background: #2bdba0;
     transition: width 0.12s ease;
+}
+
+.preset-load-progress.indeterminate .preset-load-progress-fill {
+    width: 42%;
+    animation: preset-load-indeterminate 1s ease-in-out infinite;
+}
+
+.preset-load-indicator.error {
+    color: #ff8a72;
+}
+
+.preset-load-indicator.error .preset-load-progress-fill {
+    background: #ff8a72;
+}
+
+@keyframes preset-load-indeterminate {
+    from {
+        transform: translateX(-110%);
+    }
+    to {
+        transform: translateX(270%);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .preset-load-progress.indeterminate .preset-load-progress-fill {
+        animation-duration: 2s;
+    }
 }
 
 /* ------ hotkey panel (toggled like the player) ------ */

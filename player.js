@@ -74,7 +74,6 @@ const MARKER_HIT_RADIUS_PX = 7;
 const REGION_HANDLE_HIT_RADIUS_PX = 8;
 const MARKER_TIME_EPSILON = 0.001;
 const DEFAULT_MARKER_COLOR = '#ffaa00';
-const SMOOTH_SKIP_DURATION = 2.5;
 
 if (masterVolumeSlider) {
     masterVolumeSlider.addEventListener('input', () => {
@@ -764,7 +763,7 @@ async function alignAudioForSmoothHandoff(mainAudio, secondaryAudio) {
 }
 
 
-async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) {
+async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, options = {}) {
     if (activeSmoothSkips.has(audio)) return;
     if (audio.paused) {
         audio.currentTime = targetTime;
@@ -772,6 +771,12 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
     }
 
     activeSmoothSkips.add(audio);
+    const configuredDuration = Number(options.duration ?? getFadeDuration());
+    const requestedDuration = Number.isFinite(configuredDuration)
+        ? Math.max(0.04, configuredDuration)
+        : Math.max(0.04, getFadeDuration());
+    const completeAtSourceTime = Number(options.completeAtSourceTime);
+    const hasCompletionDeadline = Number.isFinite(completeAtSourceTime);
     const crossfadeAudio = new Audio(audio.src);
     crossfadeAudio.preload = 'auto';
     crossfadeAudio.volume = audio.volume;
@@ -857,9 +862,22 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects) 
         const fadeNow = audioContext.currentTime + 0.02;
         const destinationSeconds = (crossfadeAudio.duration - crossfadeAudio.currentTime) /
             Math.max(0.01, crossfadeAudio.playbackRate);
+        const sourceRate = Math.max(0.01, Math.abs(audio.playbackRate) || 1);
+        const secondsUntilDeadline = hasCompletionDeadline
+            ? (completeAtSourceTime - audio.currentTime) / sourceRate
+            : Number.POSITIVE_INFINITY;
+
+        // Loading/seek preparation can consume part of the advance window.
+        // Shorten only the remaining curve so its audible end still lands on
+        // the source marker instead of drifting past it.
+        if (hasCompletionDeadline && secondsUntilDeadline <= 0.04) {
+            audio.currentTime = safeTarget;
+            return;
+        }
         const duration = Math.min(
-            SMOOTH_SKIP_DURATION,
-            Math.max(0.12, destinationSeconds - 0.05)
+            requestedDuration,
+            Math.max(0.04, destinationSeconds - 0.05),
+            Math.max(0.04, secondsUntilDeadline - 0.02)
         );
         const curveSteps = 128;
         const fadeOutCurve = new Float32Array(curveSteps);
@@ -2014,13 +2032,68 @@ function createTrackUI(songId, audio, playerContainer) {
     // timeline never fires an automation accidentally.
     const firedMarkerEvents = new Set();
     const recentMarkerActions = [];
-    let previousMarkerScanTime = audio.currentTime;
+    // Track creation can lag playback by a few milliseconds. Starting the
+    // first scan at zero prevents an early Fade To window from being missed.
+    let previousMarkerScanTime = audio.currentTime <= 0.5 ? 0 : audio.currentTime;
     let markerEventRunning = false;
     let suppressMarkerScanUntil = 0;
+    let markerEventTimer = null;
 
     const handleMarkerSeeking = () => {
+        if (markerEventTimer !== null) clearTimeout(markerEventTimer);
+        markerEventTimer = null;
         previousMarkerScanTime = audio.currentTime;
         suppressMarkerScanUntil = performance.now() + 180;
+    };
+
+    const getMarkerEventTriggerTime = (markerTime, markerEvent) => {
+        if (markerEvent.type !== 'smoothJump') return markerTime;
+
+        // Fade duration is measured in real seconds, while markers use media
+        // time. Account for playback speed so both clocks reach the marker together.
+        const playbackRate = Math.max(0.01, Math.abs(audio.playbackRate) || 1);
+        const leadTime = Math.max(0, getFadeDuration()) * playbackRate;
+        return Math.max(MARKER_TIME_EPSILON * 2, markerTime - leadTime);
+    };
+
+    const clearMarkerEventTimer = () => {
+        if (markerEventTimer !== null) clearTimeout(markerEventTimer);
+        markerEventTimer = null;
+    };
+
+    // timeupdate is deliberately throttled by browsers and can be hundreds of
+    // milliseconds late. Keep one cheap timer aimed at the next marker trigger;
+    // scanMarkerEvents remains the source of truth when that timer wakes up.
+    const scheduleNextMarkerEvent = () => {
+        clearMarkerEventTimer();
+        if (audio.paused || markerEventRunning) return;
+
+        const currentTime = audio.currentTime;
+        const nextTrigger = (songMarkers[songId] || [])
+            .map(markerTime => {
+                const markerEvent = getMarkerEvent(songId, markerTime);
+                return {
+                    markerTime,
+                    markerEvent,
+                    triggerTime: markerEvent?.enabled
+                        ? getMarkerEventTriggerTime(markerTime, markerEvent)
+                        : Number.POSITIVE_INFINITY
+                };
+            })
+            .filter(({ markerTime, markerEvent, triggerTime }) =>
+                triggerTime > currentTime + MARKER_TIME_EPSILON &&
+                !(markerEvent?.once && firedMarkerEvents.has(markerLabelKey(markerTime)))
+            )
+            .sort((left, right) => left.triggerTime - right.triggerTime)[0];
+        if (!nextTrigger) return;
+
+        const playbackRate = Math.max(0.01, Math.abs(audio.playbackRate) || 1);
+        const delay = ((nextTrigger.triggerTime - currentTime) / playbackRate) * 1000;
+        markerEventTimer = setTimeout(() => {
+            markerEventTimer = null;
+            scanMarkerEvents();
+            scheduleNextMarkerEvent();
+        }, Math.max(0, delay));
     };
 
     const runMarkerEvent = async (markerTime, markerEvent) => {
@@ -2051,13 +2124,18 @@ function createTrackUI(songId, audio, playerContainer) {
             } else if (markerEvent.type === 'smoothJump') {
                 const target = findMarkerAtTime(songId, markerEvent.targetTime);
                 if (target !== null) {
-                    await smoothSkipToMarker(audio, target, progressBar, audioEffects);
+                    const duration = Math.max(0, getFadeDuration());
+                    await smoothSkipToMarker(audio, target, progressBar, audioEffects, {
+                        duration,
+                        completeAtSourceTime: markerTime
+                    });
                 }
             }
         } finally {
             previousMarkerScanTime = audio.currentTime;
             suppressMarkerScanUntil = performance.now() + 180;
             markerEventRunning = false;
+            scheduleNextMarkerEvent();
         }
     };
 
@@ -2072,17 +2150,29 @@ function createTrackUI(songId, audio, playerContainer) {
             return;
         }
 
-        const crossedMarker = (songMarkers[songId] || []).find(markerTime =>
-            markerTime > previousMarkerScanTime + MARKER_TIME_EPSILON &&
-            markerTime <= currentTime + 0.03 &&
-            getMarkerEvent(songId, markerTime)?.enabled
-        );
+        const crossedEvent = (songMarkers[songId] || [])
+            .map(markerTime => {
+                const markerEvent = getMarkerEvent(songId, markerTime);
+                return {
+                    markerTime,
+                    markerEvent,
+                    triggerTime: markerEvent?.enabled
+                        ? getMarkerEventTriggerTime(markerTime, markerEvent)
+                        : Number.POSITIVE_INFINITY
+                };
+            })
+            .filter(({ markerEvent, triggerTime }) =>
+                triggerTime > previousMarkerScanTime + MARKER_TIME_EPSILON &&
+                triggerTime <= currentTime +
+                    (markerEvent?.type === 'smoothJump' ? 0.003 : 0.03)
+            )
+            .sort((left, right) => left.triggerTime - right.triggerTime)[0];
         previousMarkerScanTime = currentTime;
-        if (crossedMarker === undefined) return;
+        if (!crossedEvent) return;
 
-        const markerEvent = getMarkerEvent(songId, crossedMarker);
-        if (!markerEvent || (markerEvent.once && firedMarkerEvents.has(markerLabelKey(crossedMarker)))) return;
-        void runMarkerEvent(crossedMarker, markerEvent);
+        const { markerTime, markerEvent } = crossedEvent;
+        if (!markerEvent || (markerEvent.once && firedMarkerEvents.has(markerLabelKey(markerTime)))) return;
+        void runMarkerEvent(markerTime, markerEvent);
     };
 
     const handleMarkerPlaybackStart = () => {
@@ -2091,6 +2181,7 @@ function createTrackUI(songId, audio, playerContainer) {
             firedMarkerEvents.clear();
             recentMarkerActions.length = 0;
         }
+        scheduleNextMarkerEvent();
     };
 
     // stored so we can remove it in cleanup() instead of stacking a new one every render
@@ -2098,13 +2189,20 @@ function createTrackUI(songId, audio, playerContainer) {
         progressBar.value = audio.currentTime;
         updateTimeDisplay();
         scanMarkerEvents();
+        scheduleNextMarkerEvent();
         requestAnimationFrame(() => {
             updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime);
         });
     };
     audio.addEventListener('seeking', handleMarkerSeeking);
     audio.addEventListener('play', handleMarkerPlaybackStart);
+    audio.addEventListener('pause', clearMarkerEventTimer);
+    audio.addEventListener('ratechange', scheduleNextMarkerEvent);
     audio.addEventListener('timeupdate', handleTimeUpdate);
+    if (!audio.paused) {
+        scanMarkerEvents();
+        scheduleNextMarkerEvent();
+    }
 
     progressBar.addEventListener('contextmenu', (event) => {
         event.preventDefault();
@@ -3043,6 +3141,9 @@ function createTrackUI(songId, audio, playerContainer) {
             audio.removeEventListener('timeupdate', handleTimeUpdate);
             audio.removeEventListener('seeking', handleMarkerSeeking);
             audio.removeEventListener('play', handleMarkerPlaybackStart);
+            audio.removeEventListener('pause', clearMarkerEventTimer);
+            audio.removeEventListener('ratechange', scheduleNextMarkerEvent);
+            clearMarkerEventTimer();
             audio.removeEventListener('play', startRegionEffectMonitor);
             audio.removeEventListener('timeupdate', syncRegionAudioEffects);
             audio.removeEventListener('seeking', syncRegionAudioEffects);
