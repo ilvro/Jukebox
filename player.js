@@ -3117,6 +3117,11 @@ function createTrackUI(songId, audio, playerContainer) {
             persistRegionConfiguration();
             syncRegionAudioEffects(true);
 
+            if (volumeControl && Number.isFinite(Number(sceneState.volume))) {
+                volumeControl.value = String(sceneState.volume);
+                updateVolumeSlider(volumeControl);
+            }
+
             updateProgressBarGradient(progressBar, audio);
             requestAnimationFrame(() => {
                 updateWaveformProgress(audio, waveformCanvas, progressBar, hoveredBar, hoveredTime, hoveredMarker);
@@ -3912,6 +3917,9 @@ export function fadeIn(targetSongId) {
                 updatePlayerUI();
             }
         })();
+    } else {
+        const targetVol = targetState.volume ?? targetAudio.volume;
+        animateVolume(targetAudio, targetAudio.volume, targetVol, fadeDuration);
     }
 }
 

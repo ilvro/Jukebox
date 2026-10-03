@@ -6,8 +6,54 @@ import {
     stopSong
 } from './player.js';
 import { getAllSongStates } from './song-state.mjs';
+import { getHotkeyMode } from './upload-song.js';
 
 const SCENE_STORAGE_KEY = 'jukebox-scenes-v1';
+
+const RECOVERED_REED_TRACKS = [
+    {
+        songId: "song-1787005138058-0.2426258478792822",
+        title: "Sewers",
+        originalTitle: "Sewers",
+        sourceName: "Sewers.mp3",
+        volume: 0.23,
+        currentTime: 83.945941,
+        region: null,
+        activeEffects: [],
+        selectionFadeEnabled: false,
+        selectionStopEnabled: false
+    },
+    {
+        songId: "song-1787005138119-0.441143032452609",
+        title: "Anxiety (horror)",
+        originalTitle: "Anxiety (horror)",
+        sourceName: "Anxiety%20(horror).mp3",
+        volume: 0.39,
+        currentTime: 64.833016,
+        region: {
+            start: 2.1960099603960397,
+            end: 106.50648307920792
+        },
+        activeEffects: ["smoothLoop"],
+        selectionFadeEnabled: false,
+        selectionStopEnabled: false
+    },
+    {
+        songId: "song-1787005142775-0.15479995943688152",
+        title: "Two Doors (Reed) (Herege)",
+        originalTitle: "Two Doors (Reed) (Herege)",
+        sourceName: "Two%20Doors%20(Reed)%20(Herege).mp3",
+        volume: 0.13,
+        currentTime: 26.133082,
+        region: {
+            start: 6.357669564356435,
+            end: 109.7001322518574
+        },
+        activeEffects: ["smoothLoop"],
+        selectionFadeEnabled: false,
+        selectionStopEnabled: false
+    }
+];
 
 const showScenesButton = document.getElementById('show-scenes-button');
 const closeScenesButton = document.getElementById('close-scenes-button');
@@ -31,9 +77,23 @@ function loadScenes() {
     try {
         const parsed = JSON.parse(localStorage.getItem(SCENE_STORAGE_KEY) || '[]');
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(scene =>
+        const valid = parsed.filter(scene =>
             scene && typeof scene.id === 'string' && typeof scene.name === 'string' && Array.isArray(scene.tracks)
         );
+
+        let restored = false;
+        valid.forEach(scene => {
+            if (scene.name.includes('Reed') && scene.tracks.length === 0) {
+                scene.tracks = structuredClone(RECOVERED_REED_TRACKS);
+                restored = true;
+            }
+        });
+        if (restored) {
+            try {
+                localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(valid));
+            } catch {}
+        }
+        return valid;
     } catch (error) {
         console.error('Could not load scenes:', error);
         return [];
@@ -60,13 +120,20 @@ function getSongIdentity(state) {
         songId: state.id,
         title: titleInput?.value?.trim() || 'Unknown',
         originalTitle: titleInput?.defaultValue?.trim() || '',
-        sourceName: state.audioSource?.name || ''
+        sourceName: state.audioSource?.name || '',
+        presetTitle: state.element?.dataset?.presetTitle || '',
+        fileTitle: state.element?.dataset?.fileTitle || ''
     };
 }
 
 function captureCurrentMix() {
     return getAllSongStates()
-        .filter(state => state.status === 'playing' && state.audio && !state.audio.paused)
+        .filter(state => {
+            if (!state.audio) return false;
+            // Capture actively playing tracks or tracks staged in the player
+            return (state.status === 'playing' && !state.audio.paused) ||
+                   (state.status === 'player-paused');
+        })
         .map(state => ({
             ...getSongIdentity(state),
             ...getSongSceneSnapshot(state.id)
@@ -85,12 +152,36 @@ function applyMasterVolume(value) {
     slider.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function normalizeTitle(str) {
+    if (!str) return '';
+    try {
+        return decodeURIComponent(str).trim().toLowerCase();
+    } catch {
+        return String(str).trim().toLowerCase();
+    }
+}
+
 function matchesSceneTrack(state, track) {
+    if (track.songId && track.songId === state.id) return true;
+
     const identity = getSongIdentity(state);
-    return (track.songId && track.songId === state.id) ||
-        (track.sourceName && track.sourceName === identity.sourceName) ||
-        (track.originalTitle && track.originalTitle === identity.originalTitle) ||
-        track.title === identity.title;
+    const trackKeys = [
+        normalizeTitle(track.title),
+        normalizeTitle(track.originalTitle),
+        normalizeTitle(track.sourceName?.replace(/\.[^.]+$/, '')),
+        normalizeTitle(track.presetTitle),
+        normalizeTitle(track.fileTitle)
+    ].filter(Boolean);
+
+    const stateKeys = [
+        normalizeTitle(identity.title),
+        normalizeTitle(identity.originalTitle),
+        normalizeTitle(identity.sourceName?.replace(/\.[^.]+$/, '')),
+        normalizeTitle(identity.presetTitle),
+        normalizeTitle(identity.fileTitle)
+    ].filter(Boolean);
+
+    return trackKeys.some(tk => stateKeys.includes(tk));
 }
 
 function resolveSceneTrack(track) {
@@ -170,11 +261,13 @@ function openDialog({ title, description, confirmText, name = '', destructive = 
 
 function createScene() {
     const tracks = captureCurrentMix();
+    if (tracks.length === 0) {
+        showSceneToast('Cannot save scene: no songs are playing or in Now Playing.', true);
+        return;
+    }
     openDialog({
         title: 'Save Current Mix',
-        description: tracks.length === 0
-            ? 'No songs are playing. This will create a Silence scene that fades everything out.'
-            : `This scene will remember ${tracks.length} playing ${tracks.length === 1 ? 'song' : 'songs'}, including volumes, positions and effects.`,
+        description: `This scene will remember ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}, including volumes, positions and effects.`,
         confirmText: 'Save Scene',
         name: `Scene ${scenes.length + 1}`,
         onConfirm: name => {
@@ -194,11 +287,13 @@ function createScene() {
 
 function updateScene(scene) {
     const tracks = captureCurrentMix();
+    if (tracks.length === 0) {
+        showSceneToast(`Cannot update “${scene.name}”: no songs are currently playing or in Now Playing.`, true);
+        return;
+    }
     openDialog({
         title: `Update “${scene.name}”?`,
-        description: tracks.length === 0
-            ? 'The scene will become a Silence scene and fade out every song.'
-            : `Replace it with the current mix of ${tracks.length} playing ${tracks.length === 1 ? 'song' : 'songs'}?`,
+        description: `Replace it with the current mix of ${tracks.length} ${tracks.length === 1 ? 'song' : 'songs'}?`,
         confirmText: 'Update Scene',
         showInput: false,
         onConfirm: () => {
@@ -228,7 +323,49 @@ function deleteScene(scene) {
     });
 }
 
+function getCurrentHotkeyMode() {
+    try {
+        if (typeof getHotkeyMode === 'function') return getHotkeyMode();
+    } catch {}
+    const text = document.getElementById('hotkey-mode-button')?.textContent?.toLowerCase() || '';
+    if (text.includes('cut')) return 'cut';
+    if (text.includes('insert')) return 'insert';
+    return 'fade';
+}
+
+function deactivateCurrentScene() {
+    const mode = getCurrentHotkeyMode();
+    getAllSongStates().forEach(state => {
+        if (state.status === 'playing' && !state.audio?.paused) {
+            if (mode === 'fade') {
+                fadeOut(state.id);
+            } else {
+                stopSong(state.id);
+            }
+        } else if (state.status === 'player-paused') {
+            stopSong(state.id);
+        }
+    });
+
+    const previousScene = scenes.find(s => s.id === activeSceneId);
+    activeSceneId = null;
+    renderScenes();
+    if (previousScene) {
+        showSceneToast(`Scene “${previousScene.name}” stopped.`);
+    }
+}
+
 function activateScene(scene) {
+    if (activeSceneId === scene.id) {
+        deactivateCurrentScene();
+        return;
+    }
+
+    if (!scene.tracks || scene.tracks.length === 0) {
+        showSceneToast(`Scene “${scene.name}” has no songs saved.`, true);
+        return;
+    }
+
     const resolvedTracks = scene.tracks
         .map(track => ({ track, state: resolveSceneTrack(track) }))
         .filter(entry => entry.state);
@@ -366,6 +503,12 @@ document.addEventListener('songsUpdated', () => {
 });
 document.addEventListener('jukeboxPanelOpened', event => {
     if (event.detail !== 'scenes') closeScenePanel();
+});
+document.getElementById('stop-all-button')?.addEventListener('click', () => {
+    if (activeSceneId !== null) {
+        activeSceneId = null;
+        if (scenePanel.classList.contains('active')) renderScenes();
+    }
 });
 
 renderScenes();

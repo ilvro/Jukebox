@@ -47,6 +47,10 @@ const HOTKEY_MODE_LABELS = {
 };
 let hotkeyMode = 'fade';
 
+export function getHotkeyMode() {
+    return hotkeyMode;
+}
+
 const hotkeyModeBtn = document.getElementById('hotkey-mode-button');
 const hotkeyPanel = document.getElementById('hotkey-panel');
 const hotkeyPanelList = document.getElementById('hotkey-panel-list');
