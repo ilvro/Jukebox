@@ -1,6 +1,7 @@
 import { setupAudioEffects } from './mixing/index.js';
 import { setMasterVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
+import { setAccurateTimeout, setAccurateInterval, clearAccurateTimeout, clearAccurateInterval } from './background-timer.js';
 import {
     DEFAULT_REGION_COLOR,
     addSelectedRegion,
@@ -673,7 +674,7 @@ function waitForMediaState(audio, eventName, isReady, timeout = 1500) {
     return new Promise(resolve => {
         let timeoutId;
         const finish = (ready) => {
-            clearTimeout(timeoutId);
+            clearAccurateTimeout(timeoutId);
             audio.removeEventListener(eventName, handleReady);
             audio.removeEventListener('error', handleError);
             resolve(ready);
@@ -682,7 +683,7 @@ function waitForMediaState(audio, eventName, isReady, timeout = 1500) {
         const handleError = () => finish(false);
         audio.addEventListener(eventName, handleReady, { once: true });
         audio.addEventListener('error', handleError, { once: true });
-        timeoutId = setTimeout(() => finish(isReady()), timeout);
+        timeoutId = setAccurateTimeout(() => finish(isReady()), timeout);
     });
 }
 const SMOOTH_SKIP_UNSAFE_EFFECTS = new Set(['loop', 'smoothLoop', 'reverse']);
@@ -891,7 +892,7 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, 
         mainAudioGainNode.gain.cancelScheduledValues(fadeNow);
         mainAudioGainNode.gain.setValueCurveAtTime(fadeOutCurve, fadeNow, duration);
         crossfadeGainNode.gain.setValueCurveAtTime(fadeInCurve, fadeNow, duration);
-        await new Promise(resolve => setTimeout(resolve, (duration + 0.03) * 1000));
+        await new Promise(resolve => setAccurateTimeout(resolve, (duration + 0.03) * 1000));
 
         // Keep the secondary path fully audible while the main element seeks,
         // buffers and compensates for time spent decoding. Only cross back
@@ -922,7 +923,7 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, 
         mainAudioGainNode.gain.setValueCurveAtTime(handoffInCurve, handoffNow, handoffDuration);
         crossfadeGainNode.gain.cancelScheduledValues(handoffNow);
         crossfadeGainNode.gain.setValueCurveAtTime(handoffOutCurve, handoffNow, handoffDuration);
-        await new Promise(resolve => setTimeout(resolve, (handoffDuration + 0.04) * 1000));
+        await new Promise(resolve => setAccurateTimeout(resolve, (handoffDuration + 0.04) * 1000));
     } catch (error) {
         console.error('Smooth Skip error:', error);
         // If preparation fails, seeking is preferable to playing the wrong
@@ -1623,7 +1624,7 @@ function createTrackUI(songId, audio, playerContainer) {
     let effectTailActive = false;
 
     const cancelEffectTail = () => {
-        if (effectTailTimer !== null) clearTimeout(effectTailTimer);
+        if (effectTailTimer !== null) clearAccurateTimeout(effectTailTimer);
         effectTailTimer = null;
         effectTailActive = false;
     };
@@ -1732,6 +1733,7 @@ function createTrackUI(songId, audio, playerContainer) {
     progressBar.step = 0.001;
     progressBar.value = audio.currentTime;
     progressBar.className = 'progress-bar';
+    progressBar.audio = audio;
     progressContainer.appendChild(progressBar);
 
     const zoomIndicator = document.createElement('span');
@@ -2040,7 +2042,7 @@ function createTrackUI(songId, audio, playerContainer) {
     let markerEventTimer = null;
 
     const handleMarkerSeeking = () => {
-        if (markerEventTimer !== null) clearTimeout(markerEventTimer);
+        if (markerEventTimer !== null) clearAccurateTimeout(markerEventTimer);
         markerEventTimer = null;
         previousMarkerScanTime = audio.currentTime;
         suppressMarkerScanUntil = performance.now() + 180;
@@ -2057,7 +2059,7 @@ function createTrackUI(songId, audio, playerContainer) {
     };
 
     const clearMarkerEventTimer = () => {
-        if (markerEventTimer !== null) clearTimeout(markerEventTimer);
+        if (markerEventTimer !== null) clearAccurateTimeout(markerEventTimer);
         markerEventTimer = null;
     };
 
@@ -2089,7 +2091,7 @@ function createTrackUI(songId, audio, playerContainer) {
 
         const playbackRate = Math.max(0.01, Math.abs(audio.playbackRate) || 1);
         const delay = ((nextTrigger.triggerTime - currentTime) / playbackRate) * 1000;
-        markerEventTimer = setTimeout(() => {
+        markerEventTimer = setAccurateTimeout(() => {
             markerEventTimer = null;
             scanMarkerEvents();
             scheduleNextMarkerEvent();
@@ -2220,7 +2222,14 @@ function createTrackUI(songId, audio, playerContainer) {
     let selectionStopArmed = false;
     let selectionFadeState = null;
     let selectionStopRegion = null;
-    let selectionFadeFrameId = null;
+    let selectionFadeTimerId = null;
+
+    const stopSelectionFadeMonitor = () => {
+        if (selectionFadeTimerId !== null) {
+            clearAccurateInterval(selectionFadeTimerId);
+            selectionFadeTimerId = null;
+        }
+    };
 
     const restoreSelectionFadeVolume = () => {
         if (selectionFadeState) {
@@ -2230,13 +2239,23 @@ function createTrackUI(songId, audio, playerContainer) {
     };
 
     const monitorSelectionFade = () => {
-        selectionFadeFrameId = null;
-        if ((!selectionFadeEnabled && !selectionStopEnabled) || audio.paused) return;
+        if (audio.paused) {
+            stopSelectionFadeMonitor();
+            return;
+        }
+
+        refreshSelectionActionFlags();
+        if (!selectionFadeEnabled && !selectionStopEnabled) {
+            restoreSelectionFadeVolume();
+            stopSelectionFadeMonitor();
+            return;
+        }
 
         if (getSelectedRegions(progressBar).length === 0) {
             restoreSelectionFadeVolume();
             selectionStopArmed = false;
             selectionStopRegion = null;
+            stopSelectionFadeMonitor();
             return;
         }
 
@@ -2261,6 +2280,7 @@ function createTrackUI(songId, audio, playerContainer) {
             if (state) state.currentTime = resumeTime;
             audio.volume = restoredVolume;
             updatePlayerUI();
+            stopSelectionFadeMonitor();
             return;
         }
 
@@ -2319,18 +2339,19 @@ function createTrackUI(songId, audio, playerContainer) {
                 restoreSelectionFadeVolume();
             }
         }
-
-        selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
     };
 
     const startSelectionFadeMonitor = () => {
-        if ((selectionFadeEnabled || selectionStopEnabled) && !audio.paused && selectionFadeFrameId === null) {
-            selectionFadeFrameId = requestAnimationFrame(monitorSelectionFade);
+        refreshSelectionActionFlags();
+        if ((selectionFadeEnabled || selectionStopEnabled) && !audio.paused && selectionFadeTimerId === null) {
+            monitorSelectionFade();
+            selectionFadeTimerId = setAccurateInterval(monitorSelectionFade, 25);
         }
     };
 
     const handleSelectionFadePlay = () => startSelectionFadeMonitor();
     audio.addEventListener('play', handleSelectionFadePlay);
+    audio.addEventListener('pause', stopSelectionFadeMonitor);
 
     let isEditingAudio = false;
     const deleteSelectedRegion = async () => {
@@ -2375,8 +2396,7 @@ function createTrackUI(songId, audio, playerContainer) {
             selectionStopRegion = null;
             delete songSelectionFadeEffects[songId];
             delete songSelectionStopEffects[songId];
-            if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-            selectionFadeFrameId = null;
+            stopSelectionFadeMonitor();
             restoreSelectionFadeVolume();
 
             const state = getSongState(songId);
@@ -2647,7 +2667,7 @@ function createTrackUI(songId, audio, playerContainer) {
         speed125: 1.25
     };
     let runtimeEffectSignature = '';
-    let regionEffectFrameId = null;
+    let regionEffectTimerId = null;
 
     syncRegionAudioEffects = (force = false) => {
         const regions = getRegionsAtTime(progressBar, audio.currentTime)
@@ -2672,9 +2692,23 @@ function createTrackUI(songId, audio, playerContainer) {
             const previousRegionId = progressBar.runtimeEffectRegionIds?.[key];
             const previousRegion = getSelectedRegions(progressBar)
                 .find(region => region.id === previousRegionId && region.effects.includes(key));
-            if (previousRegion && audio.currentTime >= previousRegion.start &&
-                audio.currentTime <= previousRegion.end + 0.5) {
+            if (!previousRegion) return;
+
+            const isCrossfading = key === 'smoothLoop' && audioEffects.hasEffect('smoothLoop') &&
+                audioEffects.isCrossfading?.();
+
+            if (isCrossfading) {
                 assignments.set(key, previousRegion);
+                return;
+            }
+
+            if (audio.currentTime >= previousRegion.start) {
+                if (audio.currentTime <= previousRegion.end + 0.5) {
+                    assignments.set(key, previousRegion);
+                } else if (!audio.seeking && !audio.paused && audio.currentTime > previousRegion.end) {
+                    assignments.set(key, previousRegion);
+                    audio.currentTime = previousRegion.start;
+                }
             }
         });
 
@@ -2706,21 +2740,23 @@ function createTrackUI(songId, audio, playerContainer) {
     };
 
     const monitorRegionEffects = () => {
-        regionEffectFrameId = null;
-        syncRegionAudioEffects();
-        if (!audio.paused) {
-            regionEffectFrameId = requestAnimationFrame(monitorRegionEffects);
+        if (audio.paused) {
+            stopRegionEffectMonitor();
+            return;
         }
+        syncRegionAudioEffects();
     };
     const startRegionEffectMonitor = () => {
         syncRegionAudioEffects(true);
-        if (!audio.paused && regionEffectFrameId === null) {
-            regionEffectFrameId = requestAnimationFrame(monitorRegionEffects);
+        if (!audio.paused && regionEffectTimerId === null) {
+            regionEffectTimerId = setAccurateInterval(monitorRegionEffects, 25);
         }
     };
     const stopRegionEffectMonitor = () => {
-        if (regionEffectFrameId !== null) cancelAnimationFrame(regionEffectFrameId);
-        regionEffectFrameId = null;
+        if (regionEffectTimerId !== null) {
+            clearAccurateInterval(regionEffectTimerId);
+            regionEffectTimerId = null;
+        }
     };
     audio.addEventListener('play', startRegionEffectMonitor);
     audio.addEventListener('timeupdate', syncRegionAudioEffects);
@@ -2927,8 +2963,7 @@ function createTrackUI(songId, audio, playerContainer) {
                 selectionStopRegion = null;
                 delete songSelectionFadeEffects[songId];
                 delete songSelectionStopEffects[songId];
-                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-                selectionFadeFrameId = null;
+                stopSelectionFadeMonitor();
                 restoreSelectionFadeVolume();
                 audioEffects.cleanup();
                 clearSelectedRegions(progressBar);
@@ -3077,8 +3112,7 @@ function createTrackUI(songId, audio, playerContainer) {
                 startSelectionFadeMonitor();
             } else {
                 restoreSelectionFadeVolume();
-                if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-                selectionFadeFrameId = null;
+                stopSelectionFadeMonitor();
             }
             persistRegionConfiguration();
             syncRegionAudioEffects(true);
@@ -3110,7 +3144,7 @@ function createTrackUI(songId, audio, playerContainer) {
             if (!(tailDuration > 0)) return false;
             cancelEffectTail();
             effectTailActive = true;
-            effectTailTimer = setTimeout(() => {
+            effectTailTimer = setAccurateTimeout(() => {
                 effectTailTimer = null;
                 effectTailActive = false;
                 updatePlayerUI();
@@ -3150,11 +3184,11 @@ function createTrackUI(songId, audio, playerContainer) {
             audio.removeEventListener('pause', stopRegionEffectMonitor);
             stopRegionEffectMonitor();
             audio.removeEventListener('play', handleSelectionFadePlay);
+            audio.removeEventListener('pause', stopSelectionFadeMonitor);
             audio.removeEventListener('loadedmetadata', handleWaveformMetadata);
             audio.removeEventListener('loadedmetadata', handleHotkeyEffectsMetadata);
             cancelWaveformGeneration(songId, waveformCanvas);
-            if (selectionFadeFrameId !== null) cancelAnimationFrame(selectionFadeFrameId);
-            selectionFadeFrameId = null;
+            stopSelectionFadeMonitor();
             restoreSelectionFadeVolume();
             audioEffects.cleanup();
             trackDiv.remove();
@@ -3632,8 +3666,16 @@ function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
     };
     activeFadeTargets.set(audio, targetRef);
 
+    let intervalId = null;
+
     const step = () => {
-        if (activeFadeTargets.get(audio) !== targetRef) return;
+        if (activeFadeTargets.get(audio) !== targetRef) {
+            if (intervalId !== null) {
+                clearAccurateInterval(intervalId);
+                intervalId = null;
+            }
+            return;
+        }
 
         const elapsed = performance.now() - targetRef.startedAt;
         const progress = targetRef.duration <= 0
@@ -3647,9 +3689,11 @@ function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
         audio.volume = targetRef.startVolume +
             (targetRef.value - targetRef.startVolume) * eased;
 
-        if (progress < 1) {
-            requestAnimationFrame(step);
-        } else {
+        if (progress >= 1) {
+            if (intervalId !== null) {
+                clearAccurateInterval(intervalId);
+                intervalId = null;
+            }
             audio.volume = targetRef.value;
             if (activeFadeTargets.get(audio) === targetRef) {
                 activeFadeTargets.delete(audio);
@@ -3658,7 +3702,10 @@ function animateVolume(audio, startVolume, endVolume, duration, onComplete) {
         }
     };
 
-    requestAnimationFrame(step);
+    step();
+    if (activeFadeTargets.get(audio) === targetRef && targetRef.duration > 0) {
+        intervalId = setAccurateInterval(step, 20);
+    }
 }
 
 // Redirect from the volume currently being heard and use only the time left
@@ -3786,7 +3833,7 @@ export function fadeTo(targetSongId) {
         targetAudio.currentTime = savedTime;
         
         (async () => {
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await new Promise(resolve => setAccurateTimeout(resolve, 50));
             
             try {
                 await targetAudio.play();
@@ -3794,7 +3841,7 @@ export function fadeTo(targetSongId) {
                 targetItem.classList.add('playing');
                 updatePlayerUI();
                 
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setAccurateTimeout(resolve, 100));
                 
                 targetAudio.muted = false;
                 animateVolume(targetAudio, 0, targetState.volume ?? savedVolume, fadeDuration);
@@ -3845,7 +3892,7 @@ export function fadeIn(targetSongId) {
         targetAudio.currentTime = savedTime;
         
         (async () => {
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await new Promise(resolve => setAccurateTimeout(resolve, 50));
             
             try {
                 await targetAudio.play();
@@ -3853,7 +3900,7 @@ export function fadeIn(targetSongId) {
                 targetItem.classList.add('playing');
                 updatePlayerUI();
                 
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setAccurateTimeout(resolve, 100));
                 
                 targetAudio.muted = false;
                 animateVolume(targetAudio, 0, targetState.volume ?? savedVolume, fadeDuration);

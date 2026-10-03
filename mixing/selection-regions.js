@@ -154,9 +154,11 @@ export function findSelectedRegionForEffectAtTime(progressBar, time, effectKey) 
 
 export function getRuntimeEffectRegion(progressBar, effectKey) {
     const regionId = progressBar.runtimeEffectRegionIds?.[effectKey];
-    const runtimeRegion = getSelectedRegions(progressBar).find(region => region.id === regionId) ||
-        findSelectedRegionForEffectAtTime(progressBar, Number(progressBar.value), effectKey);
+    const runtimeRegion = getSelectedRegions(progressBar).find(region => region.id === regionId);
     if (runtimeRegion) return runtimeRegion;
+    const currentTime = progressBar.audio ? progressBar.audio.currentTime : Number(progressBar.value);
+    const timeRegion = findSelectedRegionForEffectAtTime(progressBar, currentTime, effectKey);
+    if (timeRegion) return timeRegion;
     const activeRegion = getActiveSelectedRegion(progressBar);
     return activeRegion?.effects.includes(effectKey) ? activeRegion : null;
 }

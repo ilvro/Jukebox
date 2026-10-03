@@ -36,6 +36,7 @@ export function setupAudioEffects(audio, progressBar, actions = {}) {
         createContextMenu: handleContextMenu,
         cleanup,
         isLooping: () => effectsRegistry.isLooping(),
+        isCrossfading: () => Boolean(effectsRegistry.effects.smoothLoop?.crossfading),
         activateEffect: (key) => effectsRegistry.activateEffect(key),
         hasEffect: (key) => Boolean(effectsRegistry.effects[effectsRegistry.normalizeEffectKey(key)]),
         getActiveEffectKeys: () => effectsRegistry.getActiveEffectKeys(),

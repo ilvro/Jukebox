@@ -2,6 +2,7 @@ import { initializeAudioContext, disconnectAudioContext, getAudioContext } from 
 import { AudioEffect } from './base-effect.js';
 import { getRuntimeEffectRegion, getSelectedRegions, isTimeInSelectedRegions } from '../selection-regions.js';
 import { createEchoChain, createReverbChain } from './time-effects.js';
+import { setAccurateInterval, clearAccurateInterval, setAccurateTimeout, clearAccurateTimeout } from '../../background-timer.js';
 
 export class LoopEffect extends AudioEffect {
     constructor() {
@@ -24,9 +25,9 @@ export class LoopEffect extends AudioEffect {
         };
     
         audio.addEventListener('timeupdate', handleTimeUpdate);
-        const monitorIntervalId = setInterval(handleTimeUpdate, 25);
+        const monitorIntervalId = setAccurateInterval(handleTimeUpdate, 25);
         this.cleanup = () => {
-            clearInterval(monitorIntervalId);
+            clearAccurateInterval(monitorIntervalId);
             audio.removeEventListener('timeupdate', handleTimeUpdate);
         };
     }
@@ -64,14 +65,15 @@ export class SmoothLoopEffect extends AudioEffect {
         // hidden (only getting throttled after several minutes in the
         // background), which matches how Loop's own timeupdate-based
         // monitoring already survives being backgrounded.
-        const MONITOR_INTERVAL_MS = 50;
+        const MONITOR_INTERVAL_MS = 25;
         const monitorLoop = () => {
             if (!this.active) return;
 
-            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop') || this.currentRegion;
             const start = region?.start;
             const end = region?.end;
             if (start !== undefined && end !== undefined && end > start) {
+                this.currentRegion = region;
                 this.updateNativeLoopSafety(start, end);
                 const regionDuration = end - start;
                 const crossfadeDuration = Math.min(
@@ -90,11 +92,11 @@ export class SmoothLoopEffect extends AudioEffect {
             }
         };
         monitorLoop();
-        this.monitorIntervalId = setInterval(monitorLoop, MONITOR_INTERVAL_MS);
+        this.monitorIntervalId = setAccurateInterval(monitorLoop, MONITOR_INTERVAL_MS);
 
         this.cleanup = () => {
             if (this.monitorIntervalId !== null) {
-                clearInterval(this.monitorIntervalId);
+                clearAccurateInterval(this.monitorIntervalId);
                 this.monitorIntervalId = null;
             }
             audio.loop = this.previousNativeLoop;
@@ -138,7 +140,7 @@ export class SmoothLoopEffect extends AudioEffect {
         if (secondaryAudio.readyState < HTMLMediaElement.HAVE_METADATA) {
             await Promise.race([
                 new Promise(resolve => secondaryAudio.addEventListener('loadedmetadata', resolve, { once: true })),
-                new Promise(resolve => setTimeout(resolve, 500))
+                new Promise(resolve => setAccurateTimeout(resolve, 500))
             ]);
         }
         if (!this.active) {
@@ -147,15 +149,15 @@ export class SmoothLoopEffect extends AudioEffect {
         }
 
         try {
-            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop') || this.currentRegion;
             if (!region) throw new Error('Smooth Loop region is no longer available');
+            this.currentRegion = region;
             secondaryAudio.currentTime = region.start;
         } catch (error) {
             console.error('Could not seek smooth-loop standby audio:', error);
-            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+            const region = getRuntimeEffectRegion(progressBar, 'smoothLoop') || this.currentRegion;
             if (region) audio.currentTime = region.start;
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             this.prepareCrossfadeAudio();
             return;
         }
@@ -174,7 +176,6 @@ export class SmoothLoopEffect extends AudioEffect {
         } catch (error) {
             console.error('crossfade error:', error);
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             return;
         }
 
@@ -184,17 +185,16 @@ export class SmoothLoopEffect extends AudioEffect {
         }
 
         const now = audioContext.currentTime;
-        const activeRegion = getRuntimeEffectRegion(progressBar, 'smoothLoop');
+        const activeRegion = getRuntimeEffectRegion(progressBar, 'smoothLoop') || this.currentRegion;
         if (!activeRegion) {
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             return;
         }
+        this.currentRegion = activeRegion;
         const remaining = activeRegion.end - audio.currentTime;
         if (remaining <= 0.03) {
             audio.currentTime = activeRegion.start;
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             this.prepareCrossfadeAudio();
             return;
         }
@@ -203,7 +203,6 @@ export class SmoothLoopEffect extends AudioEffect {
             // the standby media was becoming ready. Retry at the next real
             // crossfade window instead of fading at the beginning.
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             this.prepareCrossfadeAudio();
             return;
         }
@@ -223,20 +222,27 @@ export class SmoothLoopEffect extends AudioEffect {
         this.crossfadeGain.gain.cancelScheduledValues(now);
         this.crossfadeGain.gain.setValueCurveAtTime(fadeInCurve, now, duration);
 
-        this.transitionTimeoutId = setTimeout(() => {
+        this.transitionTimeoutId = setAccurateTimeout(() => {
             if (!this.active) return;
             this.finishCrossfade(duration, mainAudioGainNode, audioContext);
         }, duration * 1000);
     }
 
     async finishCrossfade(duration, mainAudioGainNode, audioContext) {
-        if (!this.active || !this.crossfadeAudio || !this.crossfadeGain) return;
+        if (!this.active || !this.crossfadeAudio || !this.crossfadeGain) {
+            this.stopCrossfadeLogic();
+            return;
+        }
 
         // Seek the silent main element to the exact position currently heard
         // from the secondary element. Keep the secondary audible until the
         // seek completes, which removes the buffering gap from the handoff.
-        const activeRegion = getRuntimeEffectRegion(this.progressBar, 'smoothLoop');
-        if (!activeRegion) return;
+        const activeRegion = getRuntimeEffectRegion(this.progressBar, 'smoothLoop') || this.currentRegion;
+        if (!activeRegion) {
+            this.stopCrossfadeLogic();
+            return;
+        }
+        this.currentRegion = activeRegion;
         const targetTime = Math.min(
             activeRegion.end,
             this.crossfadeAudio.currentTime || activeRegion.start + duration
@@ -246,10 +252,13 @@ export class SmoothLoopEffect extends AudioEffect {
         if (this.audio.seeking) {
             await Promise.race([
                 new Promise(resolve => this.audio.addEventListener('seeked', resolve, { once: true })),
-                new Promise(resolve => setTimeout(resolve, 80))
+                new Promise(resolve => setAccurateTimeout(resolve, 80))
             ]);
         }
-        if (!this.active || !this.crossfadeGain) return;
+        if (!this.active || !this.crossfadeGain) {
+            this.stopCrossfadeLogic();
+            return;
+        }
 
         const handoffDuration = 0.06;
         const now = audioContext.currentTime;
@@ -260,9 +269,8 @@ export class SmoothLoopEffect extends AudioEffect {
         this.crossfadeGain.gain.setValueAtTime(this.crossfadeGain.gain.value, now);
         this.crossfadeGain.gain.linearRampToValueAtTime(0, now + handoffDuration);
 
-        this.transitionTimeoutId = setTimeout(() => {
+        this.transitionTimeoutId = setAccurateTimeout(() => {
             this.stopCrossfadeLogic();
-            this.crossfading = false;
             this.prepareCrossfadeAudio();
         }, handoffDuration * 1000 + 15);
     }
@@ -287,7 +295,7 @@ export class SmoothLoopEffect extends AudioEffect {
 
     stopCrossfade() {
         if (this.transitionTimeoutId) {
-            clearTimeout(this.transitionTimeoutId);
+            clearAccurateTimeout(this.transitionTimeoutId);
             this.transitionTimeoutId = null;
         }
         
@@ -786,27 +794,29 @@ export class PlaybackSpeedEffect extends AudioEffect {
         const startRate = audio.playbackRate;
         const startedAt = performance.now();
         const transitionMs = duration * 1000;
-        const animate = timestamp => {
-            const progress = Math.min(1, (timestamp - startedAt) / transitionMs);
+        const animate = () => {
+            const progress = Math.min(1, (performance.now() - startedAt) / transitionMs);
             // Smoothstep avoids an abrupt change in acceleration at either
             // end while preserving a predictable total transition time.
             const eased = progress * progress * (3 - 2 * progress);
             audio.playbackRate = startRate + (1 - startRate) * eased;
-            if (progress < 1) {
-                this.removalFrameId = requestAnimationFrame(animate);
-            } else {
+            if (progress >= 1) {
+                if (this.removalTimerId !== null) {
+                    clearAccurateInterval(this.removalTimerId);
+                    this.removalTimerId = null;
+                }
                 audio.playbackRate = 1;
-                this.removalFrameId = null;
             }
         };
-        this.removalFrameId = requestAnimationFrame(animate);
+        this.finishPendingDeactivation();
+        this.removalTimerId = setAccurateInterval(animate, 20);
         console.log(`${this.name} effect returning to normal over ${duration}s`);
     }
 
     finishPendingDeactivation() {
-        if (this.removalFrameId !== null) {
-            cancelAnimationFrame(this.removalFrameId);
-            this.removalFrameId = null;
+        if (this.removalTimerId != null) {
+            clearAccurateInterval(this.removalTimerId);
+            this.removalTimerId = null;
         }
         if (this.audio) this.audio.playbackRate = 1;
     }
