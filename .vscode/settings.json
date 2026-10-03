@@ -1,12 +1,22 @@
 {
     "liveServer.settings.ignoreFiles": [
         ".vscode/**",
+        "**/.git/**",
+        "**/node_modules/**",
         "**/*.scss",
         "**/*.sass",
         "**/*.ts",
         "**/sample/**",
         "**/*.mp3",
         "**/*.jpg",
-        "**/preset_metadata.json"
+        "**/*.jpeg",
+        "**/*.png",
+        "**/*.svg",
+        "**/*.json",
+        "**/*.part",
+        "**/*.ytdl",
+        "**/test-results/**",
+        "**/temp/**",
+        "**/tmp/**"
     ]
 }

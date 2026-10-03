@@ -6,6 +6,78 @@
         <title>Jukebox</title>  
         <link rel="stylesheet" href="style.css">
         <link rel="icon" type="image/x-icon" href="images/page_icon.jpg">
+        <script>
+            // Protect active session and in-flight operations against unsolicited Live Server / dev-server reloads
+            (function protectAgainstUnwantedReloads() {
+                if (typeof window === 'undefined') return;
+                const OriginalWebSocket = window.WebSocket;
+                if (!OriginalWebSocket) return;
+
+                function isAppBusy() {
+                    return Boolean(
+                        window.__isDownloading ||
+                        window.__isLoadingPreset ||
+                        window.__isSavingPreset ||
+                        document.getElementById('loading-indicator') ||
+                        document.querySelector('.preset-load-indicator') ||
+                        document.querySelector('.song-item') ||
+                        document.querySelector('.player-item') ||
+                        document.querySelector('.track-container') ||
+                        (document.getElementById('track-list')?.children?.length > 0) ||
+                        (document.getElementById('song-grid')?.children?.length > 0)
+                    );
+                }
+
+                window.WebSocket = function (url, protocols) {
+                    const ws = protocols !== undefined
+                        ? new OriginalWebSocket(url, protocols)
+                        : new OriginalWebSocket(url);
+
+                    const urlStr = String(url || '');
+                    if (urlStr.includes('/ws')) {
+                        let activeHandler = null;
+                        Object.defineProperty(ws, 'onmessage', {
+                            get() {
+                                return activeHandler;
+                            },
+                            set(fn) {
+                                activeHandler = function (event) {
+                                    if (event && event.data === 'reload') {
+                                        if (isAppBusy()) {
+                                            console.warn('[Jukebox] Unsolicited Live Server auto-reload blocked to protect active session / media in progress.');
+                                            return;
+                                        }
+                                    }
+                                    if (typeof fn === 'function') {
+                                        return fn.apply(this, arguments);
+                                    }
+                                };
+                            },
+                            configurable: true
+                        });
+
+                        const originalAddEventListener = ws.addEventListener.bind(ws);
+                        ws.addEventListener = function (type, listener, options) {
+                            if (type === 'message' && typeof listener === 'function') {
+                                const wrappedListener = function (event) {
+                                    if (event && event.data === 'reload') {
+                                        if (isAppBusy()) {
+                                            console.warn('[Jukebox] Unsolicited auto-reload blocked to protect active session / media in progress.');
+                                            return;
+                                        }
+                                    }
+                                    return listener.apply(this, arguments);
+                                };
+                                return originalAddEventListener(type, wrappedListener, options);
+                            }
+                            return originalAddEventListener(type, listener, options);
+                        };
+                    }
+                    return ws;
+                };
+                window.WebSocket.prototype = OriginalWebSocket.prototype;
+            })();
+        </script>
     </head>
 
     <body>

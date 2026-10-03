@@ -105,9 +105,11 @@ app.post('/download/youtube/audio', async (req, res) => {
         const info = await ytdlp(url, {
             dumpSingleJson: true,
             noWarnings: true,
-            noCheckCertificates: true
+            noCheckCertificates: true,
+            noCacheDir: true
         }, {
-            youtubeDLPath: ytdlpPath
+            youtubeDLPath: ytdlpPath,
+            cwd: audioEditDirectory
         });
 
         const videoTitle = sanitizeFilename(info.title || 'audio');
@@ -127,9 +129,11 @@ app.post('/download/youtube/audio', async (req, res) => {
             noWarnings: true,
             noCheckCertificates: true,
             preferFreeFormats: true,
+            noCacheDir: true,
             extractorArgs: 'youtube:player_client=android,web' // bypasses 403
         }, {
-            youtubeDLPath: ytdlpPath
+            youtubeDLPath: ytdlpPath,
+            cwd: audioEditDirectory
         });
 
         audioStream.stdout.pipe(res);
@@ -176,9 +180,11 @@ app.post('/download/youtube/thumbnail', async (req, res) => {
         const info = await ytdlp(url, {
             dumpSingleJson: true,
             noWarnings: true,
-            noCheckCertificates: true
+            noCheckCertificates: true,
+            noCacheDir: true
         }, {
-            youtubeDLPath: ytdlpPath 
+            youtubeDLPath: ytdlpPath,
+            cwd: audioEditDirectory
         });
 
         const thumbnails = info.thumbnails || [];

@@ -410,6 +410,7 @@ window.addEventListener('beforeunload', (event) => {
 
 async function downloadVideo(youtubeLink) {
     isDownloading = true;
+    window.__isDownloading = true;
     const loadingIndicator = createLoadingIndicator();
     
     try {
@@ -497,6 +498,7 @@ async function downloadVideo(youtubeLink) {
         setTimeout(() => {
             removeLoadingIndicator();
             isDownloading = false;
+            window.__isDownloading = false;
         }, 1000);
 
         console.log('Download successful:', videoTitle);
@@ -508,6 +510,7 @@ async function downloadVideo(youtubeLink) {
         setTimeout(() => {
             removeLoadingIndicator();
             isDownloading = false;
+            window.__isDownloading = false;
         }, 5000);
     }
 }
@@ -592,6 +595,7 @@ async function savePreset() {
         return;
     }
 
+    window.__isSavingPreset = true;
     try {
         const directoryHandle = await window.showDirectoryPicker();
         const songItems = getOrderedSongStates().map(state => state.element).filter(Boolean);
@@ -769,6 +773,8 @@ async function savePreset() {
         console.log('saved preset');
     } catch (error) {
         console.error('error saving preset:', error);
+    } finally {
+        window.__isSavingPreset = false;
     }
 }
 
@@ -904,6 +910,7 @@ function createPresetSongItem(song) {
 }
 
 async function loadPreset() {
+    window.__isLoadingPreset = true;
     if (!window.showDirectoryPicker) {
         // android user, use alternate fallback function
         const fileInput = document.createElement('input');
@@ -911,8 +918,15 @@ async function loadPreset() {
         fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
         fileInput.multiple = true;
         fileInput.addEventListener('change', async (event) => {
-            const files = event.target.files;
-            await handleFilesFallback(files);
+            try {
+                const files = event.target.files;
+                await handleFilesFallback(files);
+            } finally {
+                window.__isLoadingPreset = false;
+            }
+        });
+        fileInput.addEventListener('cancel', () => {
+            window.__isLoadingPreset = false;
         });
         fileInput.click();
         return;
@@ -978,12 +992,15 @@ async function loadPreset() {
         document.dispatchEvent(new Event('songsUpdated'));
     } catch (error) {
         console.error('error loading preset: ', error);
+    } finally {
+        window.__isLoadingPreset = false;
     }
 }
 
 async function loadSamplePreset() {
     if (loadSampleBtn.classList.contains('is-loading')) return;
 
+    window.__isLoadingPreset = true;
     const buttonLabel = loadSampleBtn.querySelector('label');
     const originalButtonLabel = buttonLabel?.textContent || 'Load Sample Preset';
     const loadIndicator = createPresetLoadIndicator(null, 'Loading default preset…');
@@ -1118,6 +1135,7 @@ async function loadSamplePreset() {
         if (progressFill) progressFill.style.width = '100%';
         setTimeout(() => loadIndicator.remove(), 4000);
     } finally {
+        window.__isLoadingPreset = false;
         loadSampleBtn.classList.remove('is-loading');
         loadSampleBtn.removeAttribute('aria-disabled');
         loadSampleBtn.removeAttribute('aria-busy');
