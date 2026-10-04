@@ -371,8 +371,6 @@ function activateScene(scene) {
         .filter(entry => entry.state);
     const targetSongIds = new Set(resolvedTracks.map(entry => entry.state.id));
 
-    applyMasterVolume(scene.masterVolume);
-
     getAllSongStates().forEach(state => {
         if (targetSongIds.has(state.id)) return;
         if (state.status === 'playing' && !state.audio?.paused) fadeOut(state.id);

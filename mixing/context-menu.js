@@ -349,7 +349,6 @@ export function createContextMenu(x, y, effectsRegistry, progressBar, updateProg
     // clear effects if no selection
     if (progressBar.selectedStartTime === undefined || progressBar.selectedEndTime === undefined) {
         effectsRegistry.deactivateAllEffects();
-        audio.volume = 1;
         audio.playbackRate = 1.0;
         return;
     }

@@ -214,7 +214,7 @@ export class SmoothLoopEffect extends AudioEffect {
         for (let index = 0; index < curveSteps; index++) {
             const ratio = index / (curveSteps - 1);
             fadeOutCurve[index] = this.mainGainBeforeCrossfade * Math.cos(ratio * Math.PI / 2);
-            fadeInCurve[index] = Math.sin(ratio * Math.PI / 2);
+            fadeInCurve[index] = this.mainGainBeforeCrossfade * Math.sin(ratio * Math.PI / 2);
         }
 
         mainAudioGainNode.gain.cancelScheduledValues(now);

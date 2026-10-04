@@ -20,6 +20,9 @@ function ensureAudioContext() {
         mainGainNode.gain.value = masterVolume;
         mainGainNode.connect(audioContext.destination);
     }
+    if (audioContext.state === 'suspended') {
+        audioContext.resume().catch(() => {});
+    }
     return audioContext;
 }
 
@@ -34,6 +37,25 @@ export function setMasterVolume(value) {
 
 export function getMasterVolume() {
     return masterVolume;
+}
+
+export function setTrackVolume(audio, volume) {
+    if (!audio) return;
+    const safeVolume = Math.max(0, Math.min(1, Number.isFinite(Number(volume)) ? Number(volume) : 1));
+    const entry = audioNodes.get(audio);
+    if (entry?.sourceGainNode) {
+        entry.sourceGainNode.gain.value = safeVolume;
+    }
+    audio.volume = safeVolume;
+}
+
+export function getTrackVolume(audio) {
+    if (!audio) return 1;
+    const entry = audioNodes.get(audio);
+    if (entry?.sourceGainNode && Number.isFinite(entry.sourceGainNode.gain.value)) {
+        return entry.sourceGainNode.gain.value;
+    }
+    return Number.isFinite(audio.volume) ? audio.volume : 1;
 }
 
 // taps the shared output bus into a MediaStream, so whatever is currently
@@ -55,7 +77,7 @@ export function createRecordingTap() {
     };
 }
 
-export function initializeAudioContext(audio) {
+export function initializeAudioContext(audio, initialVolume = undefined) {
     if (!audio) {
         console.error("Audio element is required for initialization");
         return false;
@@ -74,6 +96,10 @@ export function initializeAudioContext(audio) {
             const sourceGainNode = audioContext.createGain();
             const dryGainNode = audioContext.createGain();
             const wetGainNode = audioContext.createGain();
+
+            const safeVolume = Math.max(0, Math.min(1, Number.isFinite(Number(initialVolume)) ? Number(initialVolume) : (Number.isFinite(audio.volume) ? audio.volume : 1)));
+            sourceGainNode.gain.value = safeVolume;
+            audio.volume = safeVolume;
 
             sourceNode.connect(sourceGainNode);
             sourceGainNode.connect(dryGainNode);

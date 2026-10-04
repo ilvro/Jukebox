@@ -1,10 +1,10 @@
-import { initializeAudioContext, disconnectAudioContext } from './audio-context.js';
+import { initializeAudioContext, disconnectAudioContext, setTrackVolume, getTrackVolume } from './audio-context.js';
 import { EffectsRegistry } from './effects-registry.js';
 import { createContextMenu } from './context-menu.js';
 
 export function setupAudioEffects(audio, progressBar, actions = {}) {
     // initialize audio context and create effects registry
-    initializeAudioContext(audio);
+    initializeAudioContext(audio, actions?.initialVolume ?? audio?.volume);
     const effectsRegistry = new EffectsRegistry(audio, progressBar);
     
     function handleContextMenu(x, y, updateProgressBarGradient, updateWaveformProgress) {
@@ -20,14 +20,14 @@ export function setupAudioEffects(audio, progressBar, actions = {}) {
 
     function cleanup() {
         // deactivate all effects and disconnect audio context
-        const currentVolume = audio ? audio.volume : 1;
+        const currentVolume = audio ? getTrackVolume(audio) : 1;
 
         effectsRegistry.deactivateAllEffects();
         disconnectAudioContext(audio);
         
         // reset audio element properties
         if (audio) {
-            audio.volume = currentVolume;
+            setTrackVolume(audio, currentVolume);
             audio.playbackRate = 1;
         }
     }
