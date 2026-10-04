@@ -7,53 +7,9 @@ import {
 } from './player.js';
 import { getAllSongStates } from './song-state.mjs';
 import { getHotkeyMode } from './upload-song.js';
+import { DEFAULT_SCENES } from './default-scenes.js';
 
 const SCENE_STORAGE_KEY = 'jukebox-scenes-v1';
-
-const RECOVERED_REED_TRACKS = [
-    {
-        songId: "song-1787005138058-0.2426258478792822",
-        title: "Sewers",
-        originalTitle: "Sewers",
-        sourceName: "Sewers.mp3",
-        volume: 0.23,
-        currentTime: 83.945941,
-        region: null,
-        activeEffects: [],
-        selectionFadeEnabled: false,
-        selectionStopEnabled: false
-    },
-    {
-        songId: "song-1787005138119-0.441143032452609",
-        title: "Anxiety (horror)",
-        originalTitle: "Anxiety (horror)",
-        sourceName: "Anxiety%20(horror).mp3",
-        volume: 0.39,
-        currentTime: 64.833016,
-        region: {
-            start: 2.1960099603960397,
-            end: 106.50648307920792
-        },
-        activeEffects: ["smoothLoop"],
-        selectionFadeEnabled: false,
-        selectionStopEnabled: false
-    },
-    {
-        songId: "song-1787005142775-0.15479995943688152",
-        title: "Two Doors (Reed) (Herege)",
-        originalTitle: "Two Doors (Reed) (Herege)",
-        sourceName: "Two%20Doors%20(Reed)%20(Herege).mp3",
-        volume: 0.13,
-        currentTime: 26.133082,
-        region: {
-            start: 6.357669564356435,
-            end: 109.7001322518574
-        },
-        activeEffects: ["smoothLoop"],
-        selectionFadeEnabled: false,
-        selectionStopEnabled: false
-    }
-];
 
 const showScenesButton = document.getElementById('show-scenes-button');
 const closeScenesButton = document.getElementById('close-scenes-button');
@@ -76,19 +32,37 @@ let toastTimer = null;
 function loadScenes() {
     try {
         const parsed = JSON.parse(localStorage.getItem(SCENE_STORAGE_KEY) || '[]');
-        if (!Array.isArray(parsed)) return [];
-        const valid = parsed.filter(scene =>
-            scene && typeof scene.id === 'string' && typeof scene.name === 'string' && Array.isArray(scene.tracks)
-        );
+        const valid = Array.isArray(parsed)
+            ? parsed.filter(scene =>
+                scene && typeof scene.id === 'string' && typeof scene.name === 'string' && Array.isArray(scene.tracks)
+            )
+            : [];
 
-        let restored = false;
-        valid.forEach(scene => {
-            if (scene.name.includes('Reed') && scene.tracks.length === 0) {
-                scene.tracks = structuredClone(RECOVERED_REED_TRACKS);
-                restored = true;
+        let modified = false;
+        const existingNames = new Set(valid.map(s => s.name.trim().toLowerCase()));
+        const existingIds = new Set(valid.map(s => s.id));
+
+        DEFAULT_SCENES.forEach(defaultScene => {
+            const key = defaultScene.name.trim().toLowerCase();
+            if (!existingNames.has(key) && !existingIds.has(defaultScene.id)) {
+                valid.push(structuredClone(defaultScene));
+                existingNames.add(key);
+                existingIds.add(defaultScene.id);
+                modified = true;
             }
         });
-        if (restored) {
+
+        valid.forEach(scene => {
+            if (scene.name.includes('Reed') && scene.tracks.length === 0) {
+                const reedTemplate = DEFAULT_SCENES.find(s => s.name.includes('Reed'));
+                if (reedTemplate) {
+                    scene.tracks = structuredClone(reedTemplate.tracks);
+                    modified = true;
+                }
+            }
+        });
+
+        if (modified || valid.length !== (Array.isArray(parsed) ? parsed.length : 0)) {
             try {
                 localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(valid));
             } catch {}
@@ -96,7 +70,7 @@ function loadScenes() {
         return valid;
     } catch (error) {
         console.error('Could not load scenes:', error);
-        return [];
+        return structuredClone(DEFAULT_SCENES);
     }
 }
 
@@ -107,6 +81,37 @@ function saveScenes() {
         console.error('Could not save scenes:', error);
         showSceneToast('Scenes work for this session, but could not be saved.', true);
     }
+}
+
+export function getScenesSnapshot() {
+    return structuredClone(scenes);
+}
+
+export function importPresetScenes(incomingScenes) {
+    if (!Array.isArray(incomingScenes) || incomingScenes.length === 0) return 0;
+
+    const valid = incomingScenes.filter(scene =>
+        scene && typeof scene.id === 'string' && typeof scene.name === 'string' && Array.isArray(scene.tracks)
+    );
+    if (valid.length === 0) return 0;
+
+    let importedCount = 0;
+    valid.forEach(newScene => {
+        const existingIndex = scenes.findIndex(s =>
+            s.id === newScene.id || s.name.trim().toLowerCase() === newScene.name.trim().toLowerCase()
+        );
+        if (existingIndex !== -1) {
+            scenes[existingIndex] = structuredClone(newScene);
+        } else {
+            scenes.push(structuredClone(newScene));
+        }
+        importedCount++;
+    });
+
+    saveScenes();
+    renderScenes();
+    showSceneToast(`Loaded ${importedCount} ${importedCount === 1 ? 'scene' : 'scenes'} from preset.`);
+    return importedCount;
 }
 
 function createSceneId() {
