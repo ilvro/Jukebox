@@ -8,7 +8,6 @@ import {
     getSongState,
     setSongHotkeyEffects
 } from './song-state.mjs';
-import { getScenesSnapshot, importPresetScenes } from './scenes.js';
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -750,16 +749,6 @@ async function savePreset() {
             await presetMetadataWritable.close();
         });
 
-        const currentScenes = getScenesSnapshot();
-        if (Array.isArray(currentScenes) && currentScenes.length > 0) {
-            await runPresetSaveStep('scenes.json', 'save the preset scenes', async () => {
-                const scenesMetadataHandle = await directoryHandle.getFileHandle('scenes.json', { create: true });
-                const scenesWritable = await scenesMetadataHandle.createWritable();
-                await scenesWritable.write(JSON.stringify(currentScenes, null, 2));
-                await scenesWritable.close();
-            });
-        }
-
         // Only advance the in-memory persisted identity after both media and
         // metadata have been committed successfully.
         savedIdentities.forEach(({ songItem, titleInput, currentTitle }) => {
@@ -1003,17 +992,6 @@ async function loadPreset() {
             loadIndicator.remove();
         }
 
-        try {
-            const scenesHandle = await directoryHandle.getFileHandle('scenes.json');
-            const scenesFile = await scenesHandle.getFile();
-            const scenesData = JSON.parse(await scenesFile.text());
-            if (Array.isArray(scenesData) && scenesData.length > 0) {
-                importPresetScenes(scenesData);
-            }
-        } catch (sceneErr) {
-            console.log('No scenes.json in preset directory or could not read:', sceneErr);
-        }
-
         console.log('loaded preset');
         document.dispatchEvent(new Event('songsUpdated'));
     } catch (error) {
@@ -1145,18 +1123,6 @@ async function loadSamplePreset() {
             // give the browser a break
             await new Promise(resolve => setTimeout(resolve, 0));
         }
-
-        try {
-            const scenesResponse = await fetch(`${sampleFolderPath}scenes.json`);
-            if (scenesResponse.ok) {
-                const scenesData = await scenesResponse.json();
-                if (Array.isArray(scenesData) && scenesData.length > 0) {
-                    importPresetScenes(scenesData);
-                }
-            }
-        } catch (sceneErr) {
-            console.log('No sample scenes.json found or could not load:', sceneErr);
-        }
         
         console.log('Loaded sample preset');
         document.dispatchEvent(new Event('songsUpdated'));
@@ -1245,18 +1211,6 @@ async function handleFilesFallback(files) {
         }
         if (hotkey) assignHotkey(hotkey, songItem, hotkeyEffects);
     }
-
-    if (fileMap['scenes.json']) {
-        try {
-            const scenesData = JSON.parse(await fileMap['scenes.json'].text());
-            if (Array.isArray(scenesData) && scenesData.length > 0) {
-                importPresetScenes(scenesData);
-            }
-        } catch (error) {
-            console.error('Error loading scenes.json from fallback:', error);
-        }
-    }
-
     console.log('loaded files via fallback');
     document.dispatchEvent(new Event('songsUpdated'));
 }
