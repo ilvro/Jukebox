@@ -1552,6 +1552,77 @@ button {
     background: rgba(0, 0, 0, 0.46);
 }
 
+#folder-dropdown {
+    margin-left: 10px;
+}
+
+#folder-dropdown-button {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#folder-dropdown-button.selected {
+    color: rgb(43, 219, 160);
+}
+
+.folder-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    white-space: nowrap;
+}
+
+.folder-option-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.folder-option:hover .folder-option-actions {
+    opacity: 1;
+}
+
+.folder-option-actions button {
+    padding: 0 5px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.folder-option-actions button:hover {
+    color: rgb(43, 219, 160);
+}
+
+@media (hover: none) {
+    .folder-option-actions {
+        opacity: 1;
+    }
+}
+
+.folder-picker {
+    position: fixed;
+    z-index: 10000;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 10px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    cursor: default;
+}
+
+.folder-picker-option {
+    padding: 5px 10px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.folder-picker-option:hover {
+    background: #444;
+}
+
 @media (max-width: 850px) {
     .top-header {
         min-height: 96px;
@@ -1992,7 +2063,7 @@ button {
     .genre-filters {
         top: 88px;
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         align-items: center;
         gap: 5px;
         width: 100%;
@@ -2003,6 +2074,7 @@ button {
     }
 
     #searchBar {
+        grid-column: 1 / -1;
         width: 100%;
         min-width: 0;
         margin: 0;
@@ -2015,6 +2087,15 @@ button {
         min-height: 36px;
         margin: 0;
         white-space: nowrap;
+    }
+
+    #folder-dropdown,
+    .filter-dropdown-button,
+    .view-mode-button {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        box-sizing: border-box;
     }
 
     .filter-dropdown-content {

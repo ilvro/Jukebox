@@ -3,12 +3,15 @@ import {
     getSongState,
     reorderSongState
 } from './song-state.mjs';
+import { openDialog } from './scenes.js';
 
 // Filtering + virtualized grid ================================================================================================
 const songGrid = document.getElementById('song-grid');
 const genreMenu = document.getElementById('filter-dropdown');
 const filterDimmer = document.getElementById('filter-dimmer');
 const viewModeButton = document.getElementById('view-mode-button');
+const folderButton = document.getElementById('folder-dropdown-button');
+const folderList = document.getElementById('folder-list');
 const activeFilters = new Set();
 const OVERSCAN_ROWS = 3;
 const FALLBACK_ROW_HEIGHT = 221;
@@ -30,6 +33,10 @@ let renderedEnd = -1;
 let renderedColumns = -1;
 let renderedSignature = '';
 let isCompactView = false;
+// Folders live inside the loaded preset: each card stores its folder name in
+// data-folder. Empty folders only exist for the current session.
+let folders = [];
+let activeFolder = null; // null shows every folder
 
 const topSpacer = document.createElement('div');
 topSpacer.className = 'virtual-grid-spacer virtual-grid-spacer-top';
@@ -67,6 +74,11 @@ function updateAllSongs() {
         .map(state => state.element)
         .filter(song => song?.classList.contains('song-item'));
     allSongs.forEach(cacheSongFilterData);
+    allSongs.forEach(song => {
+        const folder = song.dataset.folder;
+        if (folder && !folders.includes(folder)) folders.push(folder);
+    });
+    renderFolderMenu();
     ensureVirtualGridShell();
 }
 
@@ -225,7 +237,8 @@ function applyFilters() {
     filteredSongs = allSongs.filter(song => {
         const matchesSearch = (song.dataset.searchTitle || '').includes(searchQuery);
         const matchesFilters = activeFilters.size === 0 || songMatchesActiveFilters(song, activeFilters);
-        return matchesSearch && matchesFilters;
+        const matchesFolder = activeFolder === null || song.dataset.folder === activeFolder;
+        return matchesSearch && matchesFilters && matchesFolder;
     });
     scheduleVirtualRender();
 }
@@ -235,17 +248,17 @@ function refreshSongsAndFilters() {
     scheduleFilters();
 }
 
-genreMenu.addEventListener('mouseover', () => {
-    filterDimmer.style.visibility = 'visible';
+// Tracked on the document instead of with mouseleave: the folder menu
+// re-renders its options under the pointer, and a removed hover target never
+// delivers mouseleave to the menu.
+let isFilterDimmerVisible = false;
+document.addEventListener('mouseover', event => {
+    const overMenu = Boolean(event.target.closest?.('.filter-dropdown'));
+    if (overMenu === isFilterDimmerVisible) return;
+    isFilterDimmerVisible = overMenu;
+    filterDimmer.style.visibility = overMenu ? 'visible' : 'hidden';
     setTimeout(() => {
-        filterDimmer.style.opacity = '0.4';
-    }, 10);
-});
-
-genreMenu.addEventListener('mouseleave', () => {
-    filterDimmer.style.visibility = 'hidden';
-    setTimeout(() => {
-        filterDimmer.style.opacity = '0';
+        filterDimmer.style.opacity = overMenu ? '0.4' : '0';
     }, 10);
 });
 
@@ -277,6 +290,200 @@ new ResizeObserver(entries => {
     observedGridWidth = nextWidth;
     scheduleVirtualRender();
 }).observe(songGrid);
+
+// Folders =====================================================================================================================
+export function getActiveFolder() {
+    return activeFolder;
+}
+
+// Called when a different preset replaces the library.
+export function resetFolders() {
+    folders = [];
+    activeFolder = null;
+    closeFolderPicker();
+    renderFolderMenu();
+}
+
+export function setSongFolder(song, folder) {
+    if (folder) song.dataset.folder = folder;
+    else delete song.dataset.folder;
+    refreshSongsAndFilters();
+}
+
+function setActiveFolder(folder) {
+    activeFolder = folder;
+    window.scrollTo({ top: 0 });
+    renderFolderMenu();
+    scheduleFilters();
+}
+
+function askFolderName(options, onConfirm) {
+    openDialog({
+        description: '',
+        placeholder: 'Folder name',
+        ...options,
+        onConfirm: name => {
+            if (name === options.name) return;
+            if (folders.includes(name)) {
+                askFolderName({ ...options, description: `A folder named “${name}” already exists.` }, onConfirm);
+                return;
+            }
+            onConfirm(name);
+        }
+    });
+}
+
+function createFolder(onCreate) {
+    askFolderName({ title: 'New Folder', confirmText: 'Create Folder' }, name => {
+        folders.push(name);
+        onCreate(name);
+    });
+}
+
+function renameFolder(folder) {
+    askFolderName({ title: `Rename “${folder}”`, confirmText: 'Rename Folder', name: folder }, name => {
+        folders[folders.indexOf(folder)] = name;
+        allSongs.forEach(song => {
+            if (song.dataset.folder === folder) song.dataset.folder = name;
+        });
+        if (activeFolder === folder) activeFolder = name;
+        refreshSongsAndFilters();
+    });
+}
+
+function deleteFolder(folder) {
+    const removeFolder = () => {
+        allSongs.forEach(song => {
+            if (song.dataset.folder === folder) delete song.dataset.folder;
+        });
+        folders = folders.filter(name => name !== folder);
+        if (activeFolder === folder) activeFolder = null;
+        refreshSongsAndFilters();
+    };
+
+    if (!allSongs.some(song => song.dataset.folder === folder)) {
+        removeFolder();
+        return;
+    }
+    openDialog({
+        title: `Delete “${folder}”?`,
+        description: 'The songs themselves will not be deleted.',
+        confirmText: 'Delete Folder',
+        destructive: true,
+        showInput: false,
+        onConfirm: removeFolder
+    });
+}
+
+function createFolderAction(label, title, callback) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('click', event => {
+        event.stopPropagation();
+        callback();
+    });
+    return button;
+}
+
+function createFolderOption(label, folder, onClick) {
+    const option = document.createElement('div');
+    option.className = 'filter-option folder-option';
+    const isActive = folder !== null && folder === activeFolder;
+    option.classList.toggle('selected', isActive);
+
+    const name = document.createElement('span');
+    name.className = 'folder-option-name';
+    name.textContent = `${isActive ? '✓ ' : ''}${label}`;
+    option.appendChild(name);
+    option.addEventListener('click', onClick);
+    return option;
+}
+
+function renderFolderMenu() {
+    if (!folderList) return;
+    const counts = new Map();
+    allSongs.forEach(song => {
+        const folder = song.dataset.folder;
+        if (folder) counts.set(folder, (counts.get(folder) || 0) + 1);
+    });
+
+    const header = document.createElement('div');
+    header.className = 'filter-category-header';
+    header.textContent = 'Folders';
+
+    const items = [header, createFolderOption('Show All', null, () => setActiveFolder(null))];
+    folders.forEach(folder => {
+        const option = createFolderOption(
+            `${folder} (${counts.get(folder) || 0})`,
+            folder,
+            () => setActiveFolder(folder)
+        );
+        const actions = document.createElement('span');
+        actions.className = 'folder-option-actions';
+        actions.append(
+            createFolderAction('✎', 'Rename folder', () => renameFolder(folder)),
+            createFolderAction('×', 'Delete folder', () => deleteFolder(folder))
+        );
+        option.appendChild(actions);
+        items.push(option);
+    });
+    items.push(createFolderOption('+ New Folder', null, () => createFolder(setActiveFolder)));
+    folderList.replaceChildren(...items);
+
+    folderButton.textContent = `${activeFolder ?? 'Folders'}  ▼`;
+    folderButton.classList.toggle('selected', activeFolder !== null);
+}
+
+let folderPicker = null;
+
+function closeFolderPicker() {
+    folderPicker?.remove();
+    folderPicker = null;
+}
+
+// Small menu used by the song context menu to move a card between folders.
+export function showFolderPicker(song) {
+    closeFolderPicker();
+    const picker = document.createElement('div');
+    picker.className = 'folder-picker';
+    const currentFolder = song.dataset.folder || null;
+
+    const addOption = (label, callback) => {
+        const option = document.createElement('div');
+        option.className = 'folder-picker-option';
+        option.textContent = label;
+        option.addEventListener('click', () => {
+            closeFolderPicker();
+            callback();
+        });
+        picker.appendChild(option);
+    };
+
+    if (currentFolder) addOption('Remove from folder', () => setSongFolder(song, null));
+    folders.forEach(folder => {
+        addOption(`${folder === currentFolder ? '✓ ' : ''}${folder}`, () => setSongFolder(song, folder));
+    });
+    addOption('+ New Folder', () => createFolder(name => setSongFolder(song, name)));
+
+    document.body.appendChild(picker);
+    folderPicker = picker;
+
+    const songRect = song.getBoundingClientRect();
+    const pickerRect = picker.getBoundingClientRect();
+    const margin = 8;
+    picker.style.left = `${Math.max(margin, Math.min(songRect.left + 20, window.innerWidth - pickerRect.width - margin))}px`;
+    picker.style.top = `${Math.max(margin, Math.min(songRect.top + 20, window.innerHeight - pickerRect.height - margin))}px`;
+}
+
+document.addEventListener('mousedown', event => {
+    if (folderPicker && !folderPicker.contains(event.target)) closeFolderPicker();
+});
+window.addEventListener('scroll', event => {
+    if (event.target !== folderPicker) closeFolderPicker();
+}, { capture: true, passive: true });
 
 // Rearranging =================================================================================================================
 let draggedSongId = null;
@@ -417,7 +624,7 @@ document.addEventListener('DOMContentLoaded', () => {
         mobileViewQuery.addListener(handleMobileViewChange);
     }
 
-    const filterList = document.querySelectorAll('.filter-option');
+    const filterList = genreMenu.querySelectorAll('.filter-option');
     filterList.forEach(filter => {
         const filterName = filter.textContent.replace('✓ ', '');
         filter.addEventListener('click', event => {

@@ -6,7 +6,6 @@ import {
     stopSong
 } from './player.js';
 import { getAllSongStates } from './song-state.mjs';
-import { getHotkeyMode } from './upload-song.js';
 import { DEFAULT_SCENES } from './default-scenes.js';
 
 const SCENE_STORAGE_KEY = 'jukebox-scenes-v1';
@@ -244,13 +243,14 @@ function closeDialog() {
     pendingDialogAction = null;
 }
 
-function openDialog({ title, description, confirmText, name = '', destructive = false, showInput = true, onConfirm }) {
+export function openDialog({ title, description, confirmText, name = '', placeholder = 'Scene name', destructive = false, showInput = true, onConfirm }) {
     dialogTitle.textContent = title;
     dialogDescription.textContent = description;
     dialogConfirm.textContent = confirmText;
     dialogConfirm.classList.toggle('destructive', destructive);
     sceneNameInput.hidden = !showInput;
     sceneNameInput.value = name;
+    sceneNameInput.placeholder = placeholder;
     dialogOverlay.hidden = false;
     pendingDialogAction = onConfirm;
 
@@ -329,9 +329,6 @@ function deleteScene(scene) {
 }
 
 function getCurrentHotkeyMode() {
-    try {
-        if (typeof getHotkeyMode === 'function') return getHotkeyMode();
-    } catch {}
     const text = document.getElementById('hotkey-mode-button')?.textContent?.toLowerCase() || '';
     if (text.includes('cut')) return 'cut';
     if (text.includes('insert')) return 'insert';

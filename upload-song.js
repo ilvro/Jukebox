@@ -8,6 +8,7 @@ import {
     getSongState,
     setSongHotkeyEffects
 } from './song-state.mjs';
+import { getActiveFolder, resetFolders, showFolderPicker } from './filters.js';
 //const API_URL = 'https://jukebox-backend-16sx.onrender.com'
 const API_URL = 'http://localhost:3000';
 
@@ -663,6 +664,7 @@ async function savePreset() {
             const persistedFileTitle = songItem.dataset.fileTitle || persistedPresetTitle;
             const genres = songItem.getAttribute('data-genres').split(',').filter(g => g.trim());
             const tags = songItem.getAttribute('data-tags').split(',').filter(t => t.trim());
+            const folder = songItem.dataset.folder || null;
             
             const songId = songItem.dataset.songId;
             const markers = getMarkers(songId);
@@ -681,6 +683,7 @@ async function savePreset() {
                     currentTitle,
                     genres,
                     tags,
+                    folder,
                     markers,
                     hotkey,
                     hotkeyEffects
@@ -690,7 +693,7 @@ async function savePreset() {
                 updatedData.push(updatedSong);
             } else {
                 console.log(`adding new song: ${decodeURIComponent(currentTitle)}`);
-                const newSong = { currentTitle, genres, tags, markers, hotkey, hotkeyEffects };
+                const newSong = { currentTitle, genres, tags, folder, markers, hotkey, hotkeyEffects };
                 presetData.push(newSong);
                 updatedData.push(newSong);
             }
@@ -886,6 +889,7 @@ function createPresetSongItem(song) {
     songItem.dataset.tags = song.tags.join(',');
     songItem.dataset.presetTitle = song.currentTitle;
     songItem.dataset.fileTitle = song.fileTitle;
+    if (song.folder) songItem.dataset.folder = song.folder;
 
     const titleInput = document.createElement('input');
     titleInput.spellcheck = false;
@@ -944,6 +948,7 @@ async function loadPreset() {
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
         clearAllSongs();
+        resetFolders();
         expandedHotkeyEffectsSongId = null;
         renderHotkeyPanel();
         document.dispatchEvent(new Event('songsUpdated'));
@@ -1029,6 +1034,7 @@ async function loadSamplePreset() {
         updatePresetLoadIndicator(loadIndicator, 0, presetMetadata.length);
 
         clearAllSongs();
+        resetFolders();
         expandedHotkeyEffectsSongId = null;
         renderHotkeyPanel();
         document.dispatchEvent(new Event('songsUpdated'));
@@ -1037,7 +1043,7 @@ async function loadSamplePreset() {
         // an async promise up front still launches hundreds of simultaneous
         // fetches and can make large presets appear frozen.
         const loadSampleSong = async (songMetadata) => {
-            const { currentTitle, genres, tags, markers, hotkey, hotkeyEffects } = songMetadata;
+            const { currentTitle, genres, tags, folder, markers, hotkey, hotkeyEffects } = songMetadata;
             const decodedTitle = decodeURIComponent(currentTitle);
             const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
             const fixedTitle = currentTitle.replace(/%/g, '%25');
@@ -1069,6 +1075,7 @@ async function loadSamplePreset() {
                 decodedTitle,
                 updatedGenres,
                 tags,
+                folder,
                 markers,
                 hotkey,
                 hotkeyEffects,
@@ -1109,6 +1116,7 @@ async function loadSamplePreset() {
                 
                 songItem.dataset.presetTitle = song.currentTitle;
                 songItem.dataset.fileTitle = song.currentTitle;
+                if (song.folder) songItem.dataset.folder = song.folder;
                 addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
                 
                 if (song.markers && song.markers.length > 0) {
@@ -1166,12 +1174,13 @@ async function handleFilesFallback(files) {
     const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
     clearAllSongs();
+    resetFolders();
     expandedHotkeyEffectsSongId = null;
     renderHotkeyPanel();
     document.dispatchEvent(new Event('songsUpdated'));
 
     for (const songMetadata of presetMetadata) {
-        let { currentTitle, genres, tags, markers, hotkey, hotkeyEffects } = songMetadata;
+        let { currentTitle, genres, tags, folder, markers, hotkey, hotkeyEffects } = songMetadata;
         genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
 
         const audioFile = fileMap[`${currentTitle}.mp3`];
@@ -1204,6 +1213,7 @@ async function handleFilesFallback(files) {
 
         songItem.dataset.presetTitle = currentTitle;
         songItem.dataset.fileTitle = currentTitle;
+        if (folder) songItem.dataset.folder = folder;
         addSongToPlayer(songItem, audioFile, thumbnailFile);
         
         if (markers && markers.length > 0) {
@@ -1314,6 +1324,8 @@ uploadSubmit.addEventListener('click', () => {
     songItem.setAttribute('draggable', 'true');
     songItem.setAttribute('data-genres', genres.join(','));
     songItem.setAttribute('data-tags', tags.join(','));
+    const folder = getActiveFolder();
+    if (folder) songItem.dataset.folder = folder;
     const titleInput = document.createElement('input');
     titleInput.className = 'title-input';
     titleInput.spellcheck = false;
@@ -1483,6 +1495,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     contextMenu.appendChild(createOption('Edit Genres', (item) => {
         showEditGenresPopup(item);
+    }));
+
+    contextMenu.appendChild(createOption('Move to Folder', (item) => {
+        showFolderPicker(item);
     }));
 
     contextMenu.appendChild(createOption('Delete', (item) => {
