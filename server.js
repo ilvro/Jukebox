@@ -28,20 +28,29 @@ const allowedOrigins = [
 
 const corsOptions = {
     origin: function (origin, callback) {
-        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+        let isLocalhost = false;
+        if (origin) {
+            try {
+                const { hostname } = new URL(origin);
+                isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1';
+            } catch {}
+        }
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin || origin === 'null' || isLocalhost) {
             callback(null, true);
         } else {
             callback(new Error('Blocked by CORS'));
         }
     },
-    methods: ['POST', 'GET', 'OPTIONS'],
+    methods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
         'Content-Type',
         'Content-Disposition',
         'X-Edit-Start',
         'X-Edit-End',
         'X-Audio-Duration',
-        'X-Source-Result'
+        'X-Source-Result',
+        'X-Preset-Token',
+        'X-Preset-Filename'
     ],
     exposedHeaders: ['Content-Disposition'],
     credentials: true,
@@ -347,6 +356,164 @@ app.post('/edit/audio/delete-region', async (req, res) => {
     } finally {
         await removeTemporaryFiles(temporaryFiles);
         audioEditInProgress = false;
+    }
+});
+
+// ---------------- Local Preset Folder Support (Firefox / Non-Chromium) ----------------
+const authorizedPresetDirectories = new Map();
+
+function resolvePresetFilePath(token, filename) {
+    const dirPath = token ? authorizedPresetDirectories.get(token) : null;
+    if (!dirPath) {
+        const err = new Error('Unauthorized preset directory token.');
+        err.statusCode = 403;
+        throw err;
+    }
+    if (typeof filename !== 'string' ||
+        !filename ||
+        path.basename(filename) !== filename ||
+        filename.includes('/') ||
+        filename.includes('\\') ||
+        filename === '.' ||
+        filename === '..' ||
+        !/\.(json|mp3|jpg)$/i.test(filename)) {
+        const err = new Error(`Invalid preset filename: ${filename}`);
+        err.statusCode = 400;
+        throw err;
+    }
+    return { dirPath, filePath: path.join(dirPath, filename) };
+}
+
+async function pickNativeDirectory() {
+    if (process.platform === 'win32') {
+        const psScript = [
+            'Add-Type -AssemblyName System.Windows.Forms;',
+            '$f = New-Object System.Windows.Forms.FolderBrowserDialog;',
+            '$f.Description = "Select Preset Folder";',
+            '$f.ShowNewFolderButton = $true;',
+            'if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }'
+        ].join(' ');
+        const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-STA', '-Command', psScript]);
+        return stdout.trim() || null;
+    }
+
+    if (process.platform === 'darwin') {
+        try {
+            const { stdout } = await execFileAsync('osascript', [
+                '-e', 'POSIX path of (choose folder with prompt "Select Preset Folder")'
+            ]);
+            return stdout.trim() || null;
+        } catch (err) {
+            if (err.code === 1) return null;
+            throw err;
+        }
+    }
+
+    const candidates = [
+        ['zenity', ['--file-selection', '--directory', '--title=Select Preset Folder']],
+        ['kdialog', ['--getexistingdirectory', os.homedir(), '--title', 'Select Preset Folder']],
+        ['yad', ['--file', '--directory', '--title=Select Preset Folder']]
+    ];
+
+    let lastError = null;
+    for (const [cmd, args] of candidates) {
+        try {
+            const { stdout } = await execFileAsync(cmd, args);
+            return stdout.trim() || null;
+        } catch (err) {
+            if (err.code === 1 && !err.stderr) {
+                return null; // User cancelled the dialog
+            }
+            lastError = err;
+        }
+    }
+    throw lastError || new Error('No native folder picker available.');
+}
+
+app.post('/preset/pick-directory', async (req, res) => {
+    try {
+        const selectedDir = await pickNativeDirectory();
+        if (!selectedDir) {
+            return res.json({ available: true, cancelled: true });
+        }
+        const resolvedDir = path.resolve(selectedDir);
+        const stat = await fs.promises.stat(resolvedDir);
+        if (!stat.isDirectory()) {
+            return res.status(400).json({ available: true, error: 'Selected path is not a directory.' });
+        }
+
+        const entries = await fs.promises.readdir(resolvedDir, { withFileTypes: true });
+        const files = entries.filter(e => e.isFile()).map(e => e.name);
+        const token = randomUUID();
+        authorizedPresetDirectories.set(token, resolvedDir);
+
+        res.json({
+            available: true,
+            cancelled: false,
+            token,
+            directoryName: path.basename(resolvedDir),
+            files
+        });
+    } catch (error) {
+        console.warn('Native directory picker unavailable:', error.message);
+        res.json({ available: false, error: error.message });
+    }
+});
+
+app.get('/preset/file', async (req, res) => {
+    try {
+        const token = req.get('X-Preset-Token') || req.query.token;
+        const filename = req.get('X-Preset-Filename') || req.query.name;
+        const { filePath } = resolvePresetFilePath(token, filename);
+        await fs.promises.access(filePath, fs.constants.R_OK);
+        res.setHeader('Cache-Control', 'no-store');
+        res.sendFile(filePath);
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.status(404).json({ error: 'NotFoundError' });
+        res.status(error.statusCode || 500).json({ error: error.message });
+    }
+});
+
+app.put('/preset/file', async (req, res) => {
+    let tempPath = null;
+    try {
+        const token = req.get('X-Preset-Token') || req.query.token;
+        const filename = req.get('X-Preset-Filename') || req.query.name;
+        const { dirPath, filePath } = resolvePresetFilePath(token, filename);
+        tempPath = path.join(dirPath, `.${filename}.${randomUUID()}.tmp`);
+        await pipeline(req, fs.createWriteStream(tempPath));
+        await fs.promises.rename(tempPath, filePath);
+        tempPath = null;
+        res.json({ ok: true });
+    } catch (error) {
+        if (tempPath) await fs.promises.unlink(tempPath).catch(() => {});
+        res.status(error.statusCode || 500).json({ error: error.message });
+    }
+});
+
+app.post('/preset/copy', async (req, res) => {
+    try {
+        const { token, sourceName, targetName } = req.body || {};
+        const source = resolvePresetFilePath(token, sourceName);
+        const target = resolvePresetFilePath(token, targetName);
+        await fs.promises.copyFile(source.filePath, target.filePath);
+        res.json({ ok: true });
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.status(404).json({ error: 'NotFoundError' });
+        res.status(error.statusCode || 500).json({ error: error.message });
+    }
+});
+
+app.delete('/preset/file', async (req, res) => {
+    try {
+        const token = req.get('X-Preset-Token') || req.query.token;
+        const filename = req.get('X-Preset-Filename') || req.query.name;
+        const { filePath } = resolvePresetFilePath(token, filename);
+        await fs.promises.unlink(filePath);
+        res.json({ ok: true });
+    } catch (error) {
+        if (error.code === 'ENOENT') return res.status(404).json({ error: 'NotFoundError' });
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 });
 

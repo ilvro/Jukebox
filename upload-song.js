@@ -543,6 +543,28 @@ async function writeBlobToFile(blob, fileHandle) {
     await writable.close();
 }
 
+async function getSongAudioBlob(songItem) {
+    const source = getSongState(songItem.dataset.songId)?.audioSource;
+    if (source instanceof Blob) {
+        return source;
+    }
+    const response = await fetch(songItem.dataset.audioUrl);
+    if (!response.ok) {
+        throw new Error(`Could not read edited audio (${response.status})`);
+    }
+    return await response.blob();
+}
+
+async function getSongImageBlob(songItem) {
+    const source = getSongState(songItem.dataset.songId)?.imageSource;
+    if (source instanceof Blob) {
+        return source;
+    }
+    const response = await fetch(songItem.querySelector('img').src);
+    if (!response.ok) throw new Error(`Could not read song image (${response.status})`);
+    return await response.blob();
+}
+
 async function writeSongAudioToFile(songItem, fileHandle) {
     const source = getSongState(songItem.dataset.songId)?.audioSource;
     if (source instanceof Blob) {
@@ -575,10 +597,350 @@ async function presetFileExists(directoryHandle, filename) {
 }
 
 async function copyPresetFile(directoryHandle, sourceName, targetName) {
+    if (typeof directoryHandle.copyEntry === 'function') {
+        await directoryHandle.copyEntry(sourceName, targetName);
+        return;
+    }
     const sourceHandle = await directoryHandle.getFileHandle(sourceName);
     const sourceFile = await sourceHandle.getFile();
     const targetHandle = await directoryHandle.getFileHandle(targetName, { create: true });
     await writeBlobToFile(sourceFile, targetHandle);
+}
+
+let loadedPresetFileNames = new Set();
+let loadedPresetFolderName = 'preset';
+
+function createNotFoundError(message = 'File not found') {
+    const err = new Error(message);
+    err.name = 'NotFoundError';
+    return err;
+}
+
+function createServerDirectoryHandle({ token, directoryName, files }) {
+    const knownFiles = new Set(Array.isArray(files) ? files : []);
+
+    function createServerFileHandle(filename) {
+        return {
+            kind: 'file',
+            name: filename,
+            async getFile() {
+                const response = await fetch(`${API_URL}/preset/file`, {
+                    method: 'GET',
+                    headers: {
+                        'X-Preset-Token': token,
+                        'X-Preset-Filename': filename
+                    }
+                });
+                if (response.status === 404) throw createNotFoundError(`File not found: ${filename}`);
+                if (!response.ok) throw new Error(`Could not read "${filename}" (${response.status})`);
+                const blob = await response.blob();
+                return new File([blob], filename, { type: blob.type });
+            },
+            async createWritable() {
+                const chunks = [];
+                return {
+                    async write(data) {
+                        chunks.push(data instanceof Blob ? data : new Blob([data]));
+                    },
+                    async close() {
+                        const body = chunks.length === 1 ? chunks[0] : new Blob(chunks);
+                        const response = await fetch(`${API_URL}/preset/file`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/octet-stream',
+                                'X-Preset-Token': token,
+                                'X-Preset-Filename': filename
+                            },
+                            body
+                        });
+                        if (!response.ok) {
+                            throw new Error(`Could not write "${filename}" (${response.status})`);
+                        }
+                        knownFiles.add(filename);
+                    }
+                };
+            }
+        };
+    }
+
+    return {
+        kind: 'directory',
+        name: directoryName || 'preset',
+        async getFileHandle(filename, options = {}) {
+            if (!options.create && !knownFiles.has(filename)) {
+                throw createNotFoundError(`File not found: ${filename}`);
+            }
+            return createServerFileHandle(filename);
+        },
+        async removeEntry(filename) {
+            const response = await fetch(`${API_URL}/preset/file`, {
+                method: 'DELETE',
+                headers: {
+                    'X-Preset-Token': token,
+                    'X-Preset-Filename': filename
+                }
+            });
+            knownFiles.delete(filename);
+            if (response.status === 404) throw createNotFoundError(`File not found: ${filename}`);
+            if (!response.ok) throw new Error(`Could not delete "${filename}" (${response.status})`);
+        },
+        async copyEntry(sourceName, targetName) {
+            const response = await fetch(`${API_URL}/preset/copy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, sourceName, targetName })
+            });
+            if (response.status === 404) throw createNotFoundError(`File not found: ${sourceName}`);
+            if (!response.ok) throw new Error(`Could not copy "${sourceName}" to "${targetName}" (${response.status})`);
+            knownFiles.add(targetName);
+        },
+        async *entries() {
+            for (const name of knownFiles) {
+                yield [name, createServerFileHandle(name)];
+            }
+        }
+    };
+}
+
+async function tryPickServerDirectoryHandle() {
+    try {
+        const response = await fetch(`${API_URL}/preset/pick-directory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!response.ok) return null;
+        const result = await response.json();
+        if (!result || !result.available) return null;
+        if (result.cancelled) {
+            const abortError = new Error('The user aborted a request.');
+            abortError.name = 'AbortError';
+            throw abortError;
+        }
+        return createServerDirectoryHandle(result);
+    } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        return null;
+    }
+}
+
+const CRC32_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[i] = c >>> 0;
+    }
+    return table;
+})();
+
+async function computeBlobCrc32(blob) {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) {
+        crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+async function createStoredZipBlob(entries) {
+    const encoder = new TextEncoder();
+    const parts = [];
+    const centralRecords = [];
+    let offset = 0;
+
+    for (const { name, blob } of entries) {
+        const nameBytes = encoder.encode(name);
+        const crc = await computeBlobCrc32(blob);
+        const size = blob.size >>> 0;
+
+        const localHeader = new Uint8Array(30 + nameBytes.length);
+        const localView = new DataView(localHeader.buffer);
+        localView.setUint32(0, 0x04034b50, true);
+        localView.setUint16(4, 20, true);
+        localView.setUint16(6, 0x0800, true); // UTF-8 filename flag
+        localView.setUint16(8, 0, true); // STORE (no re-compression needed for mp3/jpg)
+        localView.setUint16(10, 0, true);
+        localView.setUint16(12, 0, true);
+        localView.setUint32(14, crc, true);
+        localView.setUint32(18, size, true);
+        localView.setUint32(22, size, true);
+        localView.setUint16(26, nameBytes.length, true);
+        localView.setUint16(28, 0, true);
+        localHeader.set(nameBytes, 30);
+
+        const centralHeader = new Uint8Array(46 + nameBytes.length);
+        const centralView = new DataView(centralHeader.buffer);
+        centralView.setUint32(0, 0x02014b50, true);
+        centralView.setUint16(4, 20, true);
+        centralView.setUint16(6, 20, true);
+        centralView.setUint16(8, 0x0800, true);
+        centralView.setUint16(10, 0, true);
+        centralView.setUint16(12, 0, true);
+        centralView.setUint16(14, 0, true);
+        centralView.setUint32(16, crc, true);
+        centralView.setUint32(20, size, true);
+        centralView.setUint32(24, size, true);
+        centralView.setUint16(28, nameBytes.length, true);
+        centralView.setUint16(30, 0, true);
+        centralView.setUint16(32, 0, true);
+        centralView.setUint16(34, 0, true);
+        centralView.setUint16(36, 0, true);
+        centralView.setUint32(38, 0, true);
+        centralView.setUint32(42, offset >>> 0, true);
+        centralHeader.set(nameBytes, 46);
+
+        parts.push(localHeader, blob);
+        centralRecords.push(centralHeader);
+        offset += localHeader.byteLength + size;
+    }
+
+    const centralDirOffset = offset >>> 0;
+    let centralDirSize = 0;
+    for (const record of centralRecords) {
+        parts.push(record);
+        centralDirSize += record.byteLength;
+    }
+
+    const eocd = new Uint8Array(22);
+    const eocdView = new DataView(eocd.buffer);
+    eocdView.setUint32(0, 0x06054b50, true);
+    eocdView.setUint16(4, 0, true);
+    eocdView.setUint16(6, 0, true);
+    eocdView.setUint16(8, entries.length, true);
+    eocdView.setUint16(10, entries.length, true);
+    eocdView.setUint32(12, centralDirSize >>> 0, true);
+    eocdView.setUint32(16, centralDirOffset, true);
+    eocdView.setUint16(20, 0, true);
+    parts.push(eocd);
+
+    return new Blob(parts, { type: 'application/zip' });
+}
+
+function triggerBlobDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+async function savePresetBrowserFallback(songItems) {
+    const desiredTitles = new Set();
+    for (const songItem of songItems) {
+        const readableTitle = songItem.querySelector('.title-input')?.value.trim();
+        if (!readableTitle) throw new Error('Every song needs a title before saving.');
+        const encodedTitle = encodeURIComponent(readableTitle);
+        if (desiredTitles.has(encodedTitle)) {
+            throw new Error(`Two songs have the same title: ${readableTitle}`);
+        }
+        desiredTitles.add(encodedTitle);
+    }
+
+    const indicator = createPresetLoadIndicator(songItems.length, 'Saving preset…');
+    try {
+        const updatedData = [];
+        const filesToExport = [];
+        const savedIdentities = [];
+        let processed = 0;
+
+        for (const songItem of songItems) {
+            const titleInput = songItem.querySelector('.title-input');
+            const currentTitle = encodeURIComponent(titleInput.value.trim());
+            const persistedPresetTitle = songItem.dataset.presetTitle || null;
+            const persistedFileTitle = songItem.dataset.fileTitle || persistedPresetTitle;
+            const genres = songItem.getAttribute('data-genres').split(',').filter(g => g.trim());
+            const tags = songItem.getAttribute('data-tags').split(',').filter(t => t.trim());
+            const folder = songItem.dataset.folder || null;
+
+            const songId = songItem.dataset.songId;
+            const markers = getMarkers(songId);
+            const hotkey = getSongState(songId)?.hotkey.key || null;
+            const hotkeyEffects = hotkey ? [...(getSongState(songId)?.hotkey.effects || [])] : [];
+
+            updatedData.push({
+                currentTitle,
+                genres,
+                tags,
+                folder,
+                markers,
+                hotkey,
+                hotkeyEffects
+            });
+
+            const shouldOverwriteAudio = songItem.dataset.audioEdited === 'true';
+            const isNewSong = !persistedPresetTitle;
+            const userChangedTitle = Boolean(persistedPresetTitle && persistedPresetTitle !== currentTitle);
+
+            const hasAudioInFolder = !isNewSong && !userChangedTitle && (
+                loadedPresetFileNames.has(`${currentTitle}.mp3`) ||
+                (persistedFileTitle && loadedPresetFileNames.has(`${persistedFileTitle}.mp3`))
+            );
+            const hasImageInFolder = !isNewSong && !userChangedTitle && (
+                loadedPresetFileNames.has(`${currentTitle}.jpg`) ||
+                (persistedFileTitle && loadedPresetFileNames.has(`${persistedFileTitle}.jpg`))
+            );
+
+            let resultingFileTitle = (!userChangedTitle && persistedFileTitle) ? persistedFileTitle : currentTitle;
+
+            if (isNewSong || shouldOverwriteAudio || userChangedTitle || !hasAudioInFolder) {
+                const audioBlob = await runPresetSaveStep(currentTitle, 'prepare the audio file', () =>
+                    getSongAudioBlob(songItem)
+                );
+                filesToExport.push({ name: `${currentTitle}.mp3`, blob: audioBlob });
+                resultingFileTitle = currentTitle;
+            }
+
+            if (isNewSong || userChangedTitle || !hasImageInFolder) {
+                const imageBlob = await runPresetSaveStep(currentTitle, 'prepare the image file', () =>
+                    getSongImageBlob(songItem)
+                );
+                filesToExport.push({ name: `${currentTitle}.jpg`, blob: imageBlob });
+                resultingFileTitle = currentTitle;
+            }
+
+            savedIdentities.push({ songItem, titleInput, currentTitle, resultingFileTitle });
+            processed++;
+            const label = indicator.querySelector('.preset-load-label');
+            const progressFill = indicator.querySelector('.preset-load-progress-fill');
+            if (label) label.textContent = `Saving preset… ${processed} / ${songItems.length}`;
+            if (progressFill) progressFill.style.width = `${songItems.length > 0 ? (processed / songItems.length) * 100 : 100}%`;
+        }
+
+        const metadataBlob = new Blob([JSON.stringify(updatedData, null, 2)], { type: 'application/json' });
+
+        if (filesToExport.length === 0) {
+            triggerBlobDownload(metadataBlob, 'preset_metadata.json');
+        } else {
+            const label = indicator.querySelector('.preset-load-label');
+            if (label) label.textContent = 'Packaging preset files (.zip)…';
+            const zipBlob = await createStoredZipBlob([
+                { name: 'preset_metadata.json', blob: metadataBlob },
+                ...filesToExport
+            ]);
+            const zipName = `${loadedPresetFolderName || 'preset'}.zip`;
+            triggerBlobDownload(zipBlob, zipName);
+        }
+
+        deletedSongs.length = 0;
+        savedIdentities.forEach(({ songItem, titleInput, currentTitle, resultingFileTitle }) => {
+            songItem.dataset.presetTitle = currentTitle;
+            songItem.dataset.fileTitle = resultingFileTitle;
+            titleInput.defaultValue = titleInput.value.trim();
+            delete songItem.dataset.audioEdited;
+            loadedPresetFileNames.add(`${resultingFileTitle}.mp3`);
+            loadedPresetFileNames.add(`${resultingFileTitle}.jpg`);
+        });
+        loadedPresetFileNames.add('preset_metadata.json');
+        console.log('saved preset via browser fallback');
+    } finally {
+        indicator.remove();
+    }
 }
 
 async function runPresetSaveStep(title, step, callback) {
@@ -595,15 +957,21 @@ async function runPresetSaveStep(title, step, callback) {
 }
 
 async function savePreset() {
-    if (!supportsFileSystemAccess) {
-        alert("Your browser doesn't support the File System Access API. Switch to a desktop environment.");
-        return;
-    }
-
     window.__isSavingPreset = true;
     try {
-        const directoryHandle = await window.showDirectoryPicker();
         const songItems = getOrderedSongStates().map(state => state.element).filter(Boolean);
+        let directoryHandle = null;
+
+        if (supportsFileSystemAccess) {
+            directoryHandle = await window.showDirectoryPicker();
+        } else {
+            directoryHandle = await tryPickServerDirectoryHandle();
+            if (!directoryHandle) {
+                await savePresetBrowserFallback(songItems);
+                return;
+            }
+        }
+
         let presetData = [];
 
         // load preset_metadata.json if it exists, create one if it doesnt
@@ -779,7 +1147,10 @@ async function savePreset() {
 
         console.log('saved preset');
     } catch (error) {
-        console.error('error saving preset:', error);
+        if (error?.name !== 'AbortError') {
+            console.error('error saving preset:', error);
+            alert(error.message || 'Could not save preset.');
+        }
     } finally {
         window.__isSavingPreset = false;
     }
@@ -923,11 +1294,13 @@ function createPresetSongItem(song) {
     return songItem;
 }
 
-async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator = null) {
+async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator = null, folderName = 'preset') {
     clearAllSongs();
     resetFolders();
     expandedHotkeyEffectsSongId = null;
     renderHotkeyPanel();
+    loadedPresetFileNames = new Set(fileHandles.keys());
+    loadedPresetFolderName = folderName || 'preset';
     document.dispatchEvent(new Event('songsUpdated'));
 
     const indicator = loadIndicator || createPresetLoadIndicator(presetMetadata.length);
@@ -1028,7 +1401,7 @@ async function loadPreset() {
         const loadIndicator = createPresetLoadIndicator(presetMetadata.length);
         try {
             const fileHandles = await indexPresetFiles(directoryHandle, loadIndicator);
-            await populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator);
+            await populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator, directoryHandle.name || 'preset');
         } finally {
             loadIndicator.remove();
         }
@@ -1073,6 +1446,8 @@ async function loadSamplePreset() {
         resetFolders();
         expandedHotkeyEffectsSongId = null;
         renderHotkeyPanel();
+        loadedPresetFileNames = new Set(['preset_metadata.json']);
+        loadedPresetFolderName = 'sample';
         document.dispatchEvent(new Event('songsUpdated'));
         
         // Create requests only when their batch starts. Mapping every song to
@@ -1152,6 +1527,8 @@ async function loadSamplePreset() {
                 
                 songItem.dataset.presetTitle = song.currentTitle;
                 songItem.dataset.fileTitle = song.currentTitle;
+                loadedPresetFileNames.add(`${song.currentTitle}.mp3`);
+                loadedPresetFileNames.add(`${song.currentTitle}.jpg`);
                 if (song.folder) songItem.dataset.folder = song.folder;
                 addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
                 
@@ -1197,9 +1574,13 @@ async function loadSamplePreset() {
 
 async function handleFilesFallback(files) {
     const fileHandles = new Map();
+    let detectedFolderName = 'preset';
     for (const file of files) {
         const relativePath = file.webkitRelativePath || file.name || '';
         if (relativePath.includes('__MACOSX/') || file.name.startsWith('._')) continue;
+        if (detectedFolderName === 'preset' && file.webkitRelativePath && file.webkitRelativePath.includes('/')) {
+            detectedFolderName = file.webkitRelativePath.split('/')[0] || 'preset';
+        }
         fileHandles.set(file.name, {
             kind: 'file',
             getFile: async () => file
@@ -1215,7 +1596,7 @@ async function handleFilesFallback(files) {
     const presetMetadataFile = await metadataHandle.getFile();
     const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-    await populatePresetFromFileHandles(fileHandles, presetMetadata);
+    await populatePresetFromFileHandles(fileHandles, presetMetadata, null, detectedFolderName);
     console.log('loaded files via fallback');
     document.dispatchEvent(new Event('songsUpdated'));
 }
