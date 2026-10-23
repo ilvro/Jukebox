@@ -851,12 +851,18 @@ async function loadPresetSongFiles(fileHandles, songMetadata) {
     };
 
     try {
+        let decodedTitle = currentTitle;
+        try {
+            decodedTitle = decodeURIComponent(currentTitle);
+        } catch {}
+
         // Resolve the filename from the index instead of causing failed file
         // operations for every song while guessing Google Drive's encoding.
         const fileTitle = [
             currentTitle.replace(/%/g, '_'),
             revertUnderscoreEncoding(currentTitle),
-            currentTitle
+            currentTitle,
+            decodedTitle
         ].find(candidate =>
             fileHandles.has(`${candidate}.mp3`) && fileHandles.has(`${candidate}.jpg`)
         );
@@ -869,7 +875,7 @@ async function loadPresetSongFiles(fileHandles, songMetadata) {
             fileTitle,
             genres,
             tags,
-            decodedTitle: decodeURIComponent(currentTitle)
+            decodedTitle
         };
     } catch (error) {
         let readableTitle = currentTitle;
@@ -917,23 +923,95 @@ function createPresetSongItem(song) {
     return songItem;
 }
 
+async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator = null) {
+    clearAllSongs();
+    resetFolders();
+    expandedHotkeyEffectsSongId = null;
+    renderHotkeyPanel();
+    document.dispatchEvent(new Event('songsUpdated'));
+
+    const indicator = loadIndicator || createPresetLoadIndicator(presetMetadata.length);
+    const FILE_BATCH_SIZE = 24;
+    let loadedCount = 0;
+
+    try {
+        updatePresetLoadIndicator(indicator, 0, presetMetadata.length);
+
+        for (let index = 0; index < presetMetadata.length; index += FILE_BATCH_SIZE) {
+            const metadataBatch = presetMetadata.slice(index, index + FILE_BATCH_SIZE);
+
+            // File System Access calls used to run four-at-a-time for one
+            // song and then wait before starting the next song. A bounded
+            // parallel batch keeps disk access busy without launching all
+            // 1,200 files at once.
+            const loadedBatch = await Promise.all(
+                metadataBatch.map(songMetadata => loadPresetSongFiles(fileHandles, songMetadata))
+            );
+            const pendingHotkeys = [];
+
+            loadedBatch.forEach(song => {
+                if (!song) return;
+
+                const songItem = createPresetSongItem(song);
+                addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
+
+                if (song.markers?.length) {
+                    setMarkers(songItem.dataset.songId, song.markers);
+                }
+                if (song.hotkey) pendingHotkeys.push([song.hotkey, songItem, song.hotkeyEffects]);
+            });
+
+            // Cards stay detached until the virtual grid requests their
+            // visible rows. This avoids laying out the whole preset here.
+            pendingHotkeys.forEach(([hotkey, songItem, hotkeyEffects]) => assignHotkey(hotkey, songItem, hotkeyEffects));
+
+            loadedCount += metadataBatch.length;
+            updatePresetLoadIndicator(indicator, loadedCount, presetMetadata.length);
+            await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+    } finally {
+        indicator.remove();
+    }
+}
+
 async function loadPreset() {
     window.__isLoadingPreset = true;
     if (!window.showDirectoryPicker) {
-        // android user, use alternate fallback function
+        // Browsers without File System Access API (e.g. Firefox, Safari, mobile):
+        // explicitly request a folder via webkitdirectory on desktop.
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
-        fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
         fileInput.multiple = true;
+        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+        if ('webkitdirectory' in fileInput && !isMobile) {
+            fileInput.webkitdirectory = true;
+            fileInput.setAttribute('webkitdirectory', '');
+            fileInput.setAttribute('directory', '');
+        } else {
+            fileInput.accept = '.zip,application/json,audio/mpeg,image/jpeg';
+        }
+        fileInput.style.display = 'none';
+        document.body.appendChild(fileInput);
+
+        const cleanup = () => {
+            fileInput.remove();
+        };
+
         fileInput.addEventListener('change', async (event) => {
             try {
                 const files = event.target.files;
-                await handleFilesFallback(files);
+                if (files && files.length > 0) {
+                    await handleFilesFallback(files);
+                }
+            } catch (error) {
+                console.error('error loading preset via directory input:', error);
             } finally {
+                cleanup();
                 window.__isLoadingPreset = false;
             }
         });
         fileInput.addEventListener('cancel', () => {
+            cleanup();
             window.__isLoadingPreset = false;
         });
         fileInput.click();
@@ -947,52 +1025,10 @@ async function loadPreset() {
         const presetMetadataFile = await presetMetadataHandle.getFile();
         const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-        clearAllSongs();
-        resetFolders();
-        expandedHotkeyEffectsSongId = null;
-        renderHotkeyPanel();
-        document.dispatchEvent(new Event('songsUpdated'));
-
         const loadIndicator = createPresetLoadIndicator(presetMetadata.length);
-        const FILE_BATCH_SIZE = 24;
-        let loadedCount = 0;
-
         try {
             const fileHandles = await indexPresetFiles(directoryHandle, loadIndicator);
-            updatePresetLoadIndicator(loadIndicator, 0, presetMetadata.length);
-
-            for (let index = 0; index < presetMetadata.length; index += FILE_BATCH_SIZE) {
-                const metadataBatch = presetMetadata.slice(index, index + FILE_BATCH_SIZE);
-
-                // File System Access calls used to run four-at-a-time for one
-                // song and then wait before starting the next song. A bounded
-                // parallel batch keeps disk access busy without launching all
-                // 1,200 files at once.
-                const loadedBatch = await Promise.all(
-                    metadataBatch.map(songMetadata => loadPresetSongFiles(fileHandles, songMetadata))
-                );
-                const pendingHotkeys = [];
-
-                loadedBatch.forEach(song => {
-                    if (!song) return;
-
-                    const songItem = createPresetSongItem(song);
-                    addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
-
-                    if (song.markers?.length) {
-                        setMarkers(songItem.dataset.songId, song.markers);
-                    }
-                    if (song.hotkey) pendingHotkeys.push([song.hotkey, songItem, song.hotkeyEffects]);
-                });
-
-                // Cards stay detached until the virtual grid requests their
-                // visible rows. This avoids laying out the whole preset here.
-                pendingHotkeys.forEach(([hotkey, songItem, hotkeyEffects]) => assignHotkey(hotkey, songItem, hotkeyEffects));
-
-                loadedCount += metadataBatch.length;
-                updatePresetLoadIndicator(loadIndicator, loadedCount, presetMetadata.length);
-                await new Promise(resolve => requestAnimationFrame(resolve));
-            }
+            await populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator);
         } finally {
             loadIndicator.remove();
         }
@@ -1160,67 +1196,26 @@ async function loadSamplePreset() {
 }
 
 async function handleFilesFallback(files) {
-    const fileMap = {};
+    const fileHandles = new Map();
     for (const file of files) {
-        fileMap[file.name] = file;
+        const relativePath = file.webkitRelativePath || file.name || '';
+        if (relativePath.includes('__MACOSX/') || file.name.startsWith('._')) continue;
+        fileHandles.set(file.name, {
+            kind: 'file',
+            getFile: async () => file
+        });
     }
 
-    if (!fileMap['preset_metadata.json']) {
+    const metadataHandle = fileHandles.get('preset_metadata.json');
+    if (!metadataHandle) {
         alert('preset_metadata.json is missing');
         return;
     }
 
-    const presetMetadataFile = fileMap['preset_metadata.json'];
+    const presetMetadataFile = await metadataHandle.getFile();
     const presetMetadata = JSON.parse(await presetMetadataFile.text());
 
-    clearAllSongs();
-    resetFolders();
-    expandedHotkeyEffectsSongId = null;
-    renderHotkeyPanel();
-    document.dispatchEvent(new Event('songsUpdated'));
-
-    for (const songMetadata of presetMetadata) {
-        let { currentTitle, genres, tags, folder, markers, hotkey, hotkeyEffects } = songMetadata;
-        genres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
-
-        const audioFile = fileMap[`${currentTitle}.mp3`];
-        const thumbnailFile = fileMap[`${currentTitle}.jpg`];
-
-        if (!audioFile || !thumbnailFile) {
-            console.error(`missing files for ${currentTitle}`);
-            continue;
-        }
-
-        const songItem = document.createElement('div');
-        songItem.classList.add('song-item');
-        songItem.setAttribute('draggable', 'true');
-        songItem.setAttribute('data-genres', genres.join(','));
-        songItem.setAttribute('data-tags', tags.join(','));
-        songItem.innerHTML = `
-            <input spellcheck='false' class='title-input' value="${decodeURIComponent(currentTitle)}"></input>
-            <p>${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}</p>
-            <img src="${URL.createObjectURL(thumbnailFile)}" alt="${decodeURIComponent(currentTitle)}" loading="lazy" decoding="async" fetchpriority="low">
-        `;
-
-        const titleInput = songItem.querySelector('.title-input');
-        titleInput.addEventListener('dragover', (event) => {
-            event.preventDefault();
-        });
-        titleInput.addEventListener('drop', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-        });
-
-        songItem.dataset.presetTitle = currentTitle;
-        songItem.dataset.fileTitle = currentTitle;
-        if (folder) songItem.dataset.folder = folder;
-        addSongToPlayer(songItem, audioFile, thumbnailFile);
-        
-        if (markers && markers.length > 0) {
-            setMarkers(songItem.dataset.songId, markers);
-        }
-        if (hotkey) assignHotkey(hotkey, songItem, hotkeyEffects);
-    }
+    await populatePresetFromFileHandles(fileHandles, presetMetadata);
     console.log('loaded files via fallback');
     document.dispatchEvent(new Event('songsUpdated'));
 }
