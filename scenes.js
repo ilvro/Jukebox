@@ -74,6 +74,7 @@ function loadScenes() {
 }
 
 function saveScenes() {
+    document.dispatchEvent(new Event('scenesUpdated'));
     try {
         localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(scenes));
     } catch (error) {
@@ -335,6 +336,32 @@ function getCurrentHotkeyMode() {
     return 'fade';
 }
 
+/** Quem está tocando: a cena ativa (ou `null`). */
+export function getActiveSceneId() {
+    return activeSceneId;
+}
+
+function announceActiveScene() {
+    document.dispatchEvent(new CustomEvent('sceneActivated', { detail: { id: activeSceneId } }));
+}
+
+/**
+ * Ativa uma cena pelo id, a pedido de outro aplicativo da mesa (sem alternar: pedir a cena que já toca não a desliga).
+ * Devolve `{ ok, motivo?, faltando }`: `ok` é falso se faltam faixas (as que existem tocam mesmo assim).
+ */
+export function activateSceneById(id) {
+    const scene = scenes.find(candidate => candidate.id === id);
+    if (!scene) return { ok: false, motivo: 'Cena não encontrada neste Jukebox.', faltando: 0 };
+    if (activeSceneId === scene.id) return { ok: true, faltando: 0 };
+    if (!scene.tracks || scene.tracks.length === 0) return { ok: false, motivo: 'A cena não tem faixas salvas.', faltando: 0 };
+    const faltando = countMissingTracks(scene);
+    if (faltando === scene.tracks.length) return { ok: false, motivo: 'Nenhuma faixa desta cena está carregada no Jukebox.', faltando };
+    activateScene(scene);
+    return faltando
+        ? { ok: false, motivo: `${faltando} ${faltando === 1 ? 'faixa da cena não está carregada' : 'faixas da cena não estão carregadas'}.`, faltando }
+        : { ok: true, faltando: 0 };
+}
+
 function deactivateCurrentScene() {
     const mode = getCurrentHotkeyMode();
     getAllSongStates().forEach(state => {
@@ -352,6 +379,7 @@ function deactivateCurrentScene() {
     const previousScene = scenes.find(s => s.id === activeSceneId);
     activeSceneId = null;
     renderScenes();
+    announceActiveScene();
     if (previousScene) {
         showSceneToast(`Scene “${previousScene.name}” stopped.`);
     }
@@ -386,6 +414,7 @@ function activateScene(scene) {
 
     activeSceneId = scene.id;
     renderScenes();
+    announceActiveScene();
     const missing = scene.tracks.length - resolvedTracks.length;
     showSceneToast(
         missing > 0
@@ -507,6 +536,7 @@ document.addEventListener('jukeboxPanelOpened', event => {
 document.getElementById('stop-all-button')?.addEventListener('click', () => {
     if (activeSceneId !== null) {
         activeSceneId = null;
+        announceActiveScene();
         if (scenePanel.classList.contains('active')) renderScenes();
     }
 });

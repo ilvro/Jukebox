@@ -26,3 +26,9 @@ Clone the <a href='https://github.com/ilvro/jukebox-backend'> backend<a/>, navig
 The terminal should show `Server is running on port 3000`. 
 
 This should allow you to paste any youtube URL into `Paste a youtube link here...` in the Upload tab to automatically download audios.
+# Integração com a mesa (Atlas e companhia)
+O Jukebox fala o contrato da mesa (`mesa.json`, `mesa.js`, `vendor/mesa-core/`; o contrato está descrito em `Atlas/docs/PLATAFORMA.md`). Abertos no mesmo navegador e na mesma origem:
+- as **cenas** e as faixas com o gênero **sfx** (os efeitos avulsos) viram entidades da campanha ativa (`mesa:campanha-ativa`), para o Atlas escolher;
+- `jukebox.tocar` ativa uma cena pelo pedido de outro aplicativo (por exemplo, quando o clima do mapa muda), e `jukebox.efeito` toca uma faixa sfx uma vez, por cima da música;
+- `jukebox.tocando` avisa qual cena está ativa (ou nenhuma).
+Sem `BroadcastChannel` ou `IndexedDB`, o Jukebox funciona como antes. `vendor/mesa-core/` é uma cópia fixa do `mesa-core` compilado do Atlas (`npm run build:core`).

@@ -1,0 +1,10 @@
+{
+  "app": "jukebox",
+  "nome": "Jukebox",
+  "contrato": 1,
+  "icone": "./images/page_icon.jpg",
+  "rotas": {},
+  "oferece": ["cena-sonora", "efeito"],
+  "emite": ["jukebox.tocando"],
+  "atende": ["jukebox.tocar", "jukebox.efeito"]
+}
