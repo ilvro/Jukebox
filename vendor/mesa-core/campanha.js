@@ -2,7 +2,8 @@ import { abrirBanco, obterTudo, promessa, transacao } from './idb.js';
 import { ehApp, ehRef, mesmaRef } from './refs.js';
 export const BANCO_CAMPANHA = 'mesa-campanha-v1';
 export const VERSAO_BANCO_CAMPANHA = 1;
-export const TIPOS_ENTIDADE = ['personagem', 'lugar', 'pista', 'cena', 'efeito', 'sessao', 'faccao', 'nota'];
+/** `ameaca`: um monstro ou inimigo (a ficha de ameaça da Ficha); diferente de `personagem`, que é de jogador. */
+export const TIPOS_ENTIDADE = ['personagem', 'ameaca', 'lugar', 'pista', 'cena', 'efeito', 'sessao', 'faccao', 'nota'];
 export const TIPOS_LIGACAO = ['aparece-em', 'esta-em', 'revela', 'toca-em', 'pertence-a', 'menciona'];
 export class ErroCampanha extends Error {
     caminho;
