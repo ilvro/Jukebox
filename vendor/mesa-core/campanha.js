@@ -30,7 +30,8 @@ export function validarCampanha(v) {
 }
 export function validarEntidade(v) {
     objeto(v, 'entidade');
-    soCampos(v, ['id', 'campanhaId', 'tipo', 'nome', 'refs', 'tags', 'notas', 'criadaPor', 'criadaEm', 'atualizadaEm'], 'entidade');
+    soCampos(v, ['id', 'campanhaId', 'tipo', 'nome', 'refs', 'tags', 'notas', 'retrato', 'criadaPor', 'criadaEm', 'atualizadaEm'], 'entidade');
+    falha(v.retrato === undefined || (typeof Blob !== 'undefined' && v.retrato instanceof Blob && v.retrato.size <= 512 * 1024), 'O retrato deve ser uma imagem de até 512 KB.', 'entidade.retrato');
     falha(typeof v.id === 'string' && v.id.length > 0 && typeof v.campanhaId === 'string' && v.campanhaId.length > 0, 'Identificador ausente.', 'entidade.id');
     falha(TIPOS_ENTIDADE.includes(String(v.tipo)), 'Tipo de entidade inválido.', 'entidade.tipo');
     texto(v.nome, 'entidade.nome');
@@ -54,12 +55,21 @@ export function validarLigacao(v) {
 }
 export function validarSessao(v) {
     objeto(v, 'sessao');
-    soCampos(v, ['id', 'campanhaId', 'nome', 'data', 'roteiro', 'registro', 'criadaEm', 'atualizadaEm'], 'sessao');
+    soCampos(v, ['id', 'campanhaId', 'nome', 'data', 'roteiro', 'roteiroNotas', 'registro', 'criadaEm', 'atualizadaEm'], 'sessao');
     falha(typeof v.id === 'string' && v.id.length > 0 && typeof v.campanhaId === 'string' && v.campanhaId.length > 0, 'Identificador ausente.', 'sessao.id');
     texto(v.nome, 'sessao.nome');
     tempo(v.data, 'sessao.data');
     refs(v.roteiro, 'sessao.roteiro');
     texto(v.registro, 'sessao.registro', 200_000);
+    if (v.roteiroNotas !== undefined) {
+        objeto(v.roteiroNotas, 'sessao.roteiroNotas');
+        const notas = Object.entries(v.roteiroNotas);
+        falha(notas.length <= 64, 'Notas demais no roteiro.', 'sessao.roteiroNotas');
+        for (const [chave, nota] of notas) {
+            falha(chave.length > 0 && chave.length <= 400, 'Chave de nota inválida.', `sessao.roteiroNotas.${chave}`);
+            texto(nota, `sessao.roteiroNotas.${chave}`, 300);
+        }
+    }
     tempo(v.criadaEm, 'sessao.criadaEm');
     tempo(v.atualizadaEm, 'sessao.atualizadaEm');
 }
@@ -97,8 +107,8 @@ export async function abrirRepositorioCampanha(opcoes) {
             return lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
         }),
         obterEntidade: id => transacao(banco, ['entidades'], 'readonly', tx => promessa(tx.objectStore('entidades').get(id))),
-        async criarEntidade({ campanhaId, tipo, nome, refs = [], tags = [], notas = '' }) {
-            const t = agora(), entidade = { id: novoId(), campanhaId, tipo, nome, refs, tags, notas, criadaPor: opcoes.app, criadaEm: t, atualizadaEm: t };
+        async criarEntidade({ campanhaId, tipo, nome, refs = [], tags = [], notas = '', retrato }) {
+            const t = agora(), entidade = { id: novoId(), campanhaId, tipo, nome, refs, tags, notas, ...(retrato ? { retrato } : {}), criadaPor: opcoes.app, criadaEm: t, atualizadaEm: t };
             validarEntidade(entidade);
             await transacao(banco, ['campanhas', 'entidades'], 'readwrite', async (tx) => {
                 falha(await promessa(tx.objectStore('campanhas').getKey(campanhaId)) !== undefined, 'A campanha não existe.', 'entidade.campanhaId');
