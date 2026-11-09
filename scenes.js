@@ -341,6 +341,14 @@ export function getActiveSceneId() {
     return activeSceneId;
 }
 
+export function clearActiveScene() {
+    if (activeSceneId !== null) {
+        activeSceneId = null;
+        announceActiveScene();
+        if (typeof scenePanel !== 'undefined' && scenePanel?.classList.contains('active')) renderScenes();
+    }
+}
+
 function announceActiveScene() {
     document.dispatchEvent(new CustomEvent('sceneActivated', { detail: { id: activeSceneId } }));
 }

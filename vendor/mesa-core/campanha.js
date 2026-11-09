@@ -24,7 +24,7 @@ export function validarCampanha(v) {
     texto(v.nome, 'campanha.nome');
     falha(String(v.nome).trim().length > 0, 'Dê um nome à campanha.', 'campanha.nome');
     texto(v.sistema, 'campanha.sistema', 80);
-    falha(v.tema === null || ['ordem', 'prata', 'neutro'].includes(String(v.tema)), 'Tema inválido.', 'campanha.tema');
+    falha(v.tema === null || ['atlas', 'mesa', 'ordem', 'vigilia', 'neutro', 'prata'].includes(String(v.tema)), 'Tema inválido.', 'campanha.tema');
     falha(v.capa === null || typeof v.capa === 'string', 'Capa inválida.', 'campanha.capa');
     tempo(v.criadaEm, 'campanha.criadaEm');
     tempo(v.atualizadaEm, 'campanha.atualizadaEm');

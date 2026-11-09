@@ -1,9 +1,9 @@
 // A ligação do Jukebox com a mesa (contrato v1, ver Atlas/docs/PLATAFORMA.md): publica as cenas e os efeitos na campanha ativa,
 // toca uma cena ou um efeito quando outro aplicativo pede, e avisa o que está tocando. Sem BroadcastChannel ou IndexedDB, nada muda.
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
-import { activateSceneById, getActiveSceneId, getScenesSnapshot } from './scenes.js';
+import { activateSceneById, clearActiveScene, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
-import { playSong } from './player.js';
+import { playSong, stopAllWithFade } from './player.js';
 
 const CHAVE_CAMPANHA_ATIVA = 'mesa:campanha-ativa';
 
@@ -90,6 +90,13 @@ function pedidoDeEfeito(dados) {
     return { ok: true };
 }
 
+async function pedidoDeParar(dados) {
+    const ms = typeof dados?.ms === 'number' && Number.isFinite(dados.ms) && dados.ms >= 0 ? dados.ms : 1000;
+    clearActiveScene();
+    await stopAllWithFade(ms);
+    return { ok: true };
+}
+
 function anunciarCena() {
     const id = getActiveSceneId();
     try { barramento?.emitir('jukebox.tocando', { cena: id ? refDaCena(id) : null }); } catch (erro) { console.warn('Jukebox: não consegui avisar o que está tocando', erro); }
@@ -107,6 +114,7 @@ async function iniciar() {
     }
     barramento.atender('jukebox.tocar', pedidoDeCena);
     barramento.atender('jukebox.efeito', pedidoDeEfeito);
+    barramento.atender('jukebox.parar', pedidoDeParar);
     document.addEventListener('sceneActivated', anunciarCena);
     document.addEventListener('songsUpdated', agendar);
     document.addEventListener('scenesUpdated', agendar);

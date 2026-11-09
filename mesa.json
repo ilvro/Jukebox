@@ -6,5 +6,5 @@
   "rotas": {},
   "oferece": ["cena-sonora", "efeito"],
   "emite": ["jukebox.tocando"],
-  "atende": ["jukebox.tocar", "jukebox.efeito"]
+  "atende": ["jukebox.tocar", "jukebox.efeito", "jukebox.parar"]
 }

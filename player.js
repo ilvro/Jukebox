@@ -3798,6 +3798,59 @@ export function stopSong(targetSongId) {
     updatePlayerUI();
 }
 
+export function stopAllWithFade(ms = 1000) {
+    const playing = getPlayingSongStates();
+    if (!playing.length) {
+        updatePlayerUI();
+        return Promise.resolve();
+    }
+
+    if (ms <= 0) {
+        playing.forEach(state => {
+            const { id, audio } = state;
+            if (audio) {
+                audio.pause();
+                setTrackVolume(audio, state.volume ?? getTrackVolume(audio));
+            }
+            const item = getSongElement(id);
+            item?.classList.remove('playing');
+            state.status = 'stopped';
+        });
+        updatePlayerUI();
+        return Promise.resolve();
+    }
+
+    return new Promise(resolve => {
+        let remaining = playing.length;
+        const done = () => {
+            remaining--;
+            if (remaining <= 0) {
+                updatePlayerUI();
+                resolve();
+            }
+        };
+
+        playing.forEach(state => {
+            const { id, audio } = state;
+            if (!audio || audio.paused) {
+                state.status = 'stopped';
+                done();
+                return;
+            }
+            const startVolume = getTrackVolume(audio);
+            animateVolume(audio, startVolume, 0, ms, () => {
+                state.currentTime = audio.currentTime;
+                audio.pause();
+                setTrackVolume(audio, state.volume ?? startVolume);
+                state.status = 'stopped';
+                const item = getSongElement(id);
+                item?.classList.remove('playing');
+                done();
+            });
+        });
+    });
+}
+
 export function fadeTo(targetSongId) {
     const fadeDuration = getFadeDuration() * 1000; // ms
     const targetItem = getSongElement(targetSongId);

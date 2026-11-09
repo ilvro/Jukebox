@@ -11,6 +11,7 @@ const todos = (...vs) => d => { for (const v of vs) {
 } return null; };
 const num = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || Number.isFinite(d[campo])) ? null : `“${campo}” deve ser número.`;
 const texto = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || typeof d[campo] === 'string') ? null : `“${campo}” deve ser texto.`;
+const listaDeRefs = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || (Array.isArray(d[campo]) && d[campo].every(ehRef))) ? null : `“${campo}” deve ser lista de referências.`;
 /**
  * Catálogo versionado. Tipo desconhecido é ignorado (com um aviso no console); o catálogo cresce
  * sempre por tipos novos, nunca mudando o formato de um existente sem subir `CONTRATO`.
@@ -28,8 +29,12 @@ export const CATALOGO = {
     'jukebox.tocar': { natureza: 'pedido', dono: 'jukebox', validar: ref('ref') },
     /** Toca uma vez, por cima da música, um efeito do Jukebox (uma faixa de gênero `sfx`): `mesa:jukebox/efeito/<titulo-em-minusculas-sem-acento>`. */
     'jukebox.efeito': { natureza: 'pedido', dono: 'jukebox', validar: ref('ref') },
+    /** Para todas as faixas que estão tocando com fade de `ms` milissegundos (padrão: 1000). */
+    'jukebox.parar': { natureza: 'pedido', dono: 'jukebox', validar: num('ms', true) },
     'atlas.focar': { natureza: 'pedido', dono: 'atlas', validar: ref('ref') },
+    'atlas.preparar-cena': { natureza: 'pedido', dono: 'atlas', validar: todos(refOuNulo('mapa'), texto('comodo', true), texto('clima', true), listaDeRefs('fichas', true)) },
     'ficha.abrir': { natureza: 'pedido', dono: 'ficha', validar: ref('ref') },
+    'ficha.ajustar-recursos': { natureza: 'pedido', dono: 'ficha', validar: todos(ref('ficha'), num('deltaPv', true), num('deltaPd', true), num('pv', true), num('pd', true)) },
     'atelie.abrir': { natureza: 'pedido', dono: 'atelie', validar: ref('ref') },
 };
 /** Confere um envelope recebido. Nunca lança: o canal é compartilhado e qualquer aba pode mandar lixo. */
