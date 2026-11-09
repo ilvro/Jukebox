@@ -33,6 +33,8 @@ export const CATALOGO = {
     'jukebox.parar': { natureza: 'pedido', dono: 'jukebox', validar: num('ms', true) },
     'atlas.focar': { natureza: 'pedido', dono: 'atlas', validar: ref('ref') },
     'atlas.preparar-cena': { natureza: 'pedido', dono: 'atlas', validar: todos(refOuNulo('mapa'), texto('comodo', true), texto('clima', true), listaDeRefs('fichas', true)) },
+    /** Dispara um momento configurado no mapa (abre o mapa se necessário e toca). */
+    'atlas.momento': { natureza: 'pedido', dono: 'atlas', validar: todos(ref('mapa'), texto('momento')) },
     'ficha.abrir': { natureza: 'pedido', dono: 'ficha', validar: ref('ref') },
     'ficha.ajustar-recursos': { natureza: 'pedido', dono: 'ficha', validar: todos(ref('ficha'), num('deltaPv', true), num('deltaPd', true), num('pv', true), num('pd', true)) },
     'atelie.abrir': { natureza: 'pedido', dono: 'atelie', validar: ref('ref') },
