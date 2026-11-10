@@ -215,7 +215,7 @@ export function ferramentasDaCampanha(obterRepositorio) {
                 for (const e of await repo.listarEntidades(id))
                     (porTipo[e.tipo] ??= []).push({ id: e.id, nome: e.nome, tags: e.tags, refs: e.refs, ...(e.retrato ? { retrato: true } : {}) });
                 const sessoes = (await repo.listarSessoes(id)).map((s) => ({ id: s.id, nome: s.nome, data: s.data, roteiro: s.roteiro.length }));
-                return [json({ campanha: { id: campanha.id, nome: campanha.nome, sistema: campanha.sistema, tema: campanha.tema, capa: campanha.capa !== null }, entidades: porTipo, sessoes })];
+                return [json({ campanha: { id: campanha.id, nome: campanha.nome, sistema: campanha.sistema, tema: campanha.tema, capa: campanha.capa !== null, ...(campanha.elenco !== undefined ? { elenco: campanha.elenco } : {}) }, entidades: porTipo, sessoes })];
             },
         },
         {

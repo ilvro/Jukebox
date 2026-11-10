@@ -11,6 +11,8 @@ export interface Campanha {
     sistema: string;
     tema: 'atlas' | 'mesa' | 'ordem' | 'vigilia' | 'neutro' | null;
     capa: string | null;
+    /** Ids de entidades `personagem` que fazem parte desta campanha. Sem `elenco`, valem todos os personagens. */
+    elenco?: string[];
     criadaEm: number;
     atualizadaEm: number;
 }

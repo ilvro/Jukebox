@@ -19,13 +19,23 @@ const soCampos = (o, campos, caminho) => { for (const k of Object.keys(o))
 function objeto(v, caminho) { falha(!!v && typeof v === 'object' && !Array.isArray(v), 'Objeto inválido.', caminho); }
 export function validarCampanha(v) {
     objeto(v, 'campanha');
-    soCampos(v, ['id', 'nome', 'sistema', 'tema', 'capa', 'criadaEm', 'atualizadaEm'], 'campanha');
+    soCampos(v, ['id', 'nome', 'sistema', 'tema', 'capa', 'elenco', 'criadaEm', 'atualizadaEm'], 'campanha');
     falha(typeof v.id === 'string' && v.id.length > 0, 'Identificador ausente.', 'campanha.id');
     texto(v.nome, 'campanha.nome');
     falha(String(v.nome).trim().length > 0, 'Dê um nome à campanha.', 'campanha.nome');
     texto(v.sistema, 'campanha.sistema', 80);
     falha(v.tema === null || ['atlas', 'mesa', 'ordem', 'vigilia', 'neutro', 'prata'].includes(String(v.tema)), 'Tema inválido.', 'campanha.tema');
     falha(v.capa === null || typeof v.capa === 'string', 'Capa inválida.', 'campanha.capa');
+    if (v.elenco !== undefined) {
+        falha(Array.isArray(v.elenco) && v.elenco.length <= 200, 'Elenco inválido.', 'campanha.elenco');
+        const vistos = new Set();
+        for (let i = 0; i < v.elenco.length; i++) {
+            const id = v.elenco[i];
+            falha(typeof id === 'string' && id.trim().length > 0 && id.length <= 200, 'Identificador de personagem inválido no elenco.', `campanha.elenco[${i}]`);
+            falha(!vistos.has(id), `Personagem repetido no elenco: ${id}.`, `campanha.elenco[${i}]`);
+            vistos.add(id);
+        }
+    }
     tempo(v.criadaEm, 'campanha.criadaEm');
     tempo(v.atualizadaEm, 'campanha.atualizadaEm');
 }
@@ -87,7 +97,7 @@ export async function abrirRepositorioCampanha(opcoes) {
     const repo = {
         listarCampanhas: () => transacao(banco, ['campanhas'], 'readonly', async (tx) => (await obterTudo(tx.objectStore('campanhas'))).sort((a, b) => b.atualizadaEm - a.atualizadaEm)),
         obterCampanha: id => transacao(banco, ['campanhas'], 'readonly', tx => promessa(tx.objectStore('campanhas').get(id))),
-        salvarCampanha: campanha => { validarCampanha(campanha); return transacao(banco, ['campanhas'], 'readwrite', async (tx) => { await promessa(tx.objectStore('campanhas').put(campanha)); }); },
+        salvarCampanha: async (campanha) => { validarCampanha(campanha); await transacao(banco, ['campanhas'], 'readwrite', async (tx) => { await promessa(tx.objectStore('campanhas').put(campanha)); }); },
         async criarCampanha({ nome, sistema = '', tema = null }) {
             const t = agora(), campanha = { id: novoId(), nome, sistema, tema, capa: null, criadaEm: t, atualizadaEm: t };
             await repo.salvarCampanha(campanha);
