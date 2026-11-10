@@ -7,6 +7,23 @@ export function imagem(dataUrl) {
         throw new Error('Imagem inválida: esperado um data URL em base64.');
     return { tipo: 'imagem', dados: m[2], mime: m[1] };
 }
+export const CHAVE_ARMAZENAMENTO = 'mesa:ponte-armazenamento';
+export function obterIdArmazenamento(storage) {
+    try {
+        const s = storage !== undefined ? storage : (typeof localStorage !== 'undefined' ? localStorage : null);
+        if (!s)
+            return `id-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+        const atual = s.getItem(CHAVE_ARMAZENAMENTO);
+        if (atual && typeof atual === 'string' && atual.trim() !== '')
+            return atual.trim();
+        const novo = `id-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+        s.setItem(CHAVE_ARMAZENAMENTO, novo);
+        return novo;
+    }
+    catch {
+        return `id-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+    }
+}
 /** Esperas entre tentativas de reconexão; a última repete. */
 export const ESPERAS_DA_PONTE_MS = [1000, 2000, 5000, 10000];
 export function conectarPonte(opcoes) {
@@ -33,7 +50,23 @@ export function conectarPonte(opcoes) {
         socket?.send(JSON.stringify(m));
     }
     catch { /* socket caiu: a reconexão cuida */ } };
-    const registrar = () => enviar({ tipo: 'registrar', app: opcoes.app, titulo: opcoes.titulo, ferramentas: ferramentas.map(({ nome, descricao, esquema }) => ({ nome, descricao, esquema })) });
+    const resolverArmazenamento = () => {
+        if (typeof opcoes.armazenamento === 'function')
+            return opcoes.armazenamento();
+        if (typeof opcoes.armazenamento === 'string')
+            return opcoes.armazenamento;
+        return obterIdArmazenamento(opcoes.storage);
+    };
+    const registrar = () => {
+        const arm = resolverArmazenamento();
+        enviar({
+            tipo: 'registrar',
+            app: opcoes.app,
+            titulo: opcoes.titulo,
+            ferramentas: ferramentas.map(({ nome, descricao, esquema }) => ({ nome, descricao, esquema })),
+            ...(arm ? { armazenamento: arm } : {}),
+        });
+    };
     const foco = () => { if (socket)
         enviar({ tipo: 'foco' }); };
     const aoVisibilidade = () => { if (typeof document !== 'undefined' && document.visibilityState === 'visible')

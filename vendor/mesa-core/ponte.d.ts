@@ -34,10 +34,16 @@ export interface SocketMinimo {
     send(dados: string): void;
     close(): void;
 }
+export declare const CHAVE_ARMAZENAMENTO = "mesa:ponte-armazenamento";
+export declare function obterIdArmazenamento(storage?: Pick<Storage, 'getItem' | 'setItem'> | null): string;
 export interface OpcoesPonte {
     app: string;
     titulo: string;
     ferramentas: FerramentaDaPonte[];
+    /** Id do armazenamento compartilhado (ex.: do localStorage); por padrão usa `obterIdArmazenamento()`. */
+    armazenamento?: string | (() => string);
+    /** Para testes: substitui localStorage para obter o armazenamento. */
+    storage?: Pick<Storage, 'getItem' | 'setItem'> | null;
     /** Para testes: endereço completo; padrão `ws(s)://${location.host}/__ponte`. */
     url?: string;
     criarSocket?: (url: string) => SocketMinimo;
