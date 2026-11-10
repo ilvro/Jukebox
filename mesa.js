@@ -69,14 +69,14 @@ function agendar() {
     temporizador = setTimeout(() => { void sincronizar(); }, 400);
 }
 
-function pedidoDeCena(dados) {
+export function pedidoDeCena(dados) {
     const ref = dados?.ref;
     if (ref?.app !== 'jukebox' || ref.tipo !== 'cena-sonora') return { ok: false, motivo: 'O Jukebox só toca cenas sonoras suas.' };
     const resultado = activateSceneById(ref.id);
     return resultado.ok ? { ok: true } : { ok: false, motivo: resultado.motivo };
 }
 
-function pedidoDeEfeito(dados) {
+export function pedidoDeEfeito(dados) {
     const ref = dados?.ref;
     if (ref?.app !== 'jukebox' || ref.tipo !== 'efeito') return { ok: false, motivo: 'O Jukebox só toca efeitos seus.' };
     const efeito = efeitosDisponiveis().find(e => e.slug === ref.id);
@@ -90,7 +90,7 @@ function pedidoDeEfeito(dados) {
     return { ok: true };
 }
 
-async function pedidoDeParar(dados) {
+export async function pedidoDeParar(dados) {
     const ms = typeof dados?.ms === 'number' && Number.isFinite(dados.ms) && dados.ms >= 0 ? dados.ms : 1000;
     clearActiveScene();
     await stopAllWithFade(ms);
@@ -102,7 +102,44 @@ function anunciarCena() {
     try { barramento?.emitir('jukebox.tocando', { cena: id ? refDaCena(id) : null }); } catch (erro) { console.warn('Jukebox: não consegui avisar o que está tocando', erro); }
 }
 
+const esperar = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** O contexto das ferramentas da ponte (ponte.js): reaproveita os pedidos do barramento. `bloqueado`: o navegador não deixou tocar (sem gesto do mestre). */
+export function contextoDaPonte() {
+    return {
+        cenas: () => getScenesSnapshot().map(c => ({ id: c.id, nome: c.name })),
+        cenaAtiva: () => getActiveSceneId(),
+        efeitos: () => efeitosDisponiveis().map(e => ({ slug: e.slug, titulo: e.titulo, carregado: !!e.state.audio })),
+        async tocarCena(id) {
+            let r = pedidoDeCena({ ref: refDaCena(id) });
+            // Cena com parte das faixas faltando: ela toca mesmo assim (as que existem), então é sucesso com aviso.
+            if (!r.ok && getActiveSceneId() === id) r = { ok: true, aviso: r.motivo };
+            if (!r.ok) return r;
+            await esperar(400);
+            // A rejeição de `play()` é engolida no player: sem nada tocando logo depois, foi o autoplay bloqueado.
+            const tocando = getAllSongStates().some(s => s.audio && !s.audio.paused);
+            return tocando ? r : { ok: true, bloqueado: true };
+        },
+        async tocarEfeito(slug) {
+            const r = pedidoDeEfeito({ ref: refDoEfeito(slug) });
+            if (!r.ok) return r;
+            await esperar(400);
+            const audio = efeitosDisponiveis().find(e => e.slug === slug)?.state.audio;
+            // Um efeito curto pode já ter acabado; só conta como bloqueado se nunca avançou.
+            return !audio || !audio.paused || audio.ended || audio.currentTime > 0 ? r : { ok: true, bloqueado: true };
+        },
+        parar: ms => pedidoDeParar({ ms }),
+    };
+}
+
+/** Só em 127.0.0.1/localhost (mesa-dev): no Pages a ponte não é nem baixada. */
+function carregarPonte() {
+    if (typeof location === 'undefined' || !['127.0.0.1', 'localhost'].includes(location.hostname)) return;
+    import('./ponte.js').then(m => m.iniciarPonte(contextoDaPonte())).catch(erro => console.warn('Jukebox: sem a ponte do assistente', erro));
+}
+
 async function iniciar() {
+    carregarPonte();
     if (typeof BroadcastChannel === 'undefined' || typeof indexedDB === 'undefined') return;
     try {
         repositorio = await abrirRepositorioCampanha({ app: 'jukebox' });
