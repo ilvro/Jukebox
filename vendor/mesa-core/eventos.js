@@ -31,6 +31,8 @@ export const CATALOGO = {
     'jukebox.efeito': { natureza: 'pedido', dono: 'jukebox', validar: ref('ref') },
     /** Para todas as faixas que estão tocando com fade de `ms` milissegundos (padrão: 1000). */
     'jukebox.parar': { natureza: 'pedido', dono: 'jukebox', validar: num('ms', true) },
+    /** Pergunta a prontidão de uma cena sonora ao Jukebox. */
+    'jukebox.prontidao': { natureza: 'pedido', dono: 'jukebox', validar: ref('ref') },
     'atlas.focar': { natureza: 'pedido', dono: 'atlas', validar: ref('ref') },
     'atlas.preparar-cena': { natureza: 'pedido', dono: 'atlas', validar: todos(refOuNulo('mapa'), texto('comodo', true), texto('clima', true), listaDeRefs('fichas', true)) },
     /** Dispara um momento configurado no mapa (abre o mapa se necessário e toca). */
