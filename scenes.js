@@ -354,6 +354,22 @@ function announceActiveScene() {
 }
 
 /**
+ * Devolve a prontidão de uma cena sonora pelo id: `{ existe, nome, total, faltando }`.
+ */
+export function estadoDaCena(id) {
+    const scene = scenes.find(candidate => candidate.id === id);
+    if (!scene) return { existe: false, nome: '', total: 0, faltando: 0 };
+    const total = scene.tracks ? scene.tracks.length : 0;
+    const faltando = scene.tracks ? countMissingTracks(scene) : 0;
+    return {
+        existe: true,
+        nome: scene.name || '',
+        total,
+        faltando,
+    };
+}
+
+/**
  * Ativa uma cena pelo id, a pedido de outro aplicativo da mesa (sem alternar: pedir a cena que já toca não a desliga).
  * Devolve `{ ok, motivo?, faltando }`: `ok` é falso se faltam faixas (as que existem tocam mesmo assim).
  */

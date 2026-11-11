@@ -1,7 +1,7 @@
 // A ligação do Jukebox com a mesa (contrato v1, ver Atlas/docs/PLATAFORMA.md): publica as cenas e os efeitos na campanha ativa,
 // toca uma cena ou um efeito quando outro aplicativo pede, e avisa o que está tocando. Sem BroadcastChannel ou IndexedDB, nada muda.
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
-import { activateSceneById, clearActiveScene, getActiveSceneId, getScenesSnapshot } from './scenes.js';
+import { activateSceneById, clearActiveScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
 import { playSong, stopAllWithFade } from './player.js';
 
@@ -74,6 +74,19 @@ export function pedidoDeCena(dados) {
     if (ref?.app !== 'jukebox' || ref.tipo !== 'cena-sonora') return { ok: false, motivo: 'O Jukebox só toca cenas sonoras suas.' };
     const resultado = activateSceneById(ref.id);
     return resultado.ok ? { ok: true } : { ok: false, motivo: resultado.motivo };
+}
+
+export function pedidoDeProntidao(dados) {
+    const ref = dados?.ref;
+    if (ref?.app !== 'jukebox' || ref.tipo !== 'cena-sonora') return { ok: false, motivo: 'O Jukebox só avalia cenas sonoras suas.' };
+    const estado = estadoDaCena(ref.id);
+    if (!estado.existe) return { ok: false, motivo: 'Cena não encontrada neste Jukebox.' };
+    return {
+        ok: true,
+        total: estado.total,
+        faltando: estado.faltando,
+        nome: estado.nome,
+    };
 }
 
 export function pedidoDeEfeito(dados) {
@@ -152,6 +165,7 @@ async function iniciar() {
     barramento.atender('jukebox.tocar', pedidoDeCena);
     barramento.atender('jukebox.efeito', pedidoDeEfeito);
     barramento.atender('jukebox.parar', pedidoDeParar);
+    barramento.atender('jukebox.prontidao', pedidoDeProntidao);
     document.addEventListener('sceneActivated', anunciarCena);
     document.addEventListener('songsUpdated', agendar);
     document.addEventListener('scenesUpdated', agendar);
