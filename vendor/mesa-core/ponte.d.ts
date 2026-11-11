@@ -12,11 +12,17 @@ export type Conteudo = {
     dados: string;
     mime: string;
 };
+export interface AnotacoesDaFerramenta {
+    leitura?: boolean;
+    destrutiva?: boolean;
+    idempotente?: boolean;
+}
 export interface FerramentaDaPonte {
     nome: string;
     descricao: string;
     /** JSON Schema do objeto de argumentos. */
     esquema: Record<string, unknown>;
+    anotacoes?: AnotacoesDaFerramenta;
     executar(args: Record<string, unknown>): Promise<Conteudo[]>;
 }
 export declare const texto: (t: string) => Conteudo;

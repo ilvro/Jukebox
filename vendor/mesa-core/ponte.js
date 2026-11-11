@@ -63,7 +63,12 @@ export function conectarPonte(opcoes) {
             tipo: 'registrar',
             app: opcoes.app,
             titulo: opcoes.titulo,
-            ferramentas: ferramentas.map(({ nome, descricao, esquema }) => ({ nome, descricao, esquema })),
+            ferramentas: ferramentas.map(({ nome, descricao, esquema, anotacoes }) => ({
+                nome,
+                descricao,
+                esquema,
+                ...(anotacoes ? { anotacoes } : {}),
+            })),
             ...(arm ? { armazenamento: arm } : {}),
         });
     };
@@ -197,6 +202,7 @@ export function ferramentasDaCampanha(obterRepositorio) {
             nome: 'campanha_listar',
             descricao: 'Lista as campanhas (id, nome e sistema).',
             esquema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+            anotacoes: { leitura: true },
             async executar() {
                 const repo = await obterRepositorio();
                 return [json((await repo.listarCampanhas()).map(c => ({ id: c.id, nome: c.nome, sistema: c.sistema })))];
@@ -206,6 +212,7 @@ export function ferramentasDaCampanha(obterRepositorio) {
             nome: 'campanha_ler',
             descricao: 'Lê uma campanha: os dados dela, as entidades por tipo (id, nome, tags, refs) e as sessões (id, data, nome, tamanho do roteiro).',
             esquema: esquemaId('campanhaId', 'Id da campanha (veja campanha_listar).'),
+            anotacoes: { leitura: true },
             async executar(args) {
                 const repo = await obterRepositorio(), id = obrigatorio(args, 'campanhaId');
                 const campanha = await repo.obterCampanha(id);
@@ -222,6 +229,7 @@ export function ferramentasDaCampanha(obterRepositorio) {
             nome: 'campanha_entidade_ler',
             descricao: 'Lê uma entidade inteira (notas, refs, tags) e as ligações dela.',
             esquema: esquemaId('id', 'Id da entidade.'),
+            anotacoes: { leitura: true },
             async executar(args) {
                 const repo = await obterRepositorio(), id = obrigatorio(args, 'id');
                 const entidade = await repo.obterEntidade(id);
@@ -236,6 +244,7 @@ export function ferramentasDaCampanha(obterRepositorio) {
             nome: 'campanha_sessao_ler',
             descricao: 'Lê uma sessão inteira: data, roteiro (refs), notas do roteiro e registro.',
             esquema: esquemaId('id', 'Id da sessão (veja campanha_ler).'),
+            anotacoes: { leitura: true },
             async executar(args) {
                 const repo = await obterRepositorio(), id = obrigatorio(args, 'id');
                 for (const c of await repo.listarCampanhas()) {
