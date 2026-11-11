@@ -59,3 +59,9 @@ test('áudio bloqueado e falha da cena viram erro com o que fazer', async () => 
     const b = montar({ tocarEfeito: async () => ({ ok: false, motivo: 'O áudio deste efeito ainda não carregou.' }) });
     await assert.rejects(b.f.jukebox_efeito.executar({ efeito: 'agua-gotas' }), /não carregou/);
 });
+
+test('orçamento: descrições até 400 caracteres e campos até 80', () => {
+    const { f } = montar();
+    const varrer = o => !o || typeof o !== 'object' ? [] : [...(typeof o.description === 'string' && o.description.length > 80 ? [o.description] : []), ...Object.values(o).flatMap(varrer)];
+    for (const t of Object.values(f)) { assert.ok(t.descricao.length <= 400, t.nome); assert.deepEqual(varrer(t.esquema), [], t.nome); }
+});

@@ -38,7 +38,7 @@ export function ferramentasDaJukebox(ctx) {
     return [
         {
             nome: 'jukebox_listar',
-            descricao: 'Lista as cenas sonoras (trilhas) e os efeitos avulsos carregados na Jukebox, com o ref de cada um e qual cena está tocando.',
+            descricao: 'Lista cenas sonoras e efeitos da Jukebox, com ref, e qual cena toca.',
             esquema: sem,
             async executar() {
                 const ativa = ctx.cenaAtiva();
@@ -50,8 +50,8 @@ export function ferramentasDaJukebox(ctx) {
         },
         {
             nome: 'jukebox_tocar',
-            descricao: 'Toca uma cena sonora da Jukebox (a trilha de uma cena). Aceita o id, o ref (mesa:jukebox/cena-sonora/<id>) ou o nome, sem diferenciar maiúsculas e acentos. Pedir a cena que já toca não a desliga.',
-            esquema: { type: 'object', properties: { cena: { type: 'string', description: 'Id, ref ou nome da cena sonora.' } }, required: ['cena'], additionalProperties: false },
+            descricao: 'Toca uma cena sonora da Jukebox, por id, ref ou nome. Detalhes: plataforma_guia ferramentas-jukebox.',
+            esquema: { type: 'object', properties: { cena: { type: 'string', description: 'Id, ref ou nome.' } }, required: ['cena'], additionalProperties: false },
             async executar(args) {
                 const cenas = ctx.cenas();
                 const cena = achar(cenas, args.cena, 'cena-sonora', 'id', 'nome');
@@ -64,8 +64,8 @@ export function ferramentasDaJukebox(ctx) {
         },
         {
             nome: 'jukebox_efeito',
-            descricao: 'Dispara um efeito sonoro avulso da Jukebox, por cima da música. Aceita o slug, o ref (mesa:jukebox/efeito/<slug>) ou o título, sem diferenciar maiúsculas e acentos. Pedido de novo, recomeça.',
-            esquema: { type: 'object', properties: { efeito: { type: 'string', description: 'Slug, ref ou título do efeito.' } }, required: ['efeito'], additionalProperties: false },
+            descricao: 'Dispara um efeito avulso por cima da música, por slug, ref ou título. Detalhes: plataforma_guia ferramentas-jukebox.',
+            esquema: { type: 'object', properties: { efeito: { type: 'string', description: 'Slug, ref ou título.' } }, required: ['efeito'], additionalProperties: false },
             async executar(args) {
                 const efeitos = ctx.efeitos();
                 const efeito = achar(efeitos, args.efeito, 'efeito', 'slug', 'titulo');
@@ -78,8 +78,8 @@ export function ferramentasDaJukebox(ctx) {
         },
         {
             nome: 'jukebox_parar',
-            descricao: 'Para tudo o que toca na Jukebox (cena e efeitos) com um fade out. Padrão: 1000 ms.',
-            esquema: { type: 'object', properties: { ms: { type: 'number', minimum: 0, description: 'Duração do fade out em milissegundos (padrão 1000).' } }, required: [], additionalProperties: false },
+            descricao: 'Para cena e efeitos com fade out. Detalhes: plataforma_guia ferramentas-jukebox.',
+            esquema: { type: 'object', properties: { ms: { type: 'number', minimum: 0, description: 'Fade out em ms (padrão 1000).' } }, required: [], additionalProperties: false },
             async executar(args) {
                 const ms = typeof args?.ms === 'number' && Number.isFinite(args.ms) && args.ms >= 0 ? args.ms : MS_PADRAO;
                 await ctx.parar(ms);
