@@ -1297,6 +1297,7 @@ function createPresetSongItem(song) {
     songItem.dataset.tags = song.tags.join(',');
     songItem.dataset.presetTitle = song.currentTitle;
     songItem.dataset.fileTitle = song.fileTitle;
+    songItem.dataset.searchTitle = song.decodedTitle.toLowerCase();
     if (song.folder) songItem.dataset.folder = song.folder;
 
     const titleInput = document.createElement('input');
