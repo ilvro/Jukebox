@@ -1,7 +1,7 @@
 // A ligação do Jukebox com a mesa (contrato v1, ver Atlas/docs/PLATAFORMA.md): publica as cenas e os efeitos na campanha ativa,
 // toca uma cena ou um efeito quando outro aplicativo pede, e avisa o que está tocando. Sem BroadcastChannel ou IndexedDB, nada muda.
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
-import { activateSceneById, clearActiveScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
+import { activateSceneById, clearActiveScene, createSoundScene, listSongsForScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
 import { playSong, stopAllWithFade } from './player.js';
 
@@ -142,6 +142,9 @@ export function contextoDaPonte() {
             return !audio || !audio.paused || audio.ended || audio.currentTime > 0 ? r : { ok: true, bloqueado: true };
         },
         parar: ms => pedidoDeParar({ ms }),
+        musicas: () => listSongsForScene(),
+        // `saveScenes` dispara `scenesUpdated`: é por esse evento que a Mesa fica sabendo (ver `iniciar`).
+        criarCena: dados => createSoundScene({ name: dados.nome, tracks: dados.faixas.map(f => ({ title: f.titulo, volume: f.volume })), replace: !!dados.substituir }),
         async receberMusica(dados) {
             const { receberMusicaNoPlayer } = await import('./upload-song.js');
             return receberMusicaNoPlayer(dados);

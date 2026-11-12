@@ -115,3 +115,42 @@ test('orçamento: descrições até 400 caracteres e campos até 80', () => {
     const varrer = o => !o || typeof o !== 'object' ? [] : [...(typeof o.description === 'string' && o.description.length > 80 ? [o.description] : []), ...Object.values(o).flatMap(varrer)];
     for (const t of Object.values(f)) { assert.ok(t.descricao.length <= 400, t.nome); assert.deepEqual(varrer(t.esquema), [], t.nome); }
 });
+
+function montarCenas(extra = {}) {
+    const criadas = [];
+    const cenas = [{ id: 'c1', nome: 'Tensão no Porão' }];
+    const base = {
+        cenas: () => cenas,
+        musicas: () => [{ titulo: 'Sombras', volume: 0.4 }, { titulo: 'Água Parada', volume: 1 }],
+        criarCena: async d => { criadas.push(d); return { ok: true, id: 'novo', nome: d.nome, faixas: d.faixas }; },
+        ...extra,
+    };
+    return { ...montar(base), criadas };
+}
+
+test('cena_criar cria com volumes (padrão: o atual da faixa) e devolve ref', async () => {
+    const { f, criadas } = montarCenas();
+    const d = dados(await f.jukebox_cena_criar.executar({ nome: 'Pântano', faixas: [{ titulo: 'sombras' }, { titulo: 'agua parada', volume: 0.2 }] }));
+    assert.deepEqual(criadas[0], { nome: 'Pântano', substituir: false, faixas: [{ titulo: 'Sombras', volume: 0.4 }, { titulo: 'Água Parada', volume: 0.2 }] });
+    assert.equal(d.criada, true);
+    assert.equal(d.ref, 'mesa:jukebox/cena-sonora/novo');
+    assert.equal(d.faixas.length, 2);
+});
+
+test('cena_criar recusa nome repetido, salvo substituir', async () => {
+    const { f, criadas } = montarCenas();
+    await assert.rejects(f.jukebox_cena_criar.executar({ nome: 'tensao no porao', faixas: [{ titulo: 'Sombras' }] }), /Já existe/);
+    assert.equal(criadas.length, 0);
+    await f.jukebox_cena_criar.executar({ nome: 'tensao no porao', faixas: [{ titulo: 'Sombras' }], substituir: true });
+    assert.equal(criadas[0].substituir, true);
+});
+
+test('cena_criar: faixa inexistente lista as músicas; sem preset; limites', async () => {
+    const { f } = montarCenas();
+    await assert.rejects(f.jukebox_cena_criar.executar({ nome: 'X', faixas: [{ titulo: 'Nada' }] }), /Disponíveis: "Sombras", "Água Parada"/);
+    await assert.rejects(f.jukebox_cena_criar.executar({ nome: '  ', faixas: [{ titulo: 'Sombras' }] }), /1 a 80/);
+    await assert.rejects(f.jukebox_cena_criar.executar({ nome: 'X', faixas: [] }), /1 a 12/);
+    await assert.rejects(f.jukebox_cena_criar.executar({ nome: 'X', faixas: [{ titulo: 'Sombras', volume: 2 }] }), /entre 0 e 1/);
+    const sem = montarCenas({ musicas: () => [] });
+    await assert.rejects(sem.f.jukebox_cena_criar.executar({ nome: 'X', faixas: [{ titulo: 'Sombras' }] }), /Nenhum preset aberto/);
+});

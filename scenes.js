@@ -7,6 +7,7 @@ import {
 } from './player.js';
 import { getAllSongStates } from './song-state.mjs';
 import { DEFAULT_SCENES } from './default-scenes.js';
+import { montarCena } from './scene-build.js';
 
 const SCENE_STORAGE_KEY = 'jukebox-scenes-v1';
 
@@ -143,6 +144,34 @@ function captureCurrentMix() {
             ...getSongIdentity(state),
             ...getSongSceneSnapshot(state.id)
         }));
+}
+
+/** As músicas carregadas no Jukebox, na ordem da tela: [{ titulo, volume }]. */
+export function listSongsForScene() {
+    return getAllSongStates()
+        .filter(state => state.element)
+        .sort((a, b) => a.order - b.order)
+        .map(state => ({ titulo: getSongIdentity(state).title, volume: state.volume ?? 1 }));
+}
+
+/** Cria uma cena sonora com as músicas pelo título (o mesmo caminho de "Save Current Mix"). Com `replace`, troca a cena de mesmo nome mantendo o id. */
+export function createSoundScene({ name, tracks, replace = false }) {
+    const faixas = [];
+    for (const { title, volume } of tracks) {
+        const state = getAllSongStates().find(s => s.element && normalizeTitle(getSongIdentity(s).title) === normalizeTitle(title));
+        if (!state) return { ok: false, motivo: `Música "${title}" não está carregada.` };
+        faixas.push({ identidade: getSongIdentity(state), snapshot: getSongSceneSnapshot(state.id), volume: volume ?? state.volume });
+    }
+    const key = name.trim().toLowerCase();
+    const index = scenes.findIndex(s => s.name.trim().toLowerCase() === key);
+    if (index !== -1 && !replace) return { ok: false, motivo: `Já existe a cena "${scenes[index].name}".` };
+    const scene = montarCena({ id: index !== -1 ? scenes[index].id : createSceneId(), nome: name.trim(), faixas, masterVolume: captureMasterVolume() });
+    if (index !== -1) scenes[index] = { ...scene, createdAt: scenes[index].createdAt ?? scene.createdAt, updatedAt: Date.now() };
+    else scenes.push(scene);
+    saveScenes();
+    renderScenes();
+    showSceneToast(`Scene “${scene.name}” saved.`);
+    return { ok: true, id: scene.id, nome: scene.name, faixas: scene.tracks.map(t => ({ titulo: t.title, volume: t.volume })), substituida: index !== -1 };
 }
 
 function captureMasterVolume() {

@@ -32,6 +32,7 @@ function achar(itens, consulta, tipo, chaveId, chaveNome) {
 const lista = nomes => nomes.length ? nomes.map(n => `"${n}"`).join(', ') : '(nenhum carregado)';
 
 /** `ctx`: cenas() → [{ id, nome }], cenaAtiva() → id | null, efeitos() → [{ slug, titulo, carregado }],
+ *  musicas() → [{ titulo, volume }], criarCena({ nome, faixas: [{ titulo, volume }], substituir }) → { ok, motivo?, id, nome, faixas },
  *  tocarCena(id) / tocarEfeito(slug) → { ok, motivo?, bloqueado? }, parar(ms) → { ok }. */
 export function ferramentasDaJukebox(ctx) {
     const sem = { type: 'object', properties: {}, required: [], additionalProperties: false };
@@ -60,6 +61,49 @@ export function ferramentasDaJukebox(ctx) {
                 if (!r.ok) throw new Error(`Não toquei a cena "${cena.nome}": ${r.motivo ?? 'motivo desconhecido'}`);
                 if (r.bloqueado) throw new Error(`${MSG_BLOQUEADO} (cena "${cena.nome}").`);
                 return [json({ tocando: { id: cena.id, nome: cena.nome, ref: refDe('cena-sonora', cena.id) }, ...(r.aviso ? { aviso: r.aviso } : {}) })];
+            },
+        },
+        {
+            nome: 'jukebox_cena_criar',
+            descricao: 'Cria uma cena sonora com músicas do preset aberto (título e volume 0 a 1). Depois toque com jukebox_tocar. Detalhes: plataforma_guia ferramentas-jukebox.',
+            esquema: {
+                type: 'object',
+                properties: {
+                    nome: { type: 'string', description: 'Nome da cena (1 a 80 caracteres).' },
+                    faixas: {
+                        type: 'array',
+                        description: '1 a 12 músicas do preset aberto.',
+                        items: {
+                            type: 'object',
+                            properties: { titulo: { type: 'string', description: 'Título da música.' }, volume: { type: 'number', minimum: 0, maximum: 1, description: 'Volume de 0 a 1.' } },
+                            required: ['titulo'],
+                            additionalProperties: false,
+                        },
+                    },
+                    substituir: { type: 'boolean', description: 'Troca a cena de mesmo nome.' },
+                },
+                required: ['nome', 'faixas'],
+                additionalProperties: false,
+            },
+            anotacoes: { destrutiva: false },
+            async executar(args) {
+                const nome = String(args?.nome ?? '').trim();
+                if (nome.length < 1 || nome.length > 80) throw new Error('O nome da cena precisa ter de 1 a 80 caracteres.');
+                const pedidas = args?.faixas;
+                if (!Array.isArray(pedidas) || pedidas.length < 1 || pedidas.length > 12) throw new Error('Informe de 1 a 12 faixas.');
+                const musicas = ctx.musicas();
+                if (musicas.length === 0) throw new Error('Nenhum preset aberto na Jukebox: abra o preset antes de criar a cena.');
+                const faixas = pedidas.map(p => {
+                    const musica = achar(musicas, p?.titulo, 'musica', 'titulo', 'titulo');
+                    if (!musica) throw new Error(`Música "${p?.titulo}" não encontrada no preset aberto. Disponíveis: ${lista(musicas.map(m => m.titulo))}.`);
+                    if (p.volume !== undefined && !(typeof p.volume === 'number' && p.volume >= 0 && p.volume <= 1)) throw new Error(`Volume de "${musica.titulo}" precisa estar entre 0 e 1.`);
+                    return { titulo: musica.titulo, volume: p.volume ?? (Number.isFinite(musica.volume) ? Math.max(0, Math.min(1, musica.volume)) : 1) };
+                });
+                const igual = ctx.cenas().find(c => normalizar(c.nome) === normalizar(nome));
+                if (igual && args.substituir !== true) throw new Error(`Já existe a cena "${igual.nome}". Use outro nome ou substituir: true.`);
+                const r = await ctx.criarCena({ nome, faixas, substituir: args.substituir === true });
+                if (!r?.ok) throw new Error(`Não criei a cena "${nome}": ${r?.motivo ?? 'motivo desconhecido'}`);
+                return [json({ criada: true, id: r.id, ref: refDe('cena-sonora', r.id), nome: r.nome ?? nome, faixas: r.faixas ?? faixas })];
             },
         },
         {
