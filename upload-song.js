@@ -1118,12 +1118,14 @@ async function savePreset() {
             console.log(`saved ${currentTitle}`);
         }
 
-        const dadosMesclados = mesclarMetadados({
-            noDisco: presetData,
-            daTela: updatedData,
-            apagadas: deletedSongs,
-            tituloNaAbertura,
-        });
+        const dadosMesclados = (loadedPresetFolderName && directoryHandle.name === loadedPresetFolderName)
+            ? mesclarMetadados({
+                noDisco: presetData,
+                daTela: updatedData,
+                apagadas: deletedSongs,
+                tituloNaAbertura,
+            })
+            : updatedData;
 
         const dadosFinais = [];
         for (const item of dadosMesclados) {
