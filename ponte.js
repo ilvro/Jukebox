@@ -86,6 +86,29 @@ export function ferramentasDaJukebox(ctx) {
                 return [json({ parado: true, ms })];
             },
         },
+        {
+            nome: 'jukebox_preset_receber',
+            descricao: 'Interna: usada por jukebox_preset_adicionar.',
+            esquema: {
+                type: 'object',
+                properties: {
+                    pasta: { type: 'string', description: 'Nome da pasta do preset.' },
+                    item: { type: 'object', description: 'Item de metadados da música.' },
+                    audio: { type: 'string', description: 'Áudio MP3 codificado em base64.' },
+                    capa: { type: 'string', description: 'Capa JPEG codificada em base64.' },
+                },
+                required: ['pasta', 'item', 'audio', 'capa'],
+                additionalProperties: false,
+            },
+            anotacoes: { destrutiva: false },
+            async executar(args) {
+                if (typeof ctx.receberMusica !== 'function') {
+                    return [json({ recebido: false, motivo: 'Recepção de músicas não suportada nesta versão.' })];
+                }
+                const r = await ctx.receberMusica(args);
+                return [json(r)];
+            },
+        },
     ];
 }
 

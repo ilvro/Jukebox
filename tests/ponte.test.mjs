@@ -60,6 +60,56 @@ test('áudio bloqueado e falha da cena viram erro com o que fazer', async () => 
     await assert.rejects(b.f.jukebox_efeito.executar({ efeito: 'agua-gotas' }), /não carregou/);
 });
 
+test('receber encaminha para ctx.receberMusica; preset certo recebe e outro recusa', async () => {
+    let presetAberto = 'pantano';
+    const { f } = montar({
+        receberMusica: async ({ pasta, item }) => {
+            const pastaAlvo = String(pasta).trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+            if (!presetAberto || pastaAlvo !== presetAberto) {
+                return { recebido: false, motivo: `Preset "${pastaAlvo}" não está aberto` };
+            }
+            return { recebido: true, titulo: item.currentTitle };
+        },
+    });
+
+    const ok = dados(await f.jukebox_preset_receber.executar({
+        pasta: '/caminho/para/pantano',
+        item: { currentTitle: 'Sombras' },
+        audio: 'AQID',
+        capa: 'BAUG',
+    }));
+    assert.deepEqual(ok, { recebido: true, titulo: 'Sombras' });
+
+    const recusado = dados(await f.jukebox_preset_receber.executar({
+        pasta: '/caminho/para/outro',
+        item: { currentTitle: 'Outro' },
+        audio: 'AQID',
+        capa: 'BAUG',
+    }));
+    assert.equal(recusado.recebido, false);
+    assert.match(recusado.motivo, /não está aberto/);
+
+    presetAberto = null;
+    const semPreset = dados(await f.jukebox_preset_receber.executar({
+        pasta: '/caminho/para/pantano',
+        item: { currentTitle: 'Sombras' },
+        audio: 'AQID',
+        capa: 'BAUG',
+    }));
+    assert.equal(semPreset.recebido, false);
+});
+
+test('receber sem função de recepção devolve recebido: false', async () => {
+    const { f } = montar({ receberMusica: undefined });
+    const r = dados(await f.jukebox_preset_receber.executar({
+        pasta: 'pantano',
+        item: { currentTitle: 'X' },
+        audio: 'A',
+        capa: 'B',
+    }));
+    assert.equal(r.recebido, false);
+});
+
 test('orçamento: descrições até 400 caracteres e campos até 80', () => {
     const { f } = montar();
     const varrer = o => !o || typeof o !== 'object' ? [] : [...(typeof o.description === 'string' && o.description.length > 80 ? [o.description] : []), ...Object.values(o).flatMap(varrer)];

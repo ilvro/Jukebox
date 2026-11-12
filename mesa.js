@@ -142,6 +142,10 @@ export function contextoDaPonte() {
             return !audio || !audio.paused || audio.ended || audio.currentTime > 0 ? r : { ok: true, bloqueado: true };
         },
         parar: ms => pedidoDeParar({ ms }),
+        async receberMusica(dados) {
+            const { receberMusicaNoPlayer } = await import('./upload-song.js');
+            return receberMusicaNoPlayer(dados);
+        },
     };
 }
 

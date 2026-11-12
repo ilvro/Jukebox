@@ -3,6 +3,7 @@ import { mesclarMetadados } from "./preset-mescla.js";
 import {
     assignSongHotkey,
     clearSongHotkey,
+    getAllSongStates,
     getHotkeyEntries,
     getSongIdForHotkey,
     getOrderedSongStates,
@@ -1322,6 +1323,82 @@ function createPresetSongItem(song) {
 
     songItem.append(titleInput, metadata, thumbnail);
     return songItem;
+}
+
+export function receberMusicaNoPlayer(dados) {
+    const { pasta, item, audio, capa } = dados || {};
+    if (!pasta || !item || !item.currentTitle || !audio || !capa) {
+        return { recebido: false, motivo: 'Parâmetros inválidos para receber música.' };
+    }
+
+    const pastaAlvo = String(pasta).trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    const pastaAberta = (loadedPresetFolderName || '').trim();
+
+    if (!pastaAberta || (pasta !== pastaAberta && pastaAlvo !== pastaAberta)) {
+        return {
+            recebido: false,
+            motivo: `Preset "${pastaAlvo}" não está aberto na Jukebox (aberto: "${pastaAberta || 'nenhum'}").`,
+        };
+    }
+
+    let audioFile, thumbnailFile;
+    try {
+        const binAudio = atob(audio);
+        const bytesAudio = new Uint8Array(binAudio.length);
+        for (let i = 0; i < binAudio.length; i++) bytesAudio[i] = binAudio.charCodeAt(i);
+        audioFile = new File([bytesAudio], `${item.currentTitle}.mp3`, { type: 'audio/mpeg' });
+
+        const binCapa = atob(capa);
+        const bytesCapa = new Uint8Array(binCapa.length);
+        for (let i = 0; i < binCapa.length; i++) bytesCapa[i] = binCapa.charCodeAt(i);
+        thumbnailFile = new File([bytesCapa], `${item.currentTitle}.jpg`, { type: 'image/jpeg' });
+    } catch (err) {
+        return { recebido: false, motivo: `Erro ao decodificar base64: ${err.message}` };
+    }
+
+    const estados = getAllSongStates();
+    const existente = estados.find(s =>
+        s.element?.dataset.presetTitle === item.currentTitle ||
+        s.element?.dataset.fileTitle === item.currentTitle
+    );
+    if (existente) {
+        clearHotkey(existente.id);
+        removeSongAudio(existente.id);
+        existente.element?.remove();
+    }
+
+    const song = {
+        currentTitle: item.currentTitle,
+        fileTitle: item.currentTitle,
+        decodedTitle: decodeURIComponent(item.currentTitle),
+        genres: Array.isArray(item.genres) ? item.genres : [],
+        tags: Array.isArray(item.tags) ? item.tags : [],
+        folder: item.folder || null,
+        markers: Array.isArray(item.markers) ? item.markers : [],
+        hotkey: item.hotkey || null,
+        hotkeyEffects: Array.isArray(item.hotkeyEffects) ? item.hotkeyEffects : [],
+        audioFile,
+        thumbnailFile,
+    };
+
+    const songItem = createPresetSongItem(song);
+    songItem.dataset.presetTitle = item.currentTitle;
+    songItem.dataset.fileTitle = item.currentTitle;
+    addSongToPlayer(songItem, audioFile, thumbnailFile);
+
+    if (song.markers?.length) {
+        setMarkers(songItem.dataset.songId, song.markers);
+    }
+    if (song.hotkey) {
+        assignHotkey(song.hotkey, songItem, song.hotkeyEffects);
+    }
+
+    loadedPresetFileNames.add(`${item.currentTitle}.mp3`);
+    loadedPresetFileNames.add(`${item.currentTitle}.jpg`);
+    tituloNaAbertura.add(item.currentTitle);
+
+    document.dispatchEvent(new Event('songsUpdated'));
+    return { recebido: true, titulo: song.decodedTitle };
 }
 
 async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator = null, folderName = 'preset') {
