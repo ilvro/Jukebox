@@ -1,4 +1,5 @@
 import { addSongToPlayer, clearAllSongs, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, prepareHotkeyPlayback, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
+import { mesclarMetadados } from "./preset-mescla.js";
 import {
     assignSongHotkey,
     clearSongHotkey,
@@ -609,6 +610,7 @@ async function copyPresetFile(directoryHandle, sourceName, targetName) {
 
 let loadedPresetFileNames = new Set();
 let loadedPresetFolderName = 'preset';
+let tituloNaAbertura = new Set();
 
 function createNotFoundError(message = 'File not found') {
     const err = new Error(message);
@@ -831,6 +833,8 @@ function triggerBlobDownload(blob, filename) {
 }
 
 async function savePresetBrowserFallback(songItems) {
+    // Limitação do fallback no navegador: o download em .zip não tem acesso ao sistema de arquivos
+    // nem à pasta de origem, empacotando apenas as músicas atualmente carregadas na interface.
     const desiredTitles = new Set();
     for (const songItem of songItems) {
         const readableTitle = songItem.querySelector('.title-input')?.value.trim();
@@ -1113,12 +1117,38 @@ async function savePreset() {
             console.log(`saved ${currentTitle}`);
         }
 
+        const dadosMesclados = mesclarMetadados({
+            noDisco: presetData,
+            daTela: updatedData,
+            apagadas: deletedSongs,
+            tituloNaAbertura,
+        });
+
+        const dadosFinais = [];
+        for (const item of dadosMesclados) {
+            const isDaTela = updatedData.some(d => d.currentTitle === item.currentTitle);
+            if (isDaTela) {
+                dadosFinais.push(item);
+                continue;
+            }
+            // Item que entrou por fora (ex.: conector MCP): confere se os arquivos existem na pasta
+            const audioExiste = await presetFileExists(directoryHandle, `${item.currentTitle}.mp3`);
+            const imagemExiste = await presetFileExists(directoryHandle, `${item.currentTitle}.jpg`);
+            if (audioExiste && imagemExiste) {
+                dadosFinais.push(item);
+            } else {
+                console.warn(`Jukebox: descartando item externo incompleto "${item.currentTitle}" (áudio: ${audioExiste}, imagem: ${imagemExiste})`);
+            }
+        }
+
         await runPresetSaveStep('preset_metadata.json', 'save the preset metadata', async () => {
             const presetMetadataHandle = await directoryHandle.getFileHandle('preset_metadata.json', { create: true });
             const presetMetadataWritable = await presetMetadataHandle.createWritable();
-            await presetMetadataWritable.write(JSON.stringify(updatedData, null, 2));
+            await presetMetadataWritable.write(JSON.stringify(dadosFinais, null, 2));
             await presetMetadataWritable.close();
         });
+
+        tituloNaAbertura = new Set(dadosFinais.map(m => m.currentTitle).filter(Boolean));
 
         // Only advance the in-memory persisted identity after both media and
         // metadata have been committed successfully.
@@ -1301,6 +1331,7 @@ async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIn
     renderHotkeyPanel();
     loadedPresetFileNames = new Set(fileHandles.keys());
     loadedPresetFolderName = folderName || 'preset';
+    tituloNaAbertura = new Set(presetMetadata.map(m => m.currentTitle).filter(Boolean));
     document.dispatchEvent(new Event('songsUpdated'));
 
     const indicator = loadIndicator || createPresetLoadIndicator(presetMetadata.length);
@@ -1448,6 +1479,7 @@ async function loadSamplePreset() {
         renderHotkeyPanel();
         loadedPresetFileNames = new Set(['preset_metadata.json']);
         loadedPresetFolderName = 'sample';
+        tituloNaAbertura = new Set(presetMetadata.map(m => m.currentTitle).filter(Boolean));
         document.dispatchEvent(new Event('songsUpdated'));
         
         // Create requests only when their batch starts. Mapping every song to
