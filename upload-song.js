@@ -1,5 +1,5 @@
 import { addSongToPlayer, clearAllSongs, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, prepareHotkeyPlayback, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
-import { mesclarMetadados } from "./preset-mescla.js";
+import { deveMesclarComDisco, mesclarMetadados } from "./preset-mescla.js";
 import {
     assignSongHotkey,
     clearSongHotkey,
@@ -1118,7 +1118,7 @@ async function savePreset() {
             console.log(`saved ${currentTitle}`);
         }
 
-        const dadosMesclados = (loadedPresetFolderName && directoryHandle.name === loadedPresetFolderName)
+        const dadosMesclados = deveMesclarComDisco(directoryHandle.name, loadedPresetFolderName)
             ? mesclarMetadados({
                 noDisco: presetData,
                 daTela: updatedData,

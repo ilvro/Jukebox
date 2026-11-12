@@ -57,3 +57,13 @@ export function mesclarMetadados({ noDisco = [], daTela = [], apagadas = [], tit
 
     return resultado;
 }
+
+/**
+ * A mescla com o disco só vale quando a pasta escolhida no Salvar é a mesma que foi aberta:
+ * em outra pasta, o que está lá não tem relação com a lista da tela.
+ */
+export function deveMesclarComDisco(nomeDaPastaEscolhida, nomeDaPastaAberta) {
+    const escolhida = String(nomeDaPastaEscolhida ?? '').trim();
+    const aberta = String(nomeDaPastaAberta ?? '').trim();
+    return !!escolhida && !!aberta && escolhida === aberta;
+}

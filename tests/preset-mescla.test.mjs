@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mesclarMetadados } from '../preset-mescla.js';
+import { deveMesclarComDisco, mesclarMetadados } from '../preset-mescla.js';
 
 test('item de fora preservado: adicionado ao fim na ordem do disco', () => {
     const naAbertura = new Set(['Musica%201', 'Musica%202']);
@@ -127,4 +127,12 @@ test('título renomeado na tela não duplica o antigo', () => {
 
     assert.equal(resultado.length, 1);
     assert.equal(resultado[0].currentTitle, 'Musica%201%20Nova');
+});
+
+test('deveMesclarComDisco: só na mesma pasta que foi aberta', () => {
+    assert.equal(deveMesclarComDisco('pantano', 'pantano'), true);
+    assert.equal(deveMesclarComDisco('outra', 'pantano'), false);
+    assert.equal(deveMesclarComDisco('Pantano', 'pantano'), false);
+    assert.equal(deveMesclarComDisco(undefined, 'pantano'), false);
+    assert.equal(deveMesclarComDisco('pantano', ''), false);
 });
