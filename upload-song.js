@@ -1344,6 +1344,13 @@ export function receberMusicaNoPlayer(dados) {
         };
     }
 
+    const r = criarCartaoDaMusicaRecebida(item, audio, capa);
+    if (r.recebido) document.dispatchEvent(new Event('songsUpdated'));
+    return r;
+}
+
+/** Decodifica o base64 e cria o cartão da música como já salvo no preset aberto; não avisa `songsUpdated`. */
+function criarCartaoDaMusicaRecebida(item, audio, capa) {
     let audioFile, thumbnailFile;
     try {
         const binAudio = atob(audio);
@@ -1400,8 +1407,77 @@ export function receberMusicaNoPlayer(dados) {
     loadedPresetFileNames.add(`${item.currentTitle}.jpg`);
     tituloNaAbertura.add(item.currentTitle);
 
-    document.dispatchEvent(new Event('songsUpdated'));
     return { recebido: true, titulo: song.decodedTitle };
+}
+
+
+/** Há algo na tela que o mestre perderia ao trocar de preset (músicas novas, apagadas, com áudio ou título editado)? */
+function temMusicasNaoSalvas() {
+    if (deletedSongs.length > 0) return true;
+    return getAllSongStates().some(s => {
+        const el = s.element;
+        if (!el) return false;
+        if (!el.dataset.presetTitle || el.dataset.audioEdited === 'true') return true;
+        const titulo = el.querySelector('.title-input');
+        return Boolean(titulo && titulo.value !== titulo.defaultValue);
+    });
+}
+
+let aberturaEmCurso = null;
+
+/**
+ * Abre na Jukebox um preset enviado pelo conector, em etapas (`inicio`, `musica`, `fim`): zera o player como o
+ * carregar preset e vai criando os cartões já salvos. Sem `forcar`, recusa se houver músicas não salvas na tela.
+ */
+export function receberAberturaDePreset(dados) {
+    const { pasta, etapa } = dados || {};
+    const nomeDaPasta = String(pasta ?? '').trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (!nomeDaPasta) return { recebido: false, motivo: 'Parâmetro "pasta" é obrigatório.' };
+
+    if (etapa === 'inicio') {
+        if (!Array.isArray(dados.metadados)) return { recebido: false, motivo: 'Parâmetro "metadados" (lista) é obrigatório no início.' };
+        if (dados.forcar !== true && temMusicasNaoSalvas()) {
+            return {
+                recebido: false,
+                motivo: `A Jukebox tem músicas não salvas (preset aberto: "${loadedPresetFolderName}"). Salve o preset na Jukebox ou peça de novo com forcar: true para descartá-las.`,
+            };
+        }
+        clearAllSongs();
+        resetFolders();
+        expandedHotkeyEffectsSongId = null;
+        renderHotkeyPanel();
+        deletedSongs.length = 0;
+        loadedPresetFileNames = new Set(['preset_metadata.json']);
+        loadedPresetFolderName = nomeDaPasta;
+        // Só entram as músicas que de fato chegarem: as puladas não podem ser lidas como "apagadas" ao salvar.
+        tituloNaAbertura = new Set();
+        aberturaEmCurso = { pasta: nomeDaPasta, recebidas: 0 };
+        globalThis.__isLoadingPreset = true;
+        document.dispatchEvent(new Event('songsUpdated'));
+        return { recebido: true, etapa };
+    }
+
+    if (!aberturaEmCurso || aberturaEmCurso.pasta !== nomeDaPasta) {
+        return { recebido: false, motivo: `Nenhuma abertura do preset "${nomeDaPasta}" em andamento: comece pela etapa "inicio".` };
+    }
+
+    if (etapa === 'musica') {
+        const { item, audio, capa } = dados;
+        if (!item || !item.currentTitle || !audio || !capa) return { recebido: false, motivo: 'Parâmetros inválidos para receber música.' };
+        const r = criarCartaoDaMusicaRecebida(item, audio, capa);
+        if (r.recebido) aberturaEmCurso.recebidas++;
+        return r;
+    }
+
+    if (etapa === 'fim') {
+        const { recebidas } = aberturaEmCurso;
+        aberturaEmCurso = null;
+        globalThis.__isLoadingPreset = false;
+        document.dispatchEvent(new Event('songsUpdated'));
+        return { recebido: true, etapa, musicas: recebidas, ...(dados.abortado === true ? { abortado: true } : {}) };
+    }
+
+    return { recebido: false, motivo: `Etapa "${etapa}" desconhecida (use inicio, musica ou fim).` };
 }
 
 async function populatePresetFromFileHandles(fileHandles, presetMetadata, loadIndicator = null, folderName = 'preset') {

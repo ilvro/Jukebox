@@ -154,3 +154,30 @@ test('cena_criar: faixa inexistente lista as músicas; sem preset; limites', asy
     const sem = montarCenas({ musicas: () => [] });
     await assert.rejects(sem.f.jukebox_cena_criar.executar({ nome: 'X', faixas: [{ titulo: 'Sombras' }] }), /Nenhum preset aberto/);
 });
+
+test('preset_abrir_receber repassa as etapas ao contexto e devolve a resposta', async () => {
+    const recebidas = [];
+    const { f } = montar({ abrirPreset: async d => { recebidas.push(d); return { recebido: true, etapa: d.etapa }; } });
+    const t = f.jukebox_preset_abrir_receber;
+    assert.equal(t.descricao, 'Interna: usada por jukebox_preset_abrir.');
+    assert.equal(t.anotacoes.destrutiva, false);
+    await t.executar({ pasta: 'Pantano', etapa: 'inicio', metadados: [] });
+    await t.executar({ pasta: 'Pantano', etapa: 'musica', item: { currentTitle: 'A' }, audio: 'QQ==', capa: 'QQ==' });
+    const fim = dados(await t.executar({ pasta: 'Pantano', etapa: 'fim' }));
+    assert.deepEqual(recebidas.map(r => r.etapa), ['inicio', 'musica', 'fim']);
+    assert.equal(fim.recebido, true);
+});
+
+test('preset_abrir_receber devolve o motivo do contexto (músicas não salvas) e repassa forcar', async () => {
+    const { f } = montar({ abrirPreset: async d => (d.forcar ? { recebido: true } : { recebido: false, motivo: 'músicas não salvas' }) });
+    const t = f.jukebox_preset_abrir_receber;
+    assert.deepEqual(dados(await t.executar({ pasta: 'P', etapa: 'inicio', metadados: [] })), { recebido: false, motivo: 'músicas não salvas' });
+    assert.equal(dados(await t.executar({ pasta: 'P', etapa: 'inicio', metadados: [], forcar: true })).recebido, true);
+});
+
+test('preset_abrir_receber recusa etapa desconhecida e contexto sem suporte', async () => {
+    const { f } = montar({ abrirPreset: async () => ({ recebido: true }) });
+    assert.equal(dados(await f.jukebox_preset_abrir_receber.executar({ pasta: 'P', etapa: 'x' })).recebido, false);
+    const sem = montar();
+    assert.match(dados(await sem.f.jukebox_preset_abrir_receber.executar({ pasta: 'P', etapa: 'fim' })).motivo, /não suportada/);
+});

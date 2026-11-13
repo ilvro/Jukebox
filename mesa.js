@@ -149,6 +149,10 @@ export function contextoDaPonte() {
             const { receberMusicaNoPlayer } = await import('./upload-song.js');
             return receberMusicaNoPlayer(dados);
         },
+        async abrirPreset(dados) {
+            const { receberAberturaDePreset } = await import('./upload-song.js');
+            return receberAberturaDePreset(dados);
+        },
     };
 }
 

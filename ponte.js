@@ -33,6 +33,7 @@ const lista = nomes => nomes.length ? nomes.map(n => `"${n}"`).join(', ') : '(ne
 
 /** `ctx`: cenas() → [{ id, nome }], cenaAtiva() → id | null, efeitos() → [{ slug, titulo, carregado }],
  *  musicas() → [{ titulo, volume }], criarCena({ nome, faixas: [{ titulo, volume }], substituir }) → { ok, motivo?, id, nome, faixas },
+ *  receberMusica(dados) / abrirPreset({ pasta, etapa, ... }) → { recebido, motivo? },
  *  tocarCena(id) / tocarEfeito(slug) → { ok, motivo?, bloqueado? }, parar(ms) → { ok }. */
 export function ferramentasDaJukebox(ctx) {
     const sem = { type: 'object', properties: {}, required: [], additionalProperties: false };
@@ -151,6 +152,35 @@ export function ferramentasDaJukebox(ctx) {
                 }
                 const r = await ctx.receberMusica(args);
                 return [json(r)];
+            },
+        },
+        {
+            nome: 'jukebox_preset_abrir_receber',
+            descricao: 'Interna: usada por jukebox_preset_abrir.',
+            esquema: {
+                type: 'object',
+                properties: {
+                    pasta: { type: 'string', description: 'Nome da pasta do preset.' },
+                    etapa: { type: 'string', enum: ['inicio', 'musica', 'fim'], description: 'Etapa da abertura.' },
+                    metadados: { type: 'array', description: 'Itens de metadados do preset (etapa inicio).' },
+                    item: { type: 'object', description: 'Item de metadados da música (etapa musica).' },
+                    audio: { type: 'string', description: 'Áudio MP3 em base64 (etapa musica).' },
+                    capa: { type: 'string', description: 'Capa JPEG em base64 (etapa musica).' },
+                    forcar: { type: 'boolean', description: 'Descarta músicas não salvas (etapa inicio).' },
+                    abortado: { type: 'boolean', description: 'A abertura foi interrompida (etapa fim).' },
+                },
+                required: ['pasta', 'etapa'],
+                additionalProperties: false,
+            },
+            anotacoes: { destrutiva: false },
+            async executar(args) {
+                if (typeof ctx.abrirPreset !== 'function') {
+                    return [json({ recebido: false, motivo: 'Abertura de presets não suportada nesta versão.' })];
+                }
+                if (!['inicio', 'musica', 'fim'].includes(args?.etapa)) {
+                    return [json({ recebido: false, motivo: 'Etapa inválida: use inicio, musica ou fim.' })];
+                }
+                return [json(await ctx.abrirPreset(args))];
             },
         },
     ];
