@@ -1,11 +1,40 @@
 // A ligação do Jukebox com a mesa (contrato v1, ver Atlas/docs/PLATAFORMA.md): publica as cenas e os efeitos na campanha ativa,
 // toca uma cena ou um efeito quando outro aplicativo pede, e avisa o que está tocando. Sem BroadcastChannel ou IndexedDB, nada muda.
+// Quem entra numa campanha: a cena (ou o efeito) criada com ela ativa, e a que toca com ela ativa. As que já estão lá seguem com o
+// nome atualizado; as outras não entram sozinhas. Na primeira vez que o Jukebox vê uma campanha com esta regra, tira dela o que ele
+// mesmo publicou em massa e ninguém usa (sem ligação e fora de todo roteiro).
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
 import { activateSceneById, clearActiveScene, createSoundScene, listSongsForScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
 import { playSong, stopAllWithFade } from './player.js';
 
 const CHAVE_CAMPANHA_ATIVA = 'mesa:campanha-ativa';
+/** Refs (`app/tipo/id`) de todas as cenas e efeitos que este Jukebox já viu. Fora daqui é novo: entra na campanha ativa. */
+const CHAVE_CONHECIDAS = 'mesa:jukebox-conhecidas';
+/** Marca de que a limpeza única da publicação em massa já rodou nesta campanha. */
+const chaveDaLimpeza = campanhaId => `mesa:jukebox-limpeza-v1:${campanhaId}`;
+const chaveDaRef = r => `${r.app}/${r.tipo}/${r.id}`;
+/** Tocadas com a campanha ativa nesta sessão do Jukebox, à espera da próxima sincronização. */
+const tocadas = new Set();
+
+function lerConjunto(chave) {
+    try { const v = localStorage.getItem(chave); if (v == null) return null; const lista = JSON.parse(v); return Array.isArray(lista) ? new Set(lista.map(String)) : null; } catch { return null; }
+}
+function gravarConjunto(chave, conjunto) {
+    try { localStorage.setItem(chave, JSON.stringify([...conjunto])); } catch { /* ignora */ }
+}
+
+/** Tira da campanha as entidades que o Jukebox publicou e que nada usa: sem ligação e fora dos roteiros. */
+async function limparNaoUsadas(campanhaId) {
+    const usadas = new Set();
+    for (const l of await repositorio.listarLigacoes(campanhaId)) { usadas.add(chaveDaRef(l.de)); usadas.add(chaveDaRef(l.para)); }
+    for (const s of await repositorio.listarSessoes(campanhaId)) for (const r of s.roteiro ?? []) usadas.add(chaveDaRef(r));
+    for (const e of await repositorio.listarEntidades(campanhaId)) {
+        if (e.criadaPor !== 'jukebox') continue;
+        if (usadas.has(`mesa/entidade/${e.id}`) || e.refs.some(r => usadas.has(chaveDaRef(r)))) continue;
+        await repositorio.removerEntidade(e.id);
+    }
+}
 
 let repositorio = null;
 let barramento = null;
@@ -41,7 +70,13 @@ const refDoEfeito = slug => criarRef('jukebox', 'efeito', slug);
 /** Cria (ou atualiza o nome de) uma entidade por cena e por efeito, na campanha ativa. Só mexe nas que o Jukebox criou. */
 async function sincronizar() {
     const campanhaId = campanhaAtiva();
-    if (!repositorio || !campanhaId) return;
+    if (!repositorio) return;
+    if (!campanhaId) {
+        // Sem campanha: o que existe agora fica conhecido e não entra depois numa campanha qualquer.
+        const itens = [...getScenesSnapshot().map(c => chaveDaRef(refDaCena(c.id))), ...efeitosDisponiveis().map(e => chaveDaRef(refDoEfeito(e.slug)))];
+        if (itens.length) { const c = lerConjunto(CHAVE_CONHECIDAS) ?? new Set(); for (const k of itens) c.add(k); gravarConjunto(CHAVE_CONHECIDAS, c); }
+        return;
+    }
     if (sincronizando) { sincronizarDeNovo = true; return; }
     sincronizando = true;
     try {
@@ -51,11 +86,22 @@ async function sincronizar() {
             ...getScenesSnapshot().map(cena => ({ tipo: 'cena', nome: cena.name, ref: refDaCena(cena.id) })),
             ...efeitosDisponiveis().map(e => ({ tipo: 'efeito', nome: e.titulo, ref: refDoEfeito(e.slug) })),
         ];
-        for (const item of itens) {
-            const existente = await repositorio.entidadeDaRef(campanhaId, item.ref);
-            if (!existente) await repositorio.criarEntidade({ campanhaId, tipo: item.tipo, nome: item.nome, refs: [item.ref] });
-            else if (existente.criadaPor === 'jukebox' && existente.nome !== item.nome) await repositorio.salvarEntidade({ ...existente, nome: item.nome });
+        // Primeira vez com esta regra: só aprende o que já existe (nada entra em massa). Lista vazia pode ser o preset ainda carregando.
+        let conhecidas = lerConjunto(CHAVE_CONHECIDAS);
+        if (!conhecidas && itens.length) { conhecidas = new Set(itens.map(i => chaveDaRef(i.ref))); gravarConjunto(CHAVE_CONHECIDAS, conhecidas); }
+        if (itens.length && !localStorage.getItem(chaveDaLimpeza(campanhaId))) {
+            await limparNaoUsadas(campanhaId);
+            try { localStorage.setItem(chaveDaLimpeza(campanhaId), String(Date.now())); } catch { /* ignora */ }
         }
+        for (const item of itens) {
+            const chave = chaveDaRef(item.ref);
+            const existente = await repositorio.entidadeDaRef(campanhaId, item.ref);
+            const entra = (conhecidas && !conhecidas.has(chave)) || tocadas.has(chave);
+            if (!existente && entra) await repositorio.criarEntidade({ campanhaId, tipo: item.tipo, nome: item.nome, refs: [item.ref] });
+            else if (existente && existente.criadaPor === 'jukebox' && existente.nome !== item.nome) await repositorio.salvarEntidade({ ...existente, nome: item.nome });
+            tocadas.delete(chave);
+        }
+        if (conhecidas) { for (const item of itens) conhecidas.add(chaveDaRef(item.ref)); gravarConjunto(CHAVE_CONHECIDAS, conhecidas); }
     } catch (erro) {
         console.warn('Jukebox: não consegui publicar as cenas na campanha', erro);
     } finally {
@@ -98,6 +144,7 @@ export function pedidoDeEfeito(dados) {
     if (!audio) return { ok: false, motivo: 'O áudio deste efeito ainda não carregou.' };
     // Um efeito toca inteiro, por cima da música; pedido de novo, recomeça.
     state.currentTime = 0;
+    marcarTocada(refDoEfeito(efeito.slug));
     if (!audio.paused) { audio.currentTime = 0; return { ok: true }; }
     playSong(state.id);
     return { ok: true };
@@ -110,8 +157,16 @@ export async function pedidoDeParar(dados) {
     return { ok: true };
 }
 
+/** Tocar com uma campanha ativa é usar: a cena (ou o efeito) entra nela. */
+function marcarTocada(ref) {
+    if (!ref || !campanhaAtiva()) return;
+    tocadas.add(chaveDaRef(ref));
+    agendar();
+}
+
 function anunciarCena() {
     const id = getActiveSceneId();
+    if (id) marcarTocada(refDaCena(id));
     try { barramento?.emitir('jukebox.tocando', { cena: id ? refDaCena(id) : null }); } catch (erro) { console.warn('Jukebox: não consegui avisar o que está tocando', erro); }
 }
 
