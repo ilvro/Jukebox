@@ -5,6 +5,6 @@
   "icone": "./images/page_icon.jpg",
   "rotas": {},
   "oferece": ["cena-sonora", "efeito"],
-  "emite": ["jukebox.tocando"],
-  "atende": ["jukebox.tocar", "jukebox.efeito", "jukebox.parar", "jukebox.prontidao"]
+  "emite": ["jukebox.tocando", "jukebox.mix", "jukebox.efeito-tocado"],
+  "atende": ["jukebox.tocar", "jukebox.efeito", "jukebox.parar", "jukebox.prontidao", "jukebox.arquivo"]
 }

@@ -6,7 +6,10 @@
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
 import { activateSceneById, clearActiveScene, createSoundScene, listSongsForScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
-import { playSong, stopAllWithFade } from './player.js';
+import { playSong, stopAllWithFade, getMixSources } from './player.js';
+import { getMasterVolume } from './mixing/audio-context.js';
+import { estadoDaFaixa } from './mixing/motor.js';
+import { atenderArquivo, criarIndice, criarPublicador, montarEfeito, montarMix } from './mix.mjs';
 
 const CHAVE_CAMPANHA_ATIVA = 'mesa:campanha-ativa';
 /** Refs (`app/tipo/id`) de todas as cenas e efeitos que este Jukebox já viu. Fora daqui é novo: entra na campanha ativa. */
@@ -145,7 +148,7 @@ export function pedidoDeEfeito(dados) {
     // Um efeito toca inteiro, por cima da música; pedido de novo, recomeça.
     state.currentTime = 0;
     marcarTocada(refDoEfeito(efeito.slug));
-    if (!audio.paused) { audio.currentTime = 0; return { ok: true }; }
+    if (!audio.paused) { audio.currentTime = 0; void efeitoDisparado(state); return { ok: true }; }
     playSong(state.id);
     return { ok: true };
 }
@@ -168,6 +171,76 @@ function anunciarCena() {
     const id = getActiveSceneId();
     if (id) marcarTocada(refDaCena(id));
     try { barramento?.emitir('jukebox.tocando', { cena: id ? refDaCena(id) : null }); } catch (erro) { console.warn('Jukebox: não consegui avisar o que está tocando', erro); }
+}
+
+// --- O que toca, para a mesa online (jukebox.mix, jukebox.efeito-tocado, jukebox.arquivo; ver mix.mjs) ---------------------------------
+
+const indice = criarIndice();
+const INTERVALO_DO_VIGIA_MS = 100;
+
+/** Uma fonte de `mix.mjs` a partir do que o player expõe (`getMixSources`). */
+function fonteDoPlayer(f) {
+    const el = f.state.element;
+    const src = f.audio.src;
+    const blob = f.state.audioSource instanceof Blob ? f.state.audioSource : null;
+    // `url` só para arquivo servido pelo próprio site (sample/), e só se não foi editado; blob URL nunca.
+    const publica = el?.dataset?.publicAudioUrl;
+    return {
+        chave: src,
+        obterBlob: blob ? async () => blob : async () => (await fetch(src)).blob(),
+        titulo: tituloDaFaixa(f.state),
+        url: publica && !el.dataset.audioEdited ? publica : undefined,
+        audio: f.audio, audioEffects: f.audioEffects, progressBar: f.progressBar, crossfade: f.crossfade,
+        volume: f.state.volume,
+    };
+}
+
+function montarMixAtual() {
+    const cenaId = getActiveSceneId();
+    return montarMix({
+        cena: cenaId ? refDaCena(cenaId) : null,
+        mestre: getMasterVolume(),
+        fontes: getMixSources().map(fonteDoPlayer),
+        indice,
+        estadoDaFaixa,
+        aoPronto: () => publicador.solicitar(),
+    });
+}
+
+function publicarMix(mix) {
+    if (!barramento) return;
+    barramento.campanhaId = campanhaAtiva() ?? barramento.campanhaId;
+    barramento.emitir('jukebox.mix', mix);
+}
+
+const publicador = criarPublicador({
+    montar: () => (barramento ? montarMixAtual() : null),
+    emitir: publicarMix,
+    emFade: () => getMixSources().some(f => f.emFade),
+});
+
+const ehSfx = state => (state.element?.dataset?.genres ?? '').split(',').map(g => g.trim()).includes('sfx');
+
+/** Um efeito `sfx` foi disparado: avisa uma vez, com o estado do instante. */
+async function efeitoDisparado(state) {
+    if (!barramento || !state?.audio) return;
+    try {
+        const fonte = getMixSources().find(f => f.state === state && !f.crossfade);
+        const dados = await montarEfeito(
+            fonte ? fonteDoPlayer(fonte) : fonteDoPlayer({ state, audio: state.audio, audioEffects: null, progressBar: null, crossfade: false }),
+            { indice, estadoDaFaixa },
+        );
+        barramento.campanhaId = campanhaAtiva() ?? barramento.campanhaId;
+        barramento.emitir('jukebox.efeito-tocado', dados);
+    } catch (erro) { console.warn('Jukebox: não consegui avisar o efeito tocado', erro); }
+}
+
+function aoMudarOMix(evento) {
+    publicador.solicitar();
+    if (evento?.detail?.motivo === 'play') {
+        const state = getAllSongStates().find(s => s.id === evento.detail.songId);
+        if (state && ehSfx(state)) void efeitoDisparado(state);
+    }
 }
 
 const esperar = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -232,13 +305,18 @@ async function iniciar() {
     barramento.atender('jukebox.efeito', pedidoDeEfeito);
     barramento.atender('jukebox.parar', pedidoDeParar);
     barramento.atender('jukebox.prontidao', pedidoDeProntidao);
+    barramento.atender('jukebox.arquivo', dados => atenderArquivo(dados, indice));
     document.addEventListener('sceneActivated', anunciarCena);
+    document.addEventListener('sceneActivated', () => publicador.solicitar());
+    document.addEventListener('jukeboxMixMudou', aoMudarOMix);
+    // Rede de segurança: o que nenhum gancho avisa (ajuste de efeito, salto de loop, crossfade do loop suave) aparece na comparação.
+    setInterval(() => publicador.vigiar(), INTERVALO_DO_VIGIA_MS);
     document.addEventListener('songsUpdated', agendar);
     document.addEventListener('scenesUpdated', agendar);
     window.addEventListener('storage', event => { if (event.key === CHAVE_CAMPANHA_ATIVA || event.key === 'jukebox-scenes-v1') agendar(); });
     agendar();
     // Para os testes e a depuração.
-    Object.defineProperty(window, '__jukeboxMesa', { value: Object.freeze({ sincronizar, efeitosDisponiveis, pronto: true }), configurable: true });
+    Object.defineProperty(window, '__jukeboxMesa', { value: Object.freeze({ sincronizar, efeitosDisponiveis, montarMix: montarMixAtual, publicador, indice, pronto: true }), configurable: true });
 }
 
 void iniciar();

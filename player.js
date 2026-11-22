@@ -1,5 +1,5 @@
 import { setupAudioEffects } from './mixing/index.js';
-import { setMasterVolume, setTrackVolume, getTrackVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
+import { setMasterVolume, getMasterVolume, setTrackVolume, getTrackVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
 import { getFadeDuration } from './settings.js';
 import { setAccurateTimeout, setAccurateInterval, clearAccurateTimeout, clearAccurateInterval } from './background-timer.js';
 import {
@@ -42,6 +42,9 @@ import {
     songSelectionStopEffectsView as songSelectionStopEffects
 } from './song-state.mjs';
 let sharedAudioContext;
+
+// Avisa a publicação do mix (mesa.js) de que algo audível mudou. Só avisa: não muda o comportamento do player.
+const mixMudou = (motivo, songId) => document.dispatchEvent(new CustomEvent('jukeboxMixMudou', { detail: { motivo, songId } }));
 const playerContainer = document.getElementById('player-container');
 const playerHoverZone = document.getElementById('player-hover-zone');
 const showPlayerBtn = document.getElementById('show-player-button');
@@ -79,6 +82,7 @@ const DEFAULT_MARKER_COLOR = '#ffaa00';
 if (masterVolumeSlider) {
     masterVolumeSlider.addEventListener('input', () => {
         setMasterVolume(parseFloat(masterVolumeSlider.value));
+        mixMudou('mestre');
     });
 }
 
@@ -142,6 +146,11 @@ function createAudioElement(audioUrl, songId, songItem) {
         const state = getSongState(songId);
         if (state) state.status = 'playing';
         updatePlayerUI();
+    });
+
+    // o mix publicado (mesa.js) acompanha o que o elemento faz: tocar, pausar, buscar, mudar a taxa e o volume
+    ['play', 'pause', 'ended', 'seeked', 'ratechange', 'volumechange'].forEach(nome => {
+        audio.addEventListener(nome, () => mixMudou(nome === 'volumechange' ? 'volume' : nome, songId));
     });
     
     return audio;
@@ -668,6 +677,8 @@ function waitForAudioMetadata(audio) {
 }
 
 const activeSmoothSkips = new WeakSet();
+// Avanço suave em andamento: elemento principal -> a segunda faixa do crossfade (o mesmo arquivo, no destino do marcador).
+const smoothSkipSecundarios = new Map();
 
 function waitForMediaState(audio, eventName, isReady, timeout = 1500) {
     if (isReady()) return Promise.resolve(true);
@@ -857,6 +868,8 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, 
         crossfadeGainNode.gain.setValueAtTime(0, preparationNow);
 
         await crossfadeAudio.play();
+        smoothSkipSecundarios.set(audio, { audio: crossfadeAudio, audioEffects: tempEffects, progressBar });
+        mixMudou('crossfade', null);
 
         // play() may wait for decoding. Scheduling with the timestamp captured
         // before that await put part (or all) of the curve in the past.
@@ -948,6 +961,8 @@ async function smoothSkipToMarker(audio, targetTime, progressBar, audioEffects, 
         tempEffects?.cleanup();
         releaseAudioContext(crossfadeAudio);
         activeSmoothSkips.delete(audio);
+        smoothSkipSecundarios.delete(audio);
+        mixMudou('crossfade', null);
     }
 }
 
@@ -2549,6 +2564,7 @@ function createTrackUI(songId, audio, playerContainer) {
         songSelectionStopEffects[songId] = selectionStopEnabled;
         songRegions[songId] = serializeSelectedRegions(progressBar);
         songActiveEffects[songId] = getAllRegionEffectKeys(progressBar);
+        mixMudou('regiao', songId);
     };
 
     const isActiveRegionEffectEnabled = key =>
@@ -2735,10 +2751,12 @@ function createTrackUI(songId, audio, playerContainer) {
 
         const signature = JSON.stringify([keys, runtimeRegionIds, settings]);
         if (!force && signature === runtimeEffectSignature) return;
+        const efeitosMudaram = signature !== runtimeEffectSignature;
         runtimeEffectSignature = signature;
         progressBar.runtimeEffectRegionIds = runtimeRegionIds;
         audioEffects.setEffectSettings(settings);
         audioEffects.setActiveEffectKeys(keys);
+        if (efeitosMudaram) mixMudou('efeitos', songId);
     };
 
     const monitorRegionEffects = () => {
@@ -3212,6 +3230,10 @@ function createTrackUI(songId, audio, playerContainer) {
         },
         restoreTransientVolume() {
             restoreSelectionFadeVolume();
+        },
+        // para o mix publicado: o objeto de efeitos, a barra com as regiões e se um fade de região está em curso
+        getMixInfo() {
+            return { audioEffects, progressBar, emFade: Boolean(selectionFadeState) };
         }
     };
 }
@@ -4138,6 +4160,31 @@ export function getSongSceneSnapshot(songId) {
         selectionFadeEnabled: liveTrackState?.selectionFadeEnabled ?? state.selectionFadeEnabled,
         selectionStopEnabled: liveTrackState?.selectionStopEnabled ?? state.selectionStopEnabled
     };
+}
+
+/**
+ * Tudo o que o mix publicado precisa para ler as faixas que tocam (ou estão pausadas pelo player): o estado de cada uma, o objeto de
+ * `setupAudioEffects` e a barra de progresso (para `estadoDaFaixa`), e, num avanço suave, a segunda faixa do crossfade.
+ * `{ songId, state, audio, audioEffects, progressBar, emFade, crossfade }`. Faixa parada ou sem painel não entra.
+ */
+export function getMixSources() {
+    const fontes = [];
+    getAllSongStates().forEach(state => {
+        const track = renderedTracks.get(state.id);
+        const audio = state.audio;
+        if (!track || !audio) return;
+        if (state.status !== 'playing' && state.status !== 'player-paused') return;
+        const { audioEffects, progressBar, emFade } = track.getMixInfo();
+        const segundo = smoothSkipSecundarios.get(audio);
+        fontes.push({ songId: state.id, state, audio, audioEffects, progressBar, crossfade: false,
+            emFade: emFade || activeFadeTargets.has(audio) || Boolean(segundo) });
+        if (segundo) fontes.push({ songId: state.id, state, crossfade: true, emFade: true, ...segundo });
+    });
+    return fontes;
+}
+
+export function getAudioEffectsFor(songId) {
+    return renderedTracks.get(songId)?.getMixInfo().audioEffects ?? null;
 }
 
 export function removeSongAudio(songId) {

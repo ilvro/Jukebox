@@ -1717,6 +1717,8 @@ async function loadSamplePreset() {
                 songItem.dataset.fileTitle = song.currentTitle;
                 loadedPresetFileNames.add(`${song.currentTitle}.mp3`);
                 loadedPresetFileNames.add(`${song.currentTitle}.jpg`);
+                // arquivo servido pelo próprio site: o mix publicado (mesa.js) cita o caminho em vez de subir os bytes
+                songItem.dataset.publicAudioUrl = `sample/${encodeURIComponent(`${song.currentTitle}.mp3`)}`;
                 if (song.folder) songItem.dataset.folder = song.folder;
                 addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
                 

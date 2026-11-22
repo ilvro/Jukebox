@@ -12,6 +12,25 @@ const todos = (...vs) => d => { for (const v of vs) {
 const num = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || Number.isFinite(d[campo])) ? null : `“${campo}” deve ser número.`;
 const texto = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || typeof d[campo] === 'string') ? null : `“${campo}” deve ser texto.`;
 const listaDeRefs = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || (Array.isArray(d[campo]) && d[campo].every(ehRef))) ? null : `“${campo}” deve ser lista de referências.`;
+const bool = (campo, opcional = false) => d => ehObj(d) && ((opcional && d[campo] === undefined) || typeof d[campo] === 'boolean') ? null : `“${campo}” deve ser booleano.`;
+const textoNaoVazio = (campo) => d => ehObj(d) && typeof d[campo] === 'string' && d[campo] !== '' ? null : `“${campo}” deve ser texto não vazio.`;
+/** O estado de uma faixa do Jukebox (`estadoDaFaixa` do motor): volume efetivo, efeitos e ajustes já resolvidos, regiões. */
+const ehEstadoDaFaixa = (v) => ehObj(v) && Number.isFinite(v.volume) && Array.isArray(v.efeitos) && v.efeitos.every(e => typeof e === 'string') && ehObj(v.ajustes) && Array.isArray(v.regioes);
+const estadoDaFaixa = d => ehObj(d) && ehEstadoDaFaixa(d.estado) ? null : '“estado” deve ter volume (número), efeitos (lista de texto), ajustes (objeto) e regioes (lista).';
+const validarMix = d => {
+    const e = todos(num('mestre'), d2 => ehObj(d2) && (d2.cena === undefined || d2.cena === null || ehRef(d2.cena)) ? null : '“cena” deve ser referência ou nulo.')(d);
+    if (e)
+        return e;
+    const faixas = d.faixas;
+    if (!Array.isArray(faixas))
+        return '“faixas” deve ser lista.';
+    for (const f of faixas) {
+        const erro = todos(textoNaoVazio('faixaId'), texto('url', true), texto('titulo', true), bool('loop'), num('posicao'), num('taxa'), num('desde'), bool('pausada'), bool('crossfade', true), estadoDaFaixa)(f);
+        if (erro)
+            return `faixa: ${erro}`;
+    }
+    return null;
+};
 const ehFichaSalva = d => ehObj(d) && ehObj(d.ficha) && typeof d.ficha.id === 'string' && (d.rev === undefined || Number.isFinite(d.rev)) ? null : '“ficha” deve ser um objeto com “id” texto e “rev” número, se houver.';
 /**
  * Catálogo versionado. Tipo desconhecido é ignorado (com um aviso no console); o catálogo cresce
@@ -35,6 +54,12 @@ export const CATALOGO = {
     'jukebox.parar': { natureza: 'pedido', dono: 'jukebox', validar: num('ms', true) },
     /** Pergunta a prontidão de uma cena sonora ao Jukebox. */
     'jukebox.prontidao': { natureza: 'pedido', dono: 'jukebox', validar: ref('ref') },
+    /** Online: o que o Jukebox do mestre está tocando agora, completo (faixas por hash do conteúdo, posição no instante `desde`, estado do motor). `titulo` e `cena` saem do Jukebox, mas a ponte do mestre os tira antes de mandar à sala. */
+    'jukebox.mix': { natureza: 'fato', dono: 'jukebox', validar: validarMix },
+    /** Online: um efeito `sfx` foi disparado. */
+    'jukebox.efeito-tocado': { natureza: 'fato', dono: 'jukebox', validar: todos(textoNaoVazio('faixaId'), texto('url', true), texto('titulo', true), estadoDaFaixa) },
+    /** Online: pede o arquivo de uma faixa pelo hash. Responde `{ ok: true, dados: { blob, tipo } }` ou `{ ok: false, motivo: 'desconhecida' }`. */
+    'jukebox.arquivo': { natureza: 'pedido', dono: 'jukebox', validar: textoNaoVazio('faixaId') },
     'atlas.focar': { natureza: 'pedido', dono: 'atlas', validar: ref('ref') },
     'atlas.preparar-cena': { natureza: 'pedido', dono: 'atlas', validar: todos(refOuNulo('mapa'), texto('comodo', true), texto('clima', true), listaDeRefs('fichas', true)) },
     /** Dispara um momento configurado no mapa (abre o mapa se necessário e toca). */
