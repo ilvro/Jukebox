@@ -1,3 +1,5 @@
+import { setEffectRemovalDuration } from './mixing/removal-duration.js';
+
 const STORAGE_KEY = 'jukeboxSettings';
 
 const DEFAULTS = {
@@ -18,6 +20,7 @@ function loadSettings() {
 }
 
 const settings = loadSettings();
+setEffectRemovalDuration(settings.effectRemovalDuration);
 
 function saveSettings() {
     try {
@@ -103,6 +106,7 @@ if (effectRemovalDurationInput) {
         const value = Number(effectRemovalDurationInput.value);
         if (Number.isFinite(value) && value >= 0) {
             settings.effectRemovalDuration = Math.min(10, value);
+            setEffectRemovalDuration(settings.effectRemovalDuration);
             effectRemovalDurationInput.value = settings.effectRemovalDuration;
             saveSettings();
         } else {

@@ -15,7 +15,7 @@ import { LoopEffect, SmoothLoopEffect, PlaybackSpeedEffect, PitchShiftEffect, Re
 import { ReverbEffect, EchoEffect, TremoloEffect } from './effects/time-effects.js';
 import { FilterEffect } from './effects/filter-effects.js';
 import { HellEffect, NightcoreEffect } from './effects/preset-effects.js';
-import { getEffectRemovalDuration } from '../settings.js';
+import { getEffectRemovalDuration } from './removal-duration.js';
 
 const LEGACY_SPEED_FACTORS = {
     speed075: 0.75,
@@ -25,12 +25,16 @@ const LEGACY_SPEED_FACTORS = {
 };
 
 export class EffectsRegistry {
-    constructor(audioElement, progressBar) {
+    // options.destino: output node for this song (default: the shared main bus)
+    // options.removalDuration: seconds (or a function returning seconds) for the
+    // gradual effect removal; default is the shared removal-duration value
+    constructor(audioElement, progressBar, options = {}) {
         this.audio = audioElement;
         this.progressBar = progressBar;
+        this.removalDuration = options.removalDuration;
         this.effects = this.initializeEffects();
         
-        initializeAudioContext(this.audio);
+        initializeAudioContext(this.audio, undefined, { destino: options.destino });
     }
 
     initializeEffects() {
@@ -136,11 +140,18 @@ export class EffectsRegistry {
         const effect = this.effects[effectKey];
         if (effect && effect.active) {
             const supportsRemovalTransition = effectKey === 'speed' || effectKey === 'highpass' || effectKey === 'lowpass';
-            const duration = gradual && supportsRemovalTransition ? getEffectRemovalDuration() : 0;
+            const duration = gradual && supportsRemovalTransition ? this.getRemovalDuration() : 0;
             effect.deactivate(duration);
             return true;
         }
         return false;
+    }
+
+    getRemovalDuration() {
+        const value = typeof this.removalDuration === 'function' ? this.removalDuration() : this.removalDuration;
+        return Number.isFinite(Number(value)) && value !== undefined && value !== null
+            ? Math.max(0, Number(value))
+            : getEffectRemovalDuration();
     }
 
     deactivateAllEffects() {

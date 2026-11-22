@@ -7,6 +7,15 @@ let mainGainNode = null;
 let masterVolume = 1;
 const audioNodes = new Map(); // audio element -> { sourceNode, dryGainNode, wetGainNode, isInitialized }
 
+// lets a host page (such as the online table shell) hand over its own
+// AudioContext before any song is initialized. The Jukebox page never calls it.
+export function useAudioContext(context) {
+    if (audioContext && audioContext !== context) {
+        throw new Error('A different AudioContext is already in use by the mixing module');
+    }
+    audioContext = context;
+}
+
 function ensureAudioContext() {
     if (!audioContext) {
         const contextOptions = {
@@ -15,13 +24,14 @@ function ensureAudioContext() {
         };
 
         audioContext = new (window.AudioContext || window.webkitAudioContext)(contextOptions);
-
+    }
+    if (!mainGainNode) {
         mainGainNode = audioContext.createGain();
         mainGainNode.gain.value = masterVolume;
         mainGainNode.connect(audioContext.destination);
     }
     if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
+        audioContext.resume?.()?.catch?.(() => {});
     }
     return audioContext;
 }
@@ -77,7 +87,9 @@ export function createRecordingTap() {
     };
 }
 
-export function initializeAudioContext(audio, initialVolume = undefined) {
+// options.destino: where this song's output goes instead of the shared
+// mainGainNode (used by the headless engine to route songs into a channel)
+export function initializeAudioContext(audio, initialVolume = undefined, options = {}) {
     if (!audio) {
         console.error("Audio element is required for initialization");
         return false;
@@ -104,9 +116,9 @@ export function initializeAudioContext(audio, initialVolume = undefined) {
             sourceNode.connect(sourceGainNode);
             sourceGainNode.connect(dryGainNode);
             sourceGainNode.connect(wetGainNode);
-            dryGainNode.connect(mainGainNode);
+            dryGainNode.connect(options?.destino || mainGainNode);
 
-            entry = { sourceNode, sourceGainNode, dryGainNode, wetGainNode, isInitialized: true };
+            entry = { sourceNode, sourceGainNode, dryGainNode, wetGainNode, destino: options?.destino || null, isInitialized: true };
             audioNodes.set(audio, entry);
 
             console.log("Audio context initialized for song");
@@ -168,7 +180,7 @@ export function getAudioContext(audio) {
     return {
         audioContext,
         sourceNode: entry.sourceNode,
-        mainGainNode,
+        mainGainNode: entry.destino || mainGainNode,
         sourceGainNode: entry.sourceGainNode,
         dryGainNode: entry.dryGainNode,
         wetGainNode: entry.wetGainNode,
