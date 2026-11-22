@@ -9,7 +9,7 @@ import { getAllSongStates } from './song-state.mjs';
 import { playSong, stopAllWithFade, getMixSources } from './player.js';
 import { getMasterVolume } from './mixing/audio-context.js';
 import { estadoDaFaixa } from './mixing/motor.js';
-import { atenderArquivo, criarIndice, criarPublicador, montarEfeito, montarMix } from './mix.mjs';
+import { atenderArquivo, criarIndice, criarOuvinte, criarPublicador, montarEfeito, montarMix } from './mix.mjs';
 
 const CHAVE_CAMPANHA_ATIVA = 'mesa:campanha-ativa';
 /** Refs (`app/tipo/id`) de todas as cenas e efeitos que este Jukebox já viu. Fora daqui é novo: entra na campanha ativa. */
@@ -203,7 +203,7 @@ function montarMixAtual() {
         fontes: getMixSources().map(fonteDoPlayer),
         indice,
         estadoDaFaixa,
-        aoPronto: () => publicador.solicitar(),
+        aoPronto: () => pedirMix(),
     });
 }
 
@@ -214,16 +214,37 @@ function publicarMix(mix) {
 }
 
 const publicador = criarPublicador({
-    montar: () => (barramento ? montarMixAtual() : null),
+    montar: () => (barramento && ouvinte.ligado() ? montarMixAtual() : null),
     emitir: publicarMix,
     emFade: () => getMixSources().some(f => f.emFade),
 });
+
+/** Só trabalha enquanto a ponte do mestre pede (`jukebox.ouvir`, repetido a cada 10 s; vale 30 s): desligado, não monta nem publica nada. */
+let vigia = null;
+const ouvinte = criarOuvinte({
+    aoLigar() {
+        clearInterval(vigia);
+        // Rede de segurança: o que nenhum gancho avisa (ajuste de efeito, salto de loop, crossfade do loop suave) aparece na comparação.
+        vigia = setInterval(() => publicador.vigiar(), INTERVALO_DO_VIGIA_MS);
+        publicador.emitirAgora(undefined, true); // quem acabou de ligar recebe o que toca já (mesmo vazio, para apagar um mix velho da sala)
+    },
+    aoDesligar() {
+        clearInterval(vigia); vigia = null;
+        publicador.parar();
+    },
+});
+const pedirMix = () => { if (ouvinte.ligado()) publicador.solicitar(); };
+
+export function pedidoDeOuvir(dados) {
+    ouvinte.ouvir(dados?.ligado === true);
+    return { ok: true };
+}
 
 const ehSfx = state => (state.element?.dataset?.genres ?? '').split(',').map(g => g.trim()).includes('sfx');
 
 /** Um efeito `sfx` foi disparado: avisa uma vez, com o estado do instante. */
 async function efeitoDisparado(state) {
-    if (!barramento || !state?.audio) return;
+    if (!barramento || !state?.audio || !ouvinte.ligado()) return;
     try {
         const fonte = getMixSources().find(f => f.state === state && !f.crossfade);
         const dados = await montarEfeito(
@@ -236,6 +257,7 @@ async function efeitoDisparado(state) {
 }
 
 function aoMudarOMix(evento) {
+    if (!ouvinte.ligado()) return;
     publicador.solicitar();
     if (evento?.detail?.motivo === 'play') {
         const state = getAllSongStates().find(s => s.id === evento.detail.songId);
@@ -307,16 +329,17 @@ async function iniciar() {
     barramento.atender('jukebox.prontidao', pedidoDeProntidao);
     barramento.atender('jukebox.arquivo', dados => atenderArquivo(dados, indice));
     document.addEventListener('sceneActivated', anunciarCena);
-    document.addEventListener('sceneActivated', () => publicador.solicitar());
+    barramento.atender('jukebox.ouvir', pedidoDeOuvir);
+    document.addEventListener('sceneActivated', pedirMix);
     document.addEventListener('jukeboxMixMudou', aoMudarOMix);
-    // Rede de segurança: o que nenhum gancho avisa (ajuste de efeito, salto de loop, crossfade do loop suave) aparece na comparação.
-    setInterval(() => publicador.vigiar(), INTERVALO_DO_VIGIA_MS);
+    // Uma faixa que sai do Jukebox solta o blob do índice (a blob URL já foi revogada).
+    document.addEventListener('jukeboxFaixaSaiu', evento => { if (evento.detail?.src) indice.soltar(evento.detail.src); });
     document.addEventListener('songsUpdated', agendar);
     document.addEventListener('scenesUpdated', agendar);
     window.addEventListener('storage', event => { if (event.key === CHAVE_CAMPANHA_ATIVA || event.key === 'jukebox-scenes-v1') agendar(); });
     agendar();
     // Para os testes e a depuração.
-    Object.defineProperty(window, '__jukeboxMesa', { value: Object.freeze({ sincronizar, efeitosDisponiveis, montarMix: montarMixAtual, publicador, indice, pronto: true }), configurable: true });
+    Object.defineProperty(window, '__jukeboxMesa', { value: Object.freeze({ sincronizar, efeitosDisponiveis, montarMix: montarMixAtual, publicador, indice, ouvinte, pronto: true }), configurable: true });
 }
 
 void iniciar();

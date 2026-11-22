@@ -4200,6 +4200,7 @@ export function removeSongAudio(songId) {
         audio.currentTime = 0;
         // release the blob URL created on upload, otherwise it stays in
         // memory for the rest of the page's life even after the song is gone
+        document.dispatchEvent(new CustomEvent('jukeboxFaixaSaiu', { detail: { src: audio.src } }));
         URL.revokeObjectURL(audio.src);
     }
     const imageUrl = state.element?.querySelector('img')?.src;
@@ -4234,6 +4235,7 @@ export function clearAllSongs() {
         if (state.audio) {
             state.audio.pause();
             releaseAudioContext(state.audio);
+            document.dispatchEvent(new CustomEvent('jukeboxFaixaSaiu', { detail: { src: state.audio.src } }));
             state.audio.removeAttribute('src');
             state.audio.load();
         }

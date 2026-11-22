@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { criarIndice, criarPublicador, montarMix, montarEfeito, mudouMix, atenderArquivo, sha256Hex } from '../mix.mjs';
+import { criarIndice, criarOuvinte, criarPublicador, montarMix, montarEfeito, mudouMix, atenderArquivo, sha256Hex } from '../mix.mjs';
 
 const blobDe = (texto, type = 'audio/mpeg') => new Blob([texto], { type });
 const estadoFalso = ({ audioEffects }) => ({
@@ -248,4 +248,102 @@ test('um hash que falha (arquivo sumiu) tenta de novo no próximo mix', async ()
     assert.equal(indice.idDe('blob:z', obter), null);
     await new Promise(r => setTimeout(r, 10));
     assert.match(indice.idDe('blob:z', obter), /^[0-9a-f]{64}$/);
+});
+
+// --- sob demanda e memória (R22) ---------------------------------------------------------------------------------------------
+
+test('desligado, o publicador não monta nem publica nada; ligado, publica já e expira em 30 s sem repetição', () => {
+    const rel = relogioFalso();
+    const eventos = [];
+    let montagens = 0, ligado = false;
+    const publicador = criarPublicador({
+        montar: () => { if (!ligado) return null; montagens++; return { cena: null, mestre: 1, faixas: [{ faixaId: 'a', pausada: false, posicao: 0, taxa: 1, desde: rel.agora(), loop: false, estado: { volume: 1, efeitos: [], ajustes: {}, regioes: [] } }] }; },
+        emitir: mix => eventos.push(mix), agora: rel.agora, agendar: rel.agendar, cancelar: rel.cancelar,
+    });
+    const ouvinte = criarOuvinte({
+        aoLigar: () => { ligado = true; publicador.emitirAgora(undefined, true); },
+        aoDesligar: () => { ligado = false; publicador.parar(); },
+        agendar: rel.agendar, cancelar: rel.cancelar,
+    });
+    // desligado: nada, mesmo com solicitações e o tempo passando
+    publicador.solicitar(); publicador.vigiar(); rel.avancar(10_000);
+    assert.equal(montagens, 0);
+    assert.equal(eventos.length, 0);
+    assert.equal(ouvinte.ligado(), false);
+
+    // ligar publica na hora
+    ouvinte.ouvir(true);
+    assert.equal(ouvinte.ligado(), true);
+    assert.equal(eventos.length, 1);
+
+    // repetido a cada 10 s: segue ligado além dos 30 s
+    for (let i = 0; i < 4; i++) { rel.avancar(10_000); ouvinte.ouvir(true); }
+    assert.equal(ouvinte.ligado(), true);
+    const antes = eventos.length;
+    assert.ok(antes > 1, 'o periódico de 3 s segue emitindo enquanto toca');
+
+    // sem repetição, desliga aos 30 s e para de publicar
+    rel.avancar(29_000);
+    assert.equal(ouvinte.ligado(), true);
+    rel.avancar(1_001);
+    assert.equal(ouvinte.ligado(), false);
+    const parou = eventos.length;
+    rel.avancar(20_000); publicador.solicitar();
+    assert.equal(eventos.length, parou);
+});
+
+test('ouvir(false) desliga na hora e ouvir(true) de novo religa', () => {
+    const rel = relogioFalso();
+    const chamadas = [];
+    const o = criarOuvinte({ aoLigar: () => chamadas.push('liga'), aoDesligar: () => chamadas.push('desliga'), agendar: rel.agendar, cancelar: rel.cancelar });
+    o.ouvir(true); o.ouvir(true);
+    assert.deepEqual(chamadas, ['liga']);
+    o.ouvir(false); o.ouvir(false);
+    assert.deepEqual(chamadas, ['liga', 'desliga']);
+    rel.avancar(60_000);
+    assert.deepEqual(chamadas, ['liga', 'desliga'], 'o relógio da validade foi cancelado');
+    o.ouvir(true);
+    assert.deepEqual(chamadas, ['liga', 'desliga', 'liga']);
+});
+
+test('ligar publica um mix mesmo vazio (apaga um mix velho da sala); o mix vazio de sempre não sai sem forçar', () => {
+    const emitidos = [];
+    const p = criarPublicador({ montar: () => ({ cena: null, mestre: 1, faixas: [] }), emitir: m => emitidos.push(m) });
+    p.emitirAgora();
+    assert.equal(emitidos.length, 0);
+    p.emitirAgora(undefined, true);
+    assert.equal(emitidos.length, 1);
+});
+
+test('soltar o blob de uma faixa que saiu do Jukebox libera o índice (o id fica enquanto outra fonte tem os mesmos bytes)', async () => {
+    const indice = criarIndice();
+    const um = blobDe('mesmos bytes'), dois = blobDe('mesmos bytes'), outro = blobDe('outra faixa');
+    const idA = await indice.garantir('blob:a', async () => um);
+    await indice.garantir('blob:b', async () => dois);
+    const idC = await indice.garantir('blob:c', async () => outro);
+    assert.equal(indice.tamanho(), 2);
+    assert.ok(await indice.blobDe(idA));
+
+    indice.soltar('blob:c');
+    assert.equal(await indice.blobDe(idC), null);
+    assert.equal(indice.conhece(idC), false);
+    assert.equal(indice.tamanho(), 1);
+
+    indice.soltar('blob:a');
+    assert.ok(await indice.blobDe(idA), 'a outra fonte com os mesmos bytes ainda segura o blob');
+    indice.soltar('blob:b');
+    assert.equal(await indice.blobDe(idA), null);
+    assert.equal(indice.tamanho(), 0);
+    indice.soltar('blob:inexistente'); // sem efeito
+});
+
+test('soltar durante o hash não deixa o blob preso no índice', async () => {
+    const indice = criarIndice();
+    const p = indice.garantir('blob:x', async () => blobDe('demora'));
+    indice.soltar('blob:x');
+    await p;
+    assert.equal(indice.tamanho(), 0);
+    // a mesma chave pode voltar depois (arquivo recarregado)
+    const id = await indice.garantir('blob:x', async () => blobDe('demora'));
+    assert.ok(await indice.blobDe(id));
 });

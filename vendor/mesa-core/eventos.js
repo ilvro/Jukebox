@@ -60,6 +60,8 @@ export const CATALOGO = {
     'jukebox.efeito-tocado': { natureza: 'fato', dono: 'jukebox', validar: todos(textoNaoVazio('faixaId'), texto('url', true), texto('titulo', true), estadoDaFaixa) },
     /** Online: pede o arquivo de uma faixa pelo hash. Responde `{ ok: true, dados: { blob, tipo } }` ou `{ ok: false, motivo: 'desconhecida' }`. */
     'jukebox.arquivo': { natureza: 'pedido', dono: 'jukebox', validar: textoNaoVazio('faixaId') },
+    /** Online: a ponte do mestre pede (a cada 10 s) que o Jukebox publique o `mix` e o `efeito-tocado`; `ligado: true` vale 30 s, `ligado: false` desliga na hora. */
+    'jukebox.ouvir': { natureza: 'pedido', dono: 'jukebox', validar: bool('ligado') },
     'atlas.focar': { natureza: 'pedido', dono: 'atlas', validar: ref('ref') },
     'atlas.preparar-cena': { natureza: 'pedido', dono: 'atlas', validar: todos(refOuNulo('mapa'), texto('comodo', true), texto('clima', true), listaDeRefs('fichas', true)) },
     /** Dispara um momento configurado no mapa (abre o mapa se necessário e toca). */

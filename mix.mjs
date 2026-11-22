@@ -22,18 +22,22 @@ export async function sha256Hex(blob) {
  * A chave da fonte é a `src` do elemento (uma blob URL por arquivo carregado; uma edição troca a `src`).
  */
 export function criarIndice({ hash = sha256Hex } = {}) {
-    const porChave = new Map(); // chave -> { id: string|null, promessa: Promise<string> }
-    const porId = new Map(); // faixaId -> obterBlob
+    const porChave = new Map(); // chave -> { id: string|null, promessa: Promise<string>, solta: boolean }
+    const porId = new Map(); // faixaId -> { obterBlob, chaves: Set<chave> }
 
     function garantir(chave, obterBlob) {
         let entrada = porChave.get(chave);
         if (entrada) return entrada.promessa;
-        entrada = { id: null, promessa: null };
+        entrada = { id: null, promessa: null, solta: false };
         entrada.promessa = (async () => {
             const blob = await obterBlob();
             const id = await hash(blob);
+            // a faixa saiu do Jukebox enquanto o hash corria: não guarda o blob
+            if (entrada.solta) return id;
             entrada.id = id;
-            if (!porId.has(id)) porId.set(id, async () => blob);
+            let item = porId.get(id);
+            if (!item) { item = { obterBlob: async () => blob, chaves: new Set() }; porId.set(id, item); }
+            item.chaves.add(chave);
             return id;
         })();
         // Falha (arquivo sumiu): esquece, para tentar de novo no próximo mix.
@@ -54,11 +58,52 @@ export function criarIndice({ hash = sha256Hex } = {}) {
         garantir,
         /** O `Blob` do arquivo, ou `null` se o `faixaId` é desconhecido. */
         async blobDe(faixaId) {
-            const obter = porId.get(faixaId);
-            if (!obter) return null;
-            try { return await obter(); } catch { return null; }
+            const item = porId.get(faixaId);
+            if (!item) return null;
+            try { return await item.obterBlob(); } catch { return null; }
         },
         conhece: faixaId => porId.has(faixaId),
+        /** A faixa de `chave` saiu do Jukebox: solta o blob (e o `faixaId`, se nenhuma outra fonte tem os mesmos bytes). */
+        soltar(chave) {
+            const entrada = porChave.get(chave);
+            if (!entrada) return;
+            entrada.solta = true;
+            porChave.delete(chave);
+            const item = entrada.id ? porId.get(entrada.id) : null;
+            if (!item) return;
+            item.chaves.delete(chave);
+            if (item.chaves.size === 0) porId.delete(entrada.id);
+        },
+        /** Quantos arquivos o índice guarda (para os testes). */
+        tamanho: () => porId.size,
+    };
+}
+
+/** Quanto vale um `jukebox.ouvir { ligado: true }` sem ser repetido. */
+export const VALIDADE_DO_OUVIR_MS = 30_000;
+
+/**
+ * Liga e desliga o que só importa enquanto alguém ouve (o publicador do `mix` e a verificação de 100 ms).
+ * `ouvir(true)` liga (chama `aoLigar` na transição) e renova a validade; `ouvir(false)` desliga na hora;
+ * sem repetição em `validade` ms, desliga sozinho.
+ */
+export function criarOuvinte({ aoLigar, aoDesligar, validade = VALIDADE_DO_OUVIR_MS, agendar = setTimeout, cancelar = clearTimeout }) {
+    let ligado = false;
+    let relogio = null;
+    function desligar() {
+        if (relogio !== null) { cancelar(relogio); relogio = null; }
+        if (!ligado) return;
+        ligado = false;
+        aoDesligar();
+    }
+    return {
+        ouvir(quer) {
+            if (!quer) { desligar(); return; }
+            if (relogio !== null) cancelar(relogio);
+            relogio = agendar(() => { relogio = null; desligar(); }, validade);
+            if (!ligado) { ligado = true; aoLigar(); }
+        },
+        ligado: () => ligado,
     };
 }
 
@@ -148,13 +193,13 @@ export function criarPublicador({ montar, emitir, emFade = () => false, agora = 
     let pendente = null;
     let relogioPeriodico = null;
 
-    function emitirAgora(pronto) {
+    function emitirAgora(pronto, forcar = false) {
         if (pendente !== null) { cancelar(pendente); pendente = null; }
         const mix = pronto ?? montar();
         if (!mix) return null;
         const vazioDeNovo = ultimo && ultimo.faixas.length === 0 && mix.faixas.length === 0 && ultimo.cena === mix.cena;
         const vazioDeSempre = !ultimo && mix.faixas.length === 0 && mix.cena === null;
-        if (!vazioDeNovo && !vazioDeSempre) {
+        if (forcar || (!vazioDeNovo && !vazioDeSempre)) {
             ultimaEm = agora();
             ultimo = mix;
             try { emitir(mix); } catch (erro) { console.warn('Jukebox: não consegui publicar o mix', erro); }
@@ -176,7 +221,13 @@ export function criarPublicador({ montar, emitir, emFade = () => false, agora = 
         if (mix && mudouMix(ultimo, mix)) solicitar(mix);
     }
 
-    return { solicitar, vigiar, emitirAgora, ultimo: () => ultimo };
+    /** Ninguém ouve mais: cancela o que estava agendado. O último mix publicado fica, para o próximo ligar comparar. */
+    function parar() {
+        if (pendente !== null) { cancelar(pendente); pendente = null; }
+        if (relogioPeriodico !== null) { cancelar(relogioPeriodico); relogioPeriodico = null; }
+    }
+
+    return { solicitar, vigiar, emitirAgora, parar, ultimo: () => ultimo };
 }
 
 /** Atende `jukebox.arquivo { faixaId }`: `{ ok: true, dados: { blob, tipo } }` ou `{ ok: false, motivo: 'desconhecida' }`. */
