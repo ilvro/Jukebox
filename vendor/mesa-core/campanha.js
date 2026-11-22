@@ -135,8 +135,8 @@ export async function abrirRepositorioCampanha(opcoes) {
                     falha(antes.campanhaId === entidade.campanhaId && antes.criadaPor === entidade.criadaPor && antes.criadaEm === entidade.criadaEm, 'Origem e campanha não mudam.', 'entidade');
                     if (antes.criadaPor !== opcoes.app) {
                         const alheias = (e) => JSON.stringify(e.refs.filter(r => r.app !== opcoes.app));
-                        const semRefsProprias = (e) => JSON.stringify({ ...e, refs: undefined, atualizadaEm: undefined });
-                        falha(semRefsProprias(antes) === semRefsProprias(entidade) && alheias(antes) === alheias(entidade), `${opcoes.app} só altera as próprias referências de uma entidade criada por ${antes.criadaPor}.`, 'entidade');
+                        const semRefsProprias = (e) => JSON.stringify({ ...e, refs: undefined, tags: undefined, notas: undefined, atualizadaEm: undefined });
+                        falha(semRefsProprias(antes) === semRefsProprias(entidade) && alheias(antes) === alheias(entidade), `${opcoes.app} só altera etiquetas, notas e as próprias referências de uma entidade criada por ${antes.criadaPor}.`, 'entidade');
                     }
                 }
                 else

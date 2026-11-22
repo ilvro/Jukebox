@@ -14,6 +14,13 @@ interface Entrada {
  * sempre por tipos novos, nunca mudando o formato de um existente sem subir `CONTRATO`.
  */
 export declare const CATALOGO: Readonly<Record<string, Entrada>>;
+/** Quem originou o evento, carimbado pela sala (modo online). */
+export interface Autor {
+    discordId: string;
+    nome: string;
+    papel: 'mestre' | 'jogador';
+    fichas: string[];
+}
 export interface Evento<D = unknown> {
     contrato: number;
     app: AppId;
@@ -24,6 +31,8 @@ export interface Evento<D = unknown> {
     dados: D;
     /** Presente nas respostas: o `id` do pedido que está sendo respondido. */
     respondeA?: string;
+    /** Carimbado pela sala no modo online; ausente no uso local. */
+    autor?: Autor;
 }
 export type Validacao = {
     ok: true;
