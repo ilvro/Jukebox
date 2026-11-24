@@ -86,6 +86,12 @@ export const CATALOGO = {
     'sala.salvar-ficha': { natureza: 'pedido', dono: 'mesa', validar: ehFichaSalva },
     /** Online: a sala gravou uma ficha. */
     'sala.ficha-atualizada': { natureza: 'fato', dono: 'mesa', validar: d => ehObj(d) && ehObj(d.ficha) && Number.isFinite(d.rev) && (d.conflito === undefined || typeof d.conflito === 'boolean') ? null : '“ficha” deve ser objeto, “rev” número e “conflito” booleano.' },
+    /** Online: a sala tirou uma ficha de quem a tinha (a ficha foi entregue a outro jogador). */
+    'sala.ficha-removida': { natureza: 'fato', dono: 'mesa', validar: d => ehObj(d) && typeof d.id === 'string' && d.id ? null : '“id” deve ser texto.' },
+    /** Online: a Mesa do mestre se conectou à sala ou perdeu a conexão. `nome` é o nome da sala. */
+    'sala.conexao': { natureza: 'fato', dono: 'mesa', validar: d => ehObj(d) && typeof d.conectada === 'boolean' && (d.nome === undefined || typeof d.nome === 'string') ? null : '“conectada” deve ser booleano e “nome” texto, se houver.' },
+    /** Online (só o mestre): entrega uma ficha da sala a um jogador (`dono` é o `discordId`). */
+    'sala.entregar-ficha': { natureza: 'pedido', dono: 'mesa', validar: d => ehObj(d) && typeof d.fichaId === 'string' && d.fichaId && typeof d.dono === 'string' && d.dono ? null : '“fichaId” e “dono” devem ser texto.' },
 };
 const ehAutor = (v) => ehObj(v) && typeof v.discordId === 'string' && typeof v.nome === 'string' && (v.papel === 'mestre' || v.papel === 'jogador') && Array.isArray(v.fichas) && v.fichas.every(f => typeof f === 'string');
 /** Confere um envelope recebido. Nunca lança: o canal é compartilhado e qualquer aba pode mandar lixo. */
