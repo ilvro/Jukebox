@@ -148,8 +148,9 @@ export async function abrirRepositorioCampanha(opcoes) {
             const store = tx.objectStore('entidades'), entidade = await promessa(store.get(id));
             if (!entidade)
                 return;
-            falha(entidade.criadaPor === opcoes.app, `Só ${entidade.criadaPor} remove esta entidade.`, 'entidade');
+            falha(entidade.criadaPor === opcoes.app || opcoes.app === 'mesa', `Só ${entidade.criadaPor} remove esta entidade.`, 'entidade');
             const chaves = new Set(entidade.refs.map(chaveRef));
+            chaves.add(`mesa/entidade/${entidade.id}`);
             for (const l of await porCampanha(tx, 'ligacoes', entidade.campanhaId))
                 if (chaves.has(chaveRef(l.de)) || chaves.has(chaveRef(l.para)))
                     await promessa(tx.objectStore('ligacoes').delete(l.id));

@@ -92,6 +92,16 @@ export const CATALOGO = {
     'sala.conexao': { natureza: 'fato', dono: 'mesa', validar: d => ehObj(d) && typeof d.conectada === 'boolean' && (d.nome === undefined || typeof d.nome === 'string') ? null : '“conectada” deve ser booleano e “nome” texto, se houver.' },
     /** Online (só o mestre): entrega uma ficha da sala a um jogador (`dono` é o `discordId`). */
     'sala.entregar-ficha': { natureza: 'pedido', dono: 'mesa', validar: d => ehObj(d) && typeof d.fichaId === 'string' && d.fichaId && typeof d.dono === 'string' && d.dono ? null : '“fichaId” e “dono” devem ser texto.' },
+    /** Online (R15b): ping no mapa para apontar um lugar. */
+    'mesa.ping': { natureza: 'fato', dono: 'mesa', validar: d => {
+            if (!ehObj(d) || typeof d.mapa !== 'string' || !d.mapa)
+                return '“mapa” deve ser texto.';
+            if (!Array.isArray(d.ponto) || d.ponto.length !== 2 || !d.ponto.every(Number.isFinite))
+                return '“ponto” deve ser [x, y].';
+            if (d.levelId !== undefined && d.levelId !== null && typeof d.levelId !== 'string')
+                return '“levelId” deve ser texto ou nulo.';
+            return null;
+        } },
 };
 const ehAutor = (v) => ehObj(v) && typeof v.discordId === 'string' && typeof v.nome === 'string' && (v.papel === 'mestre' || v.papel === 'jogador') && Array.isArray(v.fichas) && v.fichas.every(f => typeof f === 'string');
 /** Confere um envelope recebido. Nunca lança: o canal é compartilhado e qualquer aba pode mandar lixo. */
@@ -116,7 +126,7 @@ export function validarEvento(valor) {
     if (!entrada)
         return { ok: false, motivo: 'desconhecido', detalhe: valor.tipo };
     // Fatos só valem vindos do dono; pedidos podem vir de qualquer aplicativo.
-    if (entrada.natureza === 'fato' && entrada.dono !== valor.app && valor.tipo !== 'mesa.resposta')
+    if (entrada.natureza === 'fato' && entrada.dono !== valor.app && valor.tipo !== 'mesa.resposta' && valor.tipo !== 'mesa.ping')
         return { ok: false, motivo: 'dono', detalhe: `${valor.tipo} só é emitido por ${entrada.dono}.` };
     const erro = entrada.validar(valor.dados);
     if (erro)
@@ -184,7 +194,7 @@ export function criarBarramento(opcoes) {
                     aviso(`Ouvinte de ${evento.tipo} falhou: ${String(erro)}`);
                 }
             }
-        const atendente = CATALOGO[evento.tipo]?.natureza === 'pedido' && evento.app !== opcoes.app ? atendentes.get(evento.tipo) : undefined;
+        const atendente = CATALOGO[evento.tipo]?.natureza === 'pedido' && (evento.app !== opcoes.app || evento.autor !== undefined) ? atendentes.get(evento.tipo) : undefined;
         if (!atendente)
             return;
         Promise.resolve().then(() => atendente(evento.dados, evento)).then(resposta => barramento.emitir('mesa.resposta', resposta, { respondeA: evento.id }), erro => barramento.emitir('mesa.resposta', { ok: false, motivo: String(erro) }, { respondeA: evento.id }));

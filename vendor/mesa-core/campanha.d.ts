@@ -100,7 +100,7 @@ export interface RepositorioCampanha {
      * (acrescentar, trocar, tirar); qualquer outra diferença é recusada.
      */
     salvarEntidade(entidade: Entidade): Promise<void>;
-    /** Remove a entidade e as ligações que partem dela ou chegam nela. Só o criador remove. */
+    /** Remove a entidade e as ligações que partem dela ou chegam nela. Só o criador ou a Mesa remove. */
     removerEntidade(id: string): Promise<void>;
     /** Acha a entidade que uma referência de outro aplicativo representa. */
     entidadeDaRef(campanhaId: string, ref: Ref): Promise<Entidade | undefined>;
