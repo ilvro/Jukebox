@@ -50,7 +50,6 @@ let sharedAudioContext;
 // Avisa a publicação do mix (mesa.js) de que algo audível mudou. Só avisa: não muda o comportamento do player.
 const mixMudou = (motivo, songId) => document.dispatchEvent(new CustomEvent('jukeboxMixMudou', { detail: { motivo, songId } }));
 const playerContainer = document.getElementById('player-container');
-const playerHoverZone = document.getElementById('player-hover-zone');
 const showPlayerBtn = document.getElementById('show-player-button');
 const masterVolumeSlider = document.getElementById('master-volume-slider');
 const stopAllBtn = document.getElementById('stop-all-button');
@@ -1627,66 +1626,23 @@ document.addEventListener('genresUpdated', () => {
     updatePlayerUI();
 });
 
+function updateShowPlayerButtonLabel(activeCount = renderedTracks.size) {
+    if (!showPlayerBtn || !playerContainer) return;
+    const isOpen = playerContainer.classList.contains('active');
+    showPlayerBtn.setAttribute('aria-expanded', String(isOpen));
+    if (isOpen) {
+        showPlayerBtn.textContent = activeCount > 0 ? `Hide Player (${activeCount})` : 'Hide Player';
+    } else {
+        showPlayerBtn.textContent = activeCount > 0 ? `Player (${activeCount})` : 'Show Player';
+    }
+}
+
 function showPlayer() {
-    playerContainer.classList.toggle('active');
-    playerContainer.classList.toggle('showBtn')
-    showPlayerBtn.textContent = showPlayerBtn.textContent === 'Show Player' ? 'Hide Player' : 'Show Player';
+    const isOpen = playerContainer.classList.toggle('active');
+    playerContainer.classList.toggle('showBtn', isOpen);
+    updateShowPlayerButtonLabel();
 }
 window.showPlayer = showPlayer;
-
-playerContainer.addEventListener('mouseover', () => {
-    if (!playerContainer.classList.contains('active')) {
-        playerContainer.classList.add('active');
-    }
-});
-
-if (playerHoverZone) {
-    playerHoverZone.addEventListener('mouseenter', () => {
-        playerContainer.classList.add('active');
-    });
-
-    playerHoverZone.addEventListener('mouseleave', () => {
-        requestAnimationFrame(() => {
-            const isPinnedOpen = playerContainer.classList.contains('showBtn');
-            if (!isPinnedOpen && !playerContainer.matches(':hover')) {
-                playerContainer.classList.remove('active');
-            }
-        });
-    });
-}
-
-// Preserve the original "hover where the player lives" behavior without
-// putting an invisible element over the grid. A short delay lets normal card
-// clicks pass through, while a deliberate hover reveals the panel.
-let playerHoverTimer = null;
-document.addEventListener('pointermove', event => {
-    if (playerContainer.classList.contains('showBtn')) return;
-
-    const rect = playerContainer.getBoundingClientRect();
-    const isInsidePlayerArea = event.clientX >= rect.left && event.clientX <= rect.right &&
-        event.clientY >= rect.top && event.clientY <= rect.bottom;
-
-    if (isInsidePlayerArea) {
-        if (!playerContainer.classList.contains('active') && playerHoverTimer === null) {
-            playerHoverTimer = setTimeout(() => {
-                playerHoverTimer = null;
-                playerContainer.classList.add('active');
-            }, 160);
-        }
-    } else {
-        if (playerHoverTimer !== null) clearTimeout(playerHoverTimer);
-        playerHoverTimer = null;
-        if (!playerContainer.matches(':hover')) {
-            playerContainer.classList.remove('active');
-        }
-    }
-}, { passive: true });
-
-playerContainer.addEventListener('mouseout', () => {
-    if (playerContainer.classList.contains('active') && !playerContainer.classList.contains('showBtn') && !document.getElementById('waveform-context-menu')) {
-        playerContainer.classList.remove('active');
-    }
-});
 
 
 playerContainer.addEventListener('contextmenu', (event) => {
@@ -1732,6 +1688,7 @@ function updatePlayerUI() {
         }
     });
 
+    updateShowPlayerButtonLabel(renderedTracks.size);
     document.dispatchEvent(new Event('playbackUpdated'));
 }
 

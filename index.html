@@ -108,7 +108,7 @@
                     </div>
                 </div>
                 <label> | </label>
-                <button class="show-player-button" id="show-player-button" onclick="showPlayer()">Show Player</button>
+                <button class="show-player-button" id="show-player-button" aria-controls="player-container" aria-expanded="false" onclick="showPlayer()">Show Player</button>
                 <label> | </label>
                 <button class="show-player-button" id="show-hotkeys-button" onclick="toggleHotkeyPanel()">Show Hotkeys</button>
                 <label> | </label>
@@ -118,7 +118,6 @@
             </nav>
         </header>
 
-        <div id="player-hover-zone" aria-hidden="true"></div>
         <div class="player-container" id="player-container">
             <div class="player-header">
                 <h1>NOW PLAYING</h1>

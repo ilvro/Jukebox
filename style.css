@@ -1,3 +1,7 @@
+:root {
+    --header-height: 78px;
+}
+
 #dimmer {
     position: fixed;
     width: 100%;
@@ -141,8 +145,8 @@ button {
 .top-header {
     position: sticky;
     top: 0;
-    z-index: 20;
-    min-height: 78px;
+    z-index: 40;
+    min-height: var(--header-height);
     box-sizing: border-box;
     background: linear-gradient(
         to bottom,
@@ -162,7 +166,7 @@ button {
 }
 
 .dropdown-content {
-    z-index: 6;
+    z-index: 50;
     min-width: 127px;
     position: absolute;
     opacity: 0;
@@ -344,7 +348,7 @@ button {
 
 .player-container {
     position: fixed;
-    top: 12px;
+    top: calc(var(--header-height, 64px) + 8px);
     left: 0;
     background: rgba(0, 0, 0, 0.15);
     color: white;
@@ -352,8 +356,8 @@ button {
     width: 520px;
     border-radius: 5px;
     overflow-y: auto;
-    max-height: calc(100vh - 40px);
-    z-index: 21;
+    max-height: calc(100vh - var(--header-height, 64px) - 24px);
+    z-index: 25;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
@@ -362,15 +366,6 @@ button {
 .player-container.active {
     opacity: 1;
     pointer-events: auto;
-}
-
-#player-hover-zone {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: 8px;
-    z-index: 2;
 }
 
 .track-item {
@@ -1515,8 +1510,8 @@ button {
 
 .genre-filters {
     position: sticky;
-    top: 78px;
-    z-index: 18;
+    top: var(--header-height, 78px);
+    z-index: 30;
     display: flex;
     justify-content: center;
     margin-top: 24px;
@@ -2006,7 +2001,7 @@ button {
 }
 
 /* ---------------- mobile / compact experience --------------- */
-@media (max-width: 620px) {
+@media (max-width: 680px) {
     html,
     body {
         max-width: 100%;
@@ -2014,9 +2009,9 @@ button {
     }
 
     .top-header {
-        min-height: 88px;
+        min-height: auto;
         padding: max(5px, env(safe-area-inset-top)) 6px 6px;
-        gap: 2px;
+        gap: 4px;
         background: rgba(5, 5, 5, 0.88);
         backdrop-filter: blur(8px);
     }
@@ -2035,9 +2030,9 @@ button {
         position: static;
         right: auto;
         width: 100%;
-        justify-content: space-around;
-        flex-wrap: nowrap;
-        gap: 2px;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 2px 6px;
     }
 
     .navbar-home-playlists > label {
@@ -2046,9 +2041,9 @@ button {
 
     .navbar-home-playlists button,
     .header-dropdown {
-        min-height: 34px;
+        min-height: 32px;
         margin: 0;
-        padding-inline: 3px;
+        padding-inline: 5px;
         font-size: 12px;
         white-space: nowrap;
     }
@@ -2061,7 +2056,8 @@ button {
     }
 
     .genre-filters {
-        top: 88px;
+        position: relative;
+        top: auto;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         align-items: center;
@@ -2152,10 +2148,13 @@ button {
     }
 
     .player-container {
-        top: max(4px, env(safe-area-inset-top));
-        left: 4px;
-        width: calc(100vw - 8px);
-        max-height: calc(100dvh - 8px - env(safe-area-inset-top));
+        top: auto;
+        bottom: 8px;
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-height: 46vh;
+        overflow-y: auto;
         box-sizing: border-box;
         padding: 10px;
         background: rgba(5, 5, 5, 0.96);
