@@ -6,7 +6,7 @@
 import { abrirRepositorioCampanha, criarBarramento, criarRef } from './vendor/mesa-core/index.js';
 import { activateSceneById, clearActiveScene, createSoundScene, listSongsForScene, estadoDaCena, getActiveSceneId, getScenesSnapshot } from './scenes.js';
 import { getAllSongStates } from './song-state.mjs';
-import { playSong, stopAllWithFade, getMixSources } from './player.js';
+import { playSong, stopAllWithFade, getMixSources, ensureSongAudio } from './player.js';
 import { getMasterVolume } from './mixing/audio-context.js';
 import { estadoDaFaixa } from './mixing/motor.js';
 import { atenderArquivo, criarIndice, criarOuvinte, criarPublicador, montarEfeito, montarMix } from './mix.mjs';
@@ -143,7 +143,8 @@ export function pedidoDeEfeito(dados) {
     if (ref?.app !== 'jukebox' || ref.tipo !== 'efeito') return { ok: false, motivo: 'O Jukebox só toca efeitos seus.' };
     const efeito = efeitosDisponiveis().find(e => e.slug === ref.id);
     if (!efeito) return { ok: false, motivo: 'Este efeito não está carregado no Jukebox.' };
-    const { state } = efeito, audio = state.audio;
+    const { state } = efeito;
+    const audio = ensureSongAudio(state.id);
     if (!audio) return { ok: false, motivo: 'O áudio deste efeito ainda não carregou.' };
     // Um efeito toca inteiro, por cima da música; pedido de novo, recomeça.
     state.currentTime = 0;

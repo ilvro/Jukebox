@@ -25,6 +25,7 @@ import {
     setRegionColor
 } from './mixing/selection-regions.js';
 import {
+    MAX_AUDIO_POOL,
     pendingHotkeyEffectsView as pendingHotkeyEffects,
     getAllSongStates,
     getPlayingSongStates,
@@ -32,6 +33,8 @@ import {
     getVisiblePlayerSongStates,
     registerSongState,
     removeSongState,
+    selectEvictableAudioIds,
+    shouldSkipWaveformDecode,
     songActiveEffectsView as songActiveEffects,
     songMarkerEventsView as songMarkerEvents,
     songMarkerColorsView as songMarkerColors,
@@ -92,8 +95,10 @@ if (stopAllBtn) {
     stopAllBtn.addEventListener('click', () => {
         getPlayingSongStates().forEach(state => {
             const { id, audio } = state;
-            audio.pause();
-            setTrackVolume(audio, state.volume ?? getTrackVolume(audio));
+            if (audio) {
+                audio.pause();
+                setTrackVolume(audio, state.volume ?? getTrackVolume(audio));
+            }
             const item = getSongElement(id);
             item?.classList.remove('playing');
             state.status = 'stopped';
@@ -185,7 +190,66 @@ function toggleAudio(audioElement, songItem) {
     }
 }
 
-function addClickListenerToSongItem(songItem, audio) {
+function evictSongAudio(songId) {
+    const state = getSongState(songId);
+    if (!state || !state.audio) return false;
+    if (state.status === 'playing' || state.status === 'player-paused') return false;
+
+    cancelWaveformGeneration(songId);
+    const audio = state.audio;
+    activeFadeTargets.delete(audio);
+    releaseAudioContext(audio);
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+
+    if (state.audioBlobUrl) {
+        URL.revokeObjectURL(state.audioBlobUrl);
+        state.audioBlobUrl = null;
+    }
+    if (state.element?.dataset?.audioUrl?.startsWith('blob:')) {
+        delete state.element.dataset.audioUrl;
+    }
+    state.audio = null;
+    return true;
+}
+
+export function ensureSongAudio(songId) {
+    const state = getSongState(songId);
+    if (!state) return null;
+
+    state.lastUsedAt = Date.now();
+    if (state.audio) return state.audio;
+
+    let audioUrl = state.audioStaticUrl || null;
+    if (!audioUrl) {
+        const fileOrBlob = state.audioFile || state.audioSource;
+        if (fileOrBlob) {
+            if (!state.audioBlobUrl) {
+                state.audioBlobUrl = URL.createObjectURL(fileOrBlob);
+            }
+            audioUrl = state.audioBlobUrl;
+        } else if (state.element?.dataset?.audioUrl) {
+            audioUrl = state.element.dataset.audioUrl;
+        }
+    }
+
+    if (!audioUrl) return null;
+
+    if (state.element) {
+        state.element.dataset.audioUrl = audioUrl;
+    }
+
+    const audio = createAudioElement(audioUrl, songId, state.element);
+    state.audio = audio;
+
+    const evictIds = selectEvictableAudioIds(getAllSongStates(), MAX_AUDIO_POOL, songId);
+    evictIds.forEach(evictSongAudio);
+
+    return audio;
+}
+
+function addClickListenerToSongItem(songItem) {
     songItem.addEventListener('click', (event) => {
         if (event.target.classList.contains('title-input')) {
             return;
@@ -197,28 +261,34 @@ function addClickListenerToSongItem(songItem, audio) {
             updatePlayerUI();
             return;
         }
+        const audio = ensureSongAudio(songId);
+        if (!audio) return;
         toggleAudio(audio, songItem);
         updatePlayerUI();
     });
 }
 
-function addSongToPlayer(songElement, audioFile, imageFile = null) {
-    const audioUrl = URL.createObjectURL(audioFile);
-    songElement.dataset.audioUrl = audioUrl;
-    
+function addSongToPlayer(songElement, audioFile, imageFile = null, options = {}) {
     const songId = `song-${Date.now()}-${Math.random()}`;
     songElement.dataset.songId = songId;
-    
-    const audio = createAudioElement(audioUrl, songId, songElement);
+
     registerSongState(songId, {
-        audio,
-        audioSource: audioFile,
-        imageSource: imageFile,
+        audio: null,
+        audioSource: audioFile || null,
+        audioFile: audioFile || null,
+        audioFileHandle: options.audioFileHandle || null,
+        audioStaticUrl: options.audioStaticUrl || null,
+        audioBlobUrl: null,
+        imageSource: imageFile || null,
+        thumbnailFile: imageFile || null,
+        thumbnailStaticUrl: options.thumbnailStaticUrl || null,
+        thumbnailBlobUrl: null,
+        lastUsedAt: 0,
         element: songElement,
         volume: 1,
         currentTime: 0
     });
-    addClickListenerToSongItem(songElement, audio);
+    addClickListenerToSongItem(songElement);
 }
 
 function getMarkerTolerance(duration, element) {
@@ -3428,14 +3498,44 @@ async function generateWaveformActual(audio, canvas, songId, signal, onWaveformC
             }
             return;
         }
+        const state = getSongState(songId);
+        const sourceSize = state?.audioFile?.size ?? state?.audioSource?.size ?? null;
+        if (shouldSkipWaveformDecode({ byteSize: sourceSize, durationSeconds: audio.duration })) {
+            createLightweightWaveform(canvas, { permanent: true });
+            delete canvas.dataset.waveformLoading;
+            canvas.removeAttribute('aria-busy');
+            onWaveformChange?.();
+            return;
+        }
+
         if (!sharedAudioContext) {
             sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         
         const response = await fetch(audio.src, { signal });
-        const arrayBuffer = await response.arrayBuffer();
-        if (signal.aborted) return;
+        const contentLength = Number(response.headers?.get?.('content-length'));
+        if (shouldSkipWaveformDecode({ byteSize: Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null })) {
+            createLightweightWaveform(canvas, { permanent: true });
+            delete canvas.dataset.waveformLoading;
+            canvas.removeAttribute('aria-busy');
+            onWaveformChange?.();
+            return;
+        }
+        let arrayBuffer = await response.arrayBuffer();
+        if (signal.aborted) {
+            arrayBuffer = null;
+            return;
+        }
+        if (shouldSkipWaveformDecode({ byteSize: arrayBuffer.byteLength })) {
+            arrayBuffer = null;
+            createLightweightWaveform(canvas, { permanent: true });
+            delete canvas.dataset.waveformLoading;
+            canvas.removeAttribute('aria-busy');
+            onWaveformChange?.();
+            return;
+        }
         const audioBuffer = await sharedAudioContext.decodeAudioData(arrayBuffer);
+        arrayBuffer = null;
         if (signal.aborted) return;
         
         const duration = audioBuffer.duration;
@@ -3880,7 +3980,7 @@ export function fadeTo(targetSongId) {
     if (!targetItem) return;
 
     const targetState = getSongState(targetSongId);
-    const targetAudio = targetState?.audio;
+    const targetAudio = ensureSongAudio(targetSongId);
     if (!targetAudio) {
         console.error(`No audio found for song ${targetSongId}`);
         return;
@@ -3949,7 +4049,7 @@ export function fadeIn(targetSongId) {
     if (!targetItem) return;
 
     const targetState = getSongState(targetSongId);
-    const targetAudio = targetState?.audio;
+    const targetAudio = ensureSongAudio(targetSongId);
     if (!targetAudio) {
         console.error(`No audio found for song ${targetSongId}`);
         return;
@@ -3998,7 +4098,7 @@ export function cutTo(targetSongId) {
     if (!targetItem) return;
 
     const targetState = getSongState(targetSongId);
-    const targetAudio = targetState?.audio;
+    const targetAudio = ensureSongAudio(targetSongId);
     if (!targetAudio) {
         console.error(`No audio found for song ${targetSongId}`);
         return;
@@ -4048,7 +4148,7 @@ export function cutTo(targetSongId) {
 export function playSong(targetSongId) {
     const targetItem = getSongElement(targetSongId);
     const targetState = getSongState(targetSongId);
-    const targetAudio = targetState?.audio;
+    const targetAudio = ensureSongAudio(targetSongId);
 
     if (!targetItem || !targetAudio) {
         console.error(`No audio found for song ${targetSongId}`);
@@ -4091,7 +4191,7 @@ export function prepareHotkeyPlayback(targetSongId, effectKeys = []) {
 
 export function configureSongForScene(targetSongId, sceneState = {}) {
     const state = getSongState(targetSongId);
-    const audio = state?.audio;
+    const audio = ensureSongAudio(targetSongId);
     if (!state || !audio) return false;
 
     const volume = Number(sceneState.volume);
@@ -4201,10 +4301,21 @@ export function removeSongAudio(songId) {
         // release the blob URL created on upload, otherwise it stays in
         // memory for the rest of the page's life even after the song is gone
         document.dispatchEvent(new CustomEvent('jukeboxFaixaSaiu', { detail: { src: audio.src } }));
-        URL.revokeObjectURL(audio.src);
+        if (audio.src?.startsWith('blob:')) URL.revokeObjectURL(audio.src);
+        audio.removeAttribute('src');
+        audio.load();
+    }
+    if (state.audioBlobUrl) {
+        URL.revokeObjectURL(state.audioBlobUrl);
+        state.audioBlobUrl = null;
+    }
+    if (state.thumbnailBlobUrl) {
+        URL.revokeObjectURL(state.thumbnailBlobUrl);
+        state.thumbnailBlobUrl = null;
     }
     const imageUrl = state.element?.querySelector('img')?.src;
     if (imageUrl?.startsWith('blob:')) URL.revokeObjectURL(imageUrl);
+    document.dispatchEvent(new CustomEvent('jukeboxSongRemoved', { detail: { songId } }));
     waveformCache.delete(songId);
 
     // in case the song was actively playing, make sure its track panel
@@ -4239,6 +4350,14 @@ export function clearAllSongs() {
             state.audio.removeAttribute('src');
             state.audio.load();
         }
+        if (state.audioBlobUrl) {
+            URL.revokeObjectURL(state.audioBlobUrl);
+            state.audioBlobUrl = null;
+        }
+        if (state.thumbnailBlobUrl) {
+            URL.revokeObjectURL(state.thumbnailBlobUrl);
+            state.thumbnailBlobUrl = null;
+        }
         const audioUrl = state.element?.dataset.audioUrl;
         if (audioUrl?.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
         const imageUrl = state.element?.querySelector('img')?.src;
@@ -4246,24 +4365,26 @@ export function clearAllSongs() {
         removeSongState(state.id);
     });
 
+    document.dispatchEvent(new Event('jukeboxSongsCleared'));
     updatePlayerUI();
 }
 
 export function resetSong(songId) {
     const state = getSongState(songId);
-    const audio = state?.audio;
-    if (!state || !audio) return;
+    if (!state) return;
+    const audio = state.audio;
     
     const item = getSongElement(songId);
     state.status = 'stopped';
 
-    if (!audio.paused) {
-        audio.pause();
-        item?.classList.remove('playing');
+    if (audio) {
+        if (!audio.paused) {
+            audio.pause();
+            item?.classList.remove('playing');
+        }
+        audio.currentTime = 0;
+        setTrackVolume(audio, 1);
     }
-
-    audio.currentTime = 0;
-    setTrackVolume(audio, 1);
     state.currentTime = 0;
     state.volume = 1;
     
@@ -4294,7 +4415,7 @@ export async function downloadSong(songId, onProgress) {
     }
 
     const state = getSongState(songId);
-    const audio = state?.audio;
+    const audio = ensureSongAudio(songId);
     if (!state || !audio) {
         throw new Error(`No audio found for song ${songId}`);
     }

@@ -1,13 +1,26 @@
 const songStates = new Map();
 let nextSongOrder = 0;
 
+export const MAX_AUDIO_POOL = 8;
+export const MAX_THUMBNAIL_CACHE = 60;
+export const MAX_WAVEFORM_DECODE_BYTES = 15 * 1024 * 1024;
+export const MAX_WAVEFORM_DECODE_SECONDS = 600;
+
 function createDefaultState(songId) {
     return {
         id: songId,
         order: nextSongOrder++,
         audio: null,
         audioSource: null,
+        audioFile: null,
+        audioFileHandle: null,
+        audioStaticUrl: null,
+        audioBlobUrl: null,
         imageSource: null,
+        thumbnailFile: null,
+        thumbnailStaticUrl: null,
+        thumbnailBlobUrl: null,
+        lastUsedAt: 0,
         element: null,
         status: 'stopped', // stopped | playing | player-paused
         currentTime: 0,
@@ -27,6 +40,33 @@ function createDefaultState(songId) {
             pendingEffects: null
         }
     };
+}
+
+export function selectEvictableAudioIds(states, maxActive = MAX_AUDIO_POOL, protectedId = null) {
+    const stateList = Array.from(states || []);
+    const activeStates = stateList.filter(state => Boolean(state?.audio));
+    if (activeStates.length <= maxActive) return [];
+
+    const excess = activeStates.length - maxActive;
+    const evictable = activeStates
+        .filter(state =>
+            state.id !== protectedId &&
+            state.status !== 'playing' &&
+            state.status !== 'player-paused'
+        )
+        .sort((left, right) => {
+            const timeDiff = (left.lastUsedAt || 0) - (right.lastUsedAt || 0);
+            if (timeDiff !== 0) return timeDiff;
+            return (left.order || 0) - (right.order || 0);
+        });
+
+    return evictable.slice(0, excess).map(state => state.id);
+}
+
+export function shouldSkipWaveformDecode({ byteSize = null, durationSeconds = null } = {}) {
+    if (Number.isFinite(byteSize) && byteSize > MAX_WAVEFORM_DECODE_BYTES) return true;
+    if (Number.isFinite(durationSeconds) && durationSeconds > MAX_WAVEFORM_DECODE_SECONDS) return true;
+    return false;
 }
 
 export function ensureSongState(songId) {

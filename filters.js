@@ -1,4 +1,5 @@
 import {
+    MAX_THUMBNAIL_CACHE,
     getOrderedSongStates,
     getSongState,
     reorderSongState
@@ -165,6 +166,86 @@ function scheduleVirtualRender() {
     });
 }
 
+const thumbnailUrlCache = new Map(); // songId -> blobUrl (insertion order = LRU)
+
+function evictThumbnailCacheEntry(songId) {
+    const url = thumbnailUrlCache.get(songId);
+    if (!url) return;
+    thumbnailUrlCache.delete(songId);
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+    const state = getSongState(songId);
+    if (state && state.thumbnailBlobUrl === url) {
+        state.thumbnailBlobUrl = null;
+    }
+}
+
+function clearThumbnailUrlCache() {
+    for (const [songId, url] of thumbnailUrlCache.entries()) {
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+        const state = getSongState(songId);
+        if (state && state.thumbnailBlobUrl === url) {
+            state.thumbnailBlobUrl = null;
+        }
+    }
+    thumbnailUrlCache.clear();
+}
+
+function resolveSongThumbnailUrl(songId) {
+    const state = getSongState(songId);
+    if (!state) return null;
+    if (state.thumbnailStaticUrl) return state.thumbnailStaticUrl;
+
+    const fileOrBlob = state.thumbnailFile || state.imageSource;
+    if (!fileOrBlob) return null;
+
+    if (thumbnailUrlCache.has(songId)) {
+        const cached = thumbnailUrlCache.get(songId);
+        thumbnailUrlCache.delete(songId);
+        thumbnailUrlCache.set(songId, cached);
+        return cached;
+    }
+
+    const blobUrl = URL.createObjectURL(fileOrBlob);
+    thumbnailUrlCache.set(songId, blobUrl);
+    state.thumbnailBlobUrl = blobUrl;
+
+    while (thumbnailUrlCache.size > MAX_THUMBNAIL_CACHE) {
+        const oldestKey = thumbnailUrlCache.keys().next().value;
+        evictThumbnailCacheEntry(oldestKey);
+    }
+
+    return blobUrl;
+}
+
+function applyVisibleThumbnails(songsToRender) {
+    const visibleSet = new Set(songsToRender);
+    for (const child of gridWindow.children) {
+        if (!visibleSet.has(child)) {
+            const img = child.querySelector('img');
+            if (img && img.hasAttribute('src')) {
+                img.removeAttribute('src');
+            }
+        }
+    }
+
+    for (const card of songsToRender) {
+        const img = card.querySelector('img');
+        if (!img) continue;
+        const url = resolveSongThumbnailUrl(card.dataset.songId);
+        if (url) {
+            if (img.getAttribute('src') !== url) img.src = url;
+        } else if (img.hasAttribute('src')) {
+            img.removeAttribute('src');
+        }
+    }
+}
+
+document.addEventListener('jukeboxSongsCleared', clearThumbnailUrlCache);
+document.addEventListener('jukeboxSongRemoved', event => {
+    const songId = event?.detail?.songId;
+    if (songId) evictThumbnailCacheEntry(songId);
+});
+
 function renderVirtualGrid() {
     ensureVirtualGridShell();
 
@@ -192,12 +273,16 @@ function renderVirtualGrid() {
         end === renderedEnd &&
         columns === renderedColumns &&
         signature === renderedSignature
-    ) return;
+    ) {
+        applyVisibleThumbnails(songsToRender);
+        return;
+    }
 
     renderedStart = start;
     renderedEnd = end;
     renderedColumns = columns;
     renderedSignature = signature;
+    applyVisibleThumbnails(songsToRender);
     gridWindow.replaceChildren(...songsToRender);
 
     // Measure the real card height after the first render. Titles and images

@@ -1322,7 +1322,6 @@ function createPresetSongItem(song) {
     thumbnail.decoding = 'async';
     thumbnail.fetchPriority = 'low';
     thumbnail.alt = song.decodedTitle;
-    thumbnail.src = URL.createObjectURL(song.thumbnailFile);
 
     songItem.append(titleInput, metadata, thumbnail);
     return songItem;
@@ -1907,7 +1906,6 @@ uploadSubmit.addEventListener('click', () => {
     metadata.textContent = `${tags.join(' + ')}${genres.length > 0 ? ' | ' + genres.join(' + ') : ''}`;
 
     const image = document.createElement('img');
-    image.src = URL.createObjectURL(thumbnail);
     image.alt = title;
     image.loading = 'lazy';
     image.decoding = 'async';
