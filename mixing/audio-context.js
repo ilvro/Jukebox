@@ -36,6 +36,15 @@ function ensureAudioContext() {
     return audioContext;
 }
 
+export async function resumeAudioContextIfSuspended() {
+    if (!audioContext || audioContext.state !== 'suspended') return;
+    try {
+        await audioContext.resume();
+    } catch (error) {
+        console.warn('Could not resume AudioContext:', error);
+    }
+}
+
 // master volume affects every song at once, applied after each song's own
 // dry/wet mix, right before the final output
 export function setMasterVolume(value) {
@@ -131,7 +140,9 @@ export function initializeAudioContext(audio, initialVolume = undefined, options
 
         return true;
     } catch (error) {
-        console.error("Error initializing audio context:", error);
+        const safeVolume = Math.max(0, Math.min(1, Number.isFinite(Number(initialVolume)) ? Number(initialVolume) : (Number.isFinite(audio.volume) ? audio.volume : 1)));
+        audio.volume = safeVolume;
+        console.warn('Web Audio API unavailable for track, falling back to direct element volume:', error);
         return false;
     }
 }

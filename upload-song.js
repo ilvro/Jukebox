@@ -1,4 +1,5 @@
 import { addSongToPlayer, clearAllSongs, getMarkers, setMarkers, fadeIn, fadeTo, cutTo, playSong, prepareHotkeyPlayback, fadeOut, stopSong, removeSongAudio, resetSong, downloadSong } from "./player.js";
+import { buildSampleAssetUrls } from "./playback-guards.mjs";
 import { deveMesclarComDisco, mesclarMetadados } from "./preset-mescla.js";
 import {
     assignSongHotkey,
@@ -546,11 +547,14 @@ async function writeBlobToFile(blob, fileHandle) {
 }
 
 async function getSongAudioBlob(songItem) {
-    const source = getSongState(songItem.dataset.songId)?.audioSource;
+    const state = getSongState(songItem.dataset.songId);
+    const source = state?.audioSource;
     if (source instanceof Blob) {
         return source;
     }
-    const response = await fetch(songItem.dataset.audioUrl);
+    const url = state?.audioStaticUrl || songItem.dataset.audioUrl;
+    if (!url) throw new Error('No audio source available for song');
+    const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`Could not read edited audio (${response.status})`);
     }
@@ -558,32 +562,41 @@ async function getSongAudioBlob(songItem) {
 }
 
 async function getSongImageBlob(songItem) {
-    const source = getSongState(songItem.dataset.songId)?.imageSource;
+    const state = getSongState(songItem.dataset.songId);
+    const source = state?.imageSource;
     if (source instanceof Blob) {
         return source;
     }
-    const response = await fetch(songItem.querySelector('img').src);
+    const url = state?.thumbnailStaticUrl || songItem.querySelector('img')?.src;
+    if (!url) throw new Error('No image source available for song');
+    const response = await fetch(url);
     if (!response.ok) throw new Error(`Could not read song image (${response.status})`);
     return await response.blob();
 }
 
 async function writeSongAudioToFile(songItem, fileHandle) {
-    const source = getSongState(songItem.dataset.songId)?.audioSource;
+    const state = getSongState(songItem.dataset.songId);
+    const source = state?.audioSource;
     if (source instanceof Blob) {
         await writeBlobToFile(source, fileHandle);
         return;
     }
-    const response = await fetch(songItem.dataset.audioUrl);
+    const url = state?.audioStaticUrl || songItem.dataset.audioUrl;
+    if (!url) throw new Error('No audio source available for song');
+    const response = await fetch(url);
     await writeAudioResponseToFile(response, fileHandle);
 }
 
 async function writeSongImageToFile(songItem, fileHandle) {
-    const source = getSongState(songItem.dataset.songId)?.imageSource;
+    const state = getSongState(songItem.dataset.songId);
+    const source = state?.imageSource;
     if (source instanceof Blob) {
         await writeBlobToFile(source, fileHandle);
         return;
     }
-    const response = await fetch(songItem.querySelector('img').src);
+    const url = state?.thumbnailStaticUrl || songItem.querySelector('img')?.src;
+    if (!url) throw new Error('No image source available for song');
+    const response = await fetch(url);
     if (!response.ok) throw new Error(`Could not read song image (${response.status})`);
     await writeBlobToFile(await response.blob(), fileHandle);
 }
@@ -1637,102 +1650,51 @@ async function loadSamplePreset() {
         tituloNaAbertura = new Set(presetMetadata.map(m => m.currentTitle).filter(Boolean));
         document.dispatchEvent(new Event('songsUpdated'));
         
-        // Create requests only when their batch starts. Mapping every song to
-        // an async promise up front still launches hundreds of simultaneous
-        // fetches and can make large presets appear frozen.
-        const loadSampleSong = async (songMetadata) => {
-            const { currentTitle, genres, tags, folder, markers, hotkey, hotkeyEffects } = songMetadata;
-            const decodedTitle = decodeURIComponent(currentTitle);
-            const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
-            const fixedTitle = currentTitle.replace(/%/g, '%25');
-            
-            const audioPath = `${sampleFolderPath}${fixedTitle}.mp3`;
-            const imagePath = `${sampleFolderPath}${fixedTitle}.jpg`;
-            
-            // fetch audio and image in parallel for faster processing
-            const [audioResponse, thumbnailResponse] = await Promise.all([
-                fetch(audioPath),
-                fetch(imagePath)
-            ]);
-            
-            if (!audioResponse.ok) {
-                throw new Error(`Failed to fetch audio file: ${audioResponse.status}`);
-            }
-            
-            if (!thumbnailResponse.ok) {
-                throw new Error(`Failed to fetch thumbnail file: ${thumbnailResponse.status}`);
-            }
-            
-            const [audioBlob, thumbnailBlob] = await Promise.all([
-                audioResponse.blob(),
-                thumbnailResponse.blob()
-            ]);
-            
-            return {
-                currentTitle,
-                decodedTitle,
-                updatedGenres,
-                tags,
-                folder,
-                markers,
-                hotkey,
-                hotkeyEffects,
-                audioFile: new File([audioBlob], `${currentTitle}.mp3`, { type: 'audio/mpeg' }),
-                thumbnailFile: new File([thumbnailBlob], `${currentTitle}.jpg`, { type: 'image/jpeg' })
-            };
-        };
-        
-        // processes batches of song to avoid overwhelming the browser (way faster this way)
-        const BATCH_SIZE = 5;
         const totalSongs = presetMetadata.length;
-        let loadedCount = 0;
-        
-        for (let i = 0; i < totalSongs; i += BATCH_SIZE) {
-            const batch = presetMetadata.slice(i, i + BATCH_SIZE);
-            const songBatch = await Promise.all(batch.map(loadSampleSong));
+        presetMetadata.forEach((songMetadata) => {
+            const { currentTitle, genres = [], tags = [], folder, markers, hotkey, hotkeyEffects } = songMetadata;
+            const { decodedTitle, audioStaticUrl, thumbnailStaticUrl } = buildSampleAssetUrls(currentTitle, sampleFolderPath);
+            const updatedGenres = genres.map(genre => genre === 'modern' ? 'mystery' : genre).filter(g => g);
 
-            songBatch.forEach(song => {
-                const songItem = document.createElement('div');
-                songItem.classList.add('song-item');
-                songItem.setAttribute('draggable', 'true');
-                songItem.setAttribute('data-genres', song.updatedGenres.join(','));
-                songItem.setAttribute('data-tags', song.tags.join(','));
-                songItem.innerHTML = `
-                    <input spellcheck='false' class='title-input' value="${song.decodedTitle}"></input>
-                    <p>${song.tags.join(' + ')}${song.updatedGenres.length > 0 ? ' | ' + song.updatedGenres.join(' + ') : ''}</p>
-                    <img src="${URL.createObjectURL(song.thumbnailFile)}" alt="${song.decodedTitle}" loading="lazy" decoding="async" fetchpriority="low">
-                `;
-                
-                const titleInput = songItem.querySelector('.title-input');
-                titleInput.addEventListener('dragover', (event) => {
-                    event.preventDefault();
-                });
-                titleInput.addEventListener('drop', (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                });
-                
-                songItem.dataset.presetTitle = song.currentTitle;
-                songItem.dataset.fileTitle = song.currentTitle;
-                loadedPresetFileNames.add(`${song.currentTitle}.mp3`);
-                loadedPresetFileNames.add(`${song.currentTitle}.jpg`);
-                // arquivo servido pelo próprio site: o mix publicado (mesa.js) cita o caminho em vez de subir os bytes
-                songItem.dataset.publicAudioUrl = `sample/${encodeURIComponent(`${song.currentTitle}.mp3`)}`;
-                if (song.folder) songItem.dataset.folder = song.folder;
-                addSongToPlayer(songItem, song.audioFile, song.thumbnailFile);
-                
-                if (song.markers && song.markers.length > 0) {
-                    setMarkers(songItem.dataset.songId, song.markers);
-                }
-                if (song.hotkey) assignHotkey(song.hotkey, songItem, song.hotkeyEffects);
+            const songItem = document.createElement('div');
+            songItem.classList.add('song-item');
+            songItem.setAttribute('draggable', 'true');
+            songItem.setAttribute('data-genres', updatedGenres.join(','));
+            songItem.setAttribute('data-tags', tags.join(','));
+            songItem.innerHTML = `
+                <input spellcheck='false' class='title-input' value="${decodedTitle}"></input>
+                <p>${tags.join(' + ')}${updatedGenres.length > 0 ? ' | ' + updatedGenres.join(' + ') : ''}</p>
+                <img alt="${decodedTitle}" loading="lazy" decoding="async" fetchpriority="low">
+            `;
+
+            const titleInput = songItem.querySelector('.title-input');
+            titleInput.addEventListener('dragover', (event) => {
+                event.preventDefault();
+            });
+            titleInput.addEventListener('drop', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
             });
 
-            loadedCount += songBatch.length;
-            updatePresetLoadIndicator(loadIndicator, loadedCount, totalSongs);
-            
-            // give the browser a break
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
+            songItem.dataset.presetTitle = currentTitle;
+            songItem.dataset.fileTitle = currentTitle;
+            loadedPresetFileNames.add(`${currentTitle}.mp3`);
+            loadedPresetFileNames.add(`${currentTitle}.jpg`);
+            // arquivo servido pelo próprio site: o mix publicado (mesa.js) cita o caminho em vez de subir os bytes
+            songItem.dataset.publicAudioUrl = `sample/${encodeURIComponent(`${currentTitle}.mp3`)}`;
+            if (folder) songItem.dataset.folder = folder;
+            addSongToPlayer(songItem, null, null, {
+                audioStaticUrl,
+                thumbnailStaticUrl
+            });
+
+            if (markers && markers.length > 0) {
+                setMarkers(songItem.dataset.songId, markers);
+            }
+            if (hotkey) assignHotkey(hotkey, songItem, hotkeyEffects);
+        });
+
+        updatePresetLoadIndicator(loadIndicator, totalSongs, totalSongs);
         
         console.log('Loaded sample preset');
         document.dispatchEvent(new Event('songsUpdated'));

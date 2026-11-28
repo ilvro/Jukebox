@@ -1,5 +1,6 @@
 import { setupAudioEffects } from './mixing/index.js';
-import { setMasterVolume, getMasterVolume, setTrackVolume, getTrackVolume, createRecordingTap, releaseAudioContext, getAudioContext } from './mixing/audio-context.js';
+import { setMasterVolume, getMasterVolume, setTrackVolume, getTrackVolume, createRecordingTap, releaseAudioContext, getAudioContext, resumeAudioContextIfSuspended } from './mixing/audio-context.js';
+import { clampSeekTime, computeProgressRatio, computeTimeFromRatio, formatTime as formatSafeTime, hasValidDuration } from './playback-guards.mjs';
 import { getFadeDuration } from './settings.js';
 import { setAccurateTimeout, setAccurateInterval, clearAccurateTimeout, clearAccurateInterval } from './background-timer.js';
 import {
@@ -111,12 +112,70 @@ if (stopAllBtn) {
     });
 }
 
+const pendingSeekTimes = new WeakMap();
+const pendingSeekListeners = new WeakSet();
+
+function applyAudioSeek(audio, targetTime) {
+    if (!audio) return;
+    const safeTarget = clampSeekTime(targetTime, audio.duration);
+    if (audio.readyState === 0) {
+        if (safeTarget === 0) {
+            pendingSeekTimes.delete(audio);
+            return;
+        }
+        pendingSeekTimes.set(audio, safeTarget);
+        if (!pendingSeekListeners.has(audio)) {
+            pendingSeekListeners.add(audio);
+            const flushPendingSeek = () => {
+                pendingSeekListeners.delete(audio);
+                const pending = pendingSeekTimes.get(audio);
+                if (pending === undefined) return;
+                pendingSeekTimes.delete(audio);
+                if (audio.readyState > 0) {
+                    audio.currentTime = clampSeekTime(pending, audio.duration);
+                }
+            };
+            audio.addEventListener('loadedmetadata', flushPendingSeek, { once: true });
+            audio.addEventListener('canplay', flushPendingSeek, { once: true });
+        }
+        return;
+    }
+
+    pendingSeekTimes.delete(audio);
+    audio.currentTime = safeTarget;
+}
+
+async function playAudioSafely(audio) {
+    await resumeAudioContextIfSuspended();
+    return audio.play();
+}
+
 function createAudioElement(audioUrl, songId, songItem) {
     const audio = new Audio(audioUrl);
-    // A large preset can contain hundreds of songs. Loading metadata for all
-    // of them at once creates a large burst of I/O; playback loads on demand.
-    audio.preload = 'none';
+    // Load metadata on demand when the audio element is lazily created so
+    // GStreamer/WebKitGTK can resolve duration and seek ranges cleanly.
+    audio.preload = 'metadata';
     audio.volume = 1;
+
+    audio.addEventListener('loadedmetadata', () => {
+        renderedTracks.get(songId)?.refresh();
+    });
+
+    audio.addEventListener('error', () => {
+        const mediaError = audio.error;
+        console.error('Audio playback/media error:', {
+            songId,
+            src: audio.currentSrc || audio.src,
+            code: mediaError?.code ?? null,
+            message: mediaError?.message || 'Unknown media error'
+        });
+        const state = getSongState(songId);
+        if (state) {
+            state.status = 'stopped';
+        }
+        songItem?.classList.remove('playing');
+        updatePlayerUI();
+    });
     
     audio.addEventListener('pause', () => {
         const state = getSongState(songId);
@@ -168,12 +227,12 @@ function toggleAudio(audioElement, songItem) {
 
     if (audioElement.paused) {
         // restore saved time when resuming
-        audioElement.currentTime = state.currentTime;
+        applyAudioSeek(audioElement, state.currentTime);
         // restore saved volume
         setTrackVolume(audioElement, state.volume ?? 1);
         songItem.classList.add('playing');
         state.status = 'playing';
-        audioElement.play().catch(error => {
+        playAudioSafely(audioElement).catch(error => {
             state.status = 'stopped';
             songItem.classList.remove('playing');
             console.error('Error playing audio:', error);
@@ -1058,11 +1117,7 @@ function createMarkerContextMenu(x, y, songId, markerTime, audio, progressBar, a
         minWidth: '150px'
     });
     
-    const formatTime = (timeInSeconds) => {
-        const minutes = Math.floor(timeInSeconds / 60);
-        const seconds = Math.floor(timeInSeconds % 60);
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    };
+    const formatTime = (timeInSeconds) => formatSafeTime(timeInSeconds, { fallback: '--:--' });
     
     const header = document.createElement('div');
     header.textContent = `Marker at ${formatTime(markerTime)}`;
@@ -1683,23 +1738,15 @@ function updatePlayerUI() {
 function createTrackUI(songId, audio, playerContainer) {
     const getExactTime = (event, element) => {
         const rect = element.getBoundingClientRect();
+        if (!hasValidDuration(audio.duration) || rect.width <= 0) return 0;
         const mouseX = event.clientX - rect.left;
-        return (mouseX / rect.width) * audio.duration;
+        return computeTimeFromRatio(mouseX / rect.width, audio.duration) ?? 0;
     };
 
-    const formatPlaybackTime = (timeInSeconds) => {
-        const safeTime = Number.isFinite(timeInSeconds) && timeInSeconds >= 0
-            ? Math.floor(timeInSeconds)
-            : 0;
-        const hours = Math.floor(safeTime / 3600);
-        const minutes = Math.floor((safeTime % 3600) / 60);
-        const seconds = safeTime % 60;
-
-        if (hours > 0) {
-            return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-        }
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    };
+    const formatPlaybackTime = (timeInSeconds) => formatSafeTime(timeInSeconds, {
+        includeHours: true,
+        fallback: '00:00'
+    });
 
     const trackDiv = document.createElement('div');
     trackDiv.className = 'track-item';
@@ -1770,7 +1817,7 @@ function createTrackUI(songId, audio, playerContainer) {
         if (audio.paused) {
             state.status = 'playing';
             songElement?.classList.add('playing');
-            audio.play().then(() => {
+            playAudioSafely(audio).then(() => {
                 updatePlayerUI();
             }).catch(error => {
                 state.status = 'player-paused';
@@ -1813,9 +1860,9 @@ function createTrackUI(songId, audio, playerContainer) {
     const progressBar = document.createElement('input');
     progressBar.type = 'range';
     progressBar.min = 0;
-    progressBar.max = audio.duration || 100;
+    progressBar.max = hasValidDuration(audio.duration) ? audio.duration : 100;
     progressBar.step = 0.001;
-    progressBar.value = audio.currentTime;
+    progressBar.value = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
     progressBar.className = 'progress-bar';
     progressBar.audio = audio;
     progressContainer.appendChild(progressBar);
@@ -1915,16 +1962,16 @@ function createTrackUI(songId, audio, playerContainer) {
     updateVolumeSlider(volumeControl);
     setTrackVolume(audio, initialVolume);
 
-    const formatTime = (timeInSeconds) => {
-        const minutes = Math.floor(timeInSeconds / 60);
-        const seconds = Math.floor(timeInSeconds % 60);
-        const milliseconds = Math.floor((timeInSeconds % 1) * 1000);
-        const preciseSuffix = timelineZoom >= 4 ? `.${milliseconds.toString().padStart(3, '0')}` : '';
-        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}${preciseSuffix}`;
-    };
+    const formatTime = (timeInSeconds) => formatSafeTime(timeInSeconds, {
+        showMilliseconds: timelineZoom >= 4,
+        fallback: '--:--'
+    });
 
     progressBar.addEventListener('input', () => {
-        audio.currentTime = progressBar.value;
+        const nextTime = Number(progressBar.value);
+        if (Number.isFinite(nextTime)) {
+            applyAudioSeek(audio, nextTime);
+        }
         updateTimeDisplay();
     });
 
@@ -1978,7 +2025,10 @@ function createTrackUI(songId, audio, playerContainer) {
     progressContainer.addEventListener('mousemove', (event) => {
         const rect = waveformCanvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
-        hoveredTime = (mouseX / rect.width) * audio.duration;
+        const computedHoveredTime = rect.width > 0
+            ? computeTimeFromRatio(mouseX / rect.width, audio.duration)
+            : null;
+        hoveredTime = computedHoveredTime ?? -1;
         
         const canvasX = (mouseX / rect.width) * waveformCanvas.width;
         updateRegionHandleCursor(event.clientX);
@@ -2034,9 +2084,9 @@ function createTrackUI(songId, audio, playerContainer) {
 
     progressContainer.addEventListener('click', (event) => {
         let clickTime = hoveredTime;
-        if (clickTime >= 0 && clickTime <= audio.duration) {
+        if (hasValidDuration(audio.duration) && Number.isFinite(clickTime) && clickTime >= 0 && clickTime <= audio.duration) {
             clickTime = snapToMarker(songId, clickTime, getCurrentMarkerTolerance());
-            audio.currentTime = clickTime;
+            applyAudioSeek(audio, clickTime);
             progressBar.value = clickTime;
             updateTimeDisplay();
         }
@@ -3164,7 +3214,7 @@ function createTrackUI(songId, audio, playerContainer) {
             if (!activeFadeTargets.has(audio)) {
                 setTrackVolume(audio, currentVol);
             }
-            progressBar.max = audio.duration || 100;
+            progressBar.max = hasValidDuration(audio.duration) ? audio.duration : 100;
             titleSpan.textContent = getSongTitle();
             updateTimeDisplay();
             updatePauseButton();
@@ -3666,16 +3716,20 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
     const totalBarWidth = barWidth + gap;
     const renderBarCount = Math.ceil(width / totalBarWidth);
     const centerY = height / 2;
-    const progress = audio.currentTime / audio.duration;
+    const duration = audio.duration;
+    const validDuration = hasValidDuration(duration);
+    const progress = computeProgressRatio(audio.currentTime, duration);
     const progressPixel = Math.floor(width * progress);
-    const selectedRegionPixels = getSelectedRegions(progressBar).map(region => ({
-        ...region,
-        startPixel: Math.floor((region.start / audio.duration) * width),
-        endPixel: Math.floor((region.end / audio.duration) * width)
-    }));
+    const selectedRegionPixels = validDuration
+        ? getSelectedRegions(progressBar).map(region => ({
+            ...region,
+            startPixel: Math.floor((region.start / duration) * width),
+            endPixel: Math.floor((region.end / duration) * width)
+        }))
+        : [];
 
-    if (hoveredTime >= 0) {
-        const hoverPixel = Math.floor((hoveredTime / audio.duration) * width);
+    if (validDuration && hoveredTime >= 0) {
+        const hoverPixel = Math.floor((hoveredTime / duration) * width);
         ctx.fillStyle = 'rgba(74, 255, 219, 0.3)';
         ctx.fillRect(hoverPixel - 1, 0, 2, height);
     }
@@ -3691,13 +3745,13 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
             );
             const point = waveformData[sourceIndex];
             const x = j * totalBarWidth;
-            const barTime = (x / width) * audio.duration;
+            const barTime = validDuration ? (x / width) * duration : 0;
             
             let mainColor, peakColor;
             if (j === hoveredBar || 
-                (hoveredTime >= 0 && 
+                (validDuration && hoveredTime >= 0 && 
                  barTime <= hoveredTime && 
-                 barTime + (totalBarWidth / width * audio.duration) >= hoveredTime)) {
+                 barTime + (totalBarWidth / width * duration) >= hoveredTime)) {
                 mainColor = '#4affdb';
                 peakColor = '#2affdb';
             } else if (x <= progressPixel) {
@@ -3747,9 +3801,9 @@ function updateWaveformProgress(audio, canvas, progressBar, hoveredBar = -1, hov
 
     const trackDiv = canvas.closest('.track-item');
     const songId = trackDiv?.dataset.songId;
-    if (songId && songMarkers[songId]) {
+    if (validDuration && songId && songMarkers[songId]) {
         songMarkers[songId].forEach((markerTime, index) => {
-            const markerX = (markerTime / audio.duration) * width;
+            const markerX = (markerTime / duration) * width;
             const markerColor = songMarkerColors[songId]?.[markerLabelKey(markerTime)] || DEFAULT_MARKER_COLOR;
             const renderedMarkerColor = index === hoveredMarker
                 ? lightenMarkerColor(markerColor)
@@ -4019,11 +4073,11 @@ export function fadeTo(targetSongId) {
 
     if (targetAudio.paused) {
         setTrackVolume(targetAudio, 0);
-        targetAudio.currentTime = savedTime;
+        applyAudioSeek(targetAudio, savedTime);
         
         (async () => {
             try {
-                await targetAudio.play();
+                await playAudioSafely(targetAudio);
                 targetState.status = 'playing';
                 targetItem.classList.add('playing');
                 updatePlayerUI();
@@ -4068,11 +4122,11 @@ export function fadeIn(targetSongId) {
 
     if (targetAudio.paused) {
         setTrackVolume(targetAudio, 0);
-        targetAudio.currentTime = savedTime;
+        applyAudioSeek(targetAudio, savedTime);
         
         (async () => {
             try {
-                await targetAudio.play();
+                await playAudioSafely(targetAudio);
                 targetState.status = 'playing';
                 targetItem.classList.add('playing');
                 updatePlayerUI();
@@ -4125,10 +4179,10 @@ export function cutTo(targetSongId) {
 
     // play target immediately
     if (targetAudio.paused) {
-        targetAudio.currentTime = savedTime;
+        applyAudioSeek(targetAudio, savedTime);
         setTrackVolume(targetAudio, savedVolume);
         
-        targetAudio.play().then(() => {
+        playAudioSafely(targetAudio).then(() => {
             targetState.status = 'playing';
             targetItem.classList.add('playing');
             updatePlayerUI();
@@ -4169,9 +4223,9 @@ export function playSong(targetSongId) {
     targetState.status = 'playing';
     targetAudio.muted = false;
     setTrackVolume(targetAudio, savedVolume);
-    targetAudio.currentTime = savedTime;
+    applyAudioSeek(targetAudio, savedTime);
 
-    targetAudio.play().then(() => {
+    playAudioSafely(targetAudio).then(() => {
         targetState.status = 'playing';
         targetItem.classList.add('playing');
         updatePlayerUI();
@@ -4202,15 +4256,9 @@ export function configureSongForScene(targetSongId, sceneState = {}) {
 
     const currentTime = Number(sceneState.currentTime);
     if (Number.isFinite(currentTime) && currentTime >= 0) {
-        const boundedTime = Number.isFinite(audio.duration)
-            ? Math.min(currentTime, Math.max(0, audio.duration - 0.001))
-            : currentTime;
+        const boundedTime = clampSeekTime(currentTime, audio.duration);
         state.currentTime = boundedTime;
-        try {
-            audio.currentTime = boundedTime;
-        } catch {
-            // fadeIn/playSong will apply state.currentTime after metadata loads.
-        }
+        applyAudioSeek(audio, boundedTime);
     }
 
     const regions = normalizeSelectedRegions(sceneState.regions || sceneState.region || []);
@@ -4297,7 +4345,7 @@ export function removeSongAudio(songId) {
     if (audio) {
         activeFadeTargets.delete(audio);
         audio.pause();
-        audio.currentTime = 0;
+        applyAudioSeek(audio, 0);
         // release the blob URL created on upload, otherwise it stays in
         // memory for the rest of the page's life even after the song is gone
         document.dispatchEvent(new CustomEvent('jukeboxFaixaSaiu', { detail: { src: audio.src } }));
@@ -4382,7 +4430,7 @@ export function resetSong(songId) {
             audio.pause();
             item?.classList.remove('playing');
         }
-        audio.currentTime = 0;
+        applyAudioSeek(audio, 0);
         setTrackVolume(audio, 1);
     }
     state.currentTime = 0;
@@ -4495,7 +4543,7 @@ export async function downloadSong(songId, onProgress) {
         songItem?.classList.add('playing');
         updatePlayerUI();
 
-        audio.play().then(() => {
+        playAudioSafely(audio).then(() => {
             const duration = audio.duration;
             if (isFinite(duration) && duration > 0) {
                 completionPoll = setInterval(() => {
@@ -4515,7 +4563,7 @@ export async function downloadSong(songId, onProgress) {
         release();
         cleanupPlayback();
 
-        audio.currentTime = 0;
+        applyAudioSeek(audio, 0);
         if (wasPaused) {
             audio.pause();
         }
